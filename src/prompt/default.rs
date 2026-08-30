@@ -1,3 +1,14 @@
+//! [`DefaultPrompt`] and the indicator constants it renders.
+//!
+//! The four mode indicators are two columns of ASCII each, thus a mode switch
+//! never reflows the input line and no terminal needs a font it might not
+//! have. [`DEFAULT_MULTILINE_INDICATOR`] is deliberately wider, since it marks
+//! a line the prompt did not start rather than a mode.
+//!
+//! The modal three are named for the state, not the dialect: vi and helix
+//! share every value, and the one state whose name they disagree on (vi's
+//! visual, helix's select) would otherwise have nowhere to sit.
+
 use crate::prompt::base::PromptHelixMode;
 use crate::{Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, PromptViMode};
 
@@ -6,14 +17,8 @@ use {
     std::{borrow::Cow, env},
 };
 
-/// The default prompt indicator, and the one the modal insert modes share.
-///
-/// Every indicator here is two columns of ASCII, thus switching modes never
-/// reflows the input line and no terminal needs a font it might not have.
-///
-/// The modal three are named for the state, not the dialect: vi and helix
-/// share every value, and the one state whose name they disagree on (vi's
-/// visual, helix's select) would otherwise have nowhere to sit.
+/// Emacs and [`PromptEditMode::Default`], and the glyph the modal insert modes
+/// share. See the module docs for the contract every indicator here keeps.
 pub static DEFAULT_PROMPT_INDICATOR: &str = "> ";
 /// Modal insert. The same glyph as [`DEFAULT_PROMPT_INDICATOR`] on purpose:
 /// both `Vi::default` and `Helix::default` start here, and nothing about
@@ -170,33 +175,58 @@ fn get_now() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_working_dir, DefaultPrompt};
+    use super::{
+        format_working_dir, DefaultPrompt, DEFAULT_INSERT_PROMPT_INDICATOR,
+        DEFAULT_MULTILINE_INDICATOR, DEFAULT_NORMAL_PROMPT_INDICATOR, DEFAULT_PROMPT_INDICATOR,
+        DEFAULT_SELECT_PROMPT_INDICATOR,
+    };
     use crate::{Prompt, PromptEditMode, PromptHelixMode, PromptViMode};
+    use rstest::rstest;
     use std::path::{Path, PathBuf};
+    use unicode_width::UnicodeWidthStr;
 
-    /// The whole point of the assignment, pinned as a table: insert shares
-    /// emacs's glyph since every modal session starts there, and the three
-    /// states whose keys mean different things each render differently. Equal
-    /// width keeps a mode switch from reflowing the input line.
+    /// The whole point of the assignment, pinned as literals rather than as the
+    /// constants: insert shares emacs's glyph since every modal session starts
+    /// there, and the three states whose keys mean different things each render
+    /// differently. Asserting against the constants would restate the `match`.
+    #[rstest]
+    #[case::default(PromptEditMode::Default, "> ")]
+    #[case::emacs(PromptEditMode::Emacs, "> ")]
+    #[case::vi_insert(PromptEditMode::Vi(PromptViMode::Insert), "> ")]
+    #[case::vi_normal(PromptEditMode::Vi(PromptViMode::Normal), ": ")]
+    #[case::vi_visual(PromptEditMode::Vi(PromptViMode::Visual), "+ ")]
+    #[case::helix_insert(PromptEditMode::Helix(PromptHelixMode::Insert), "> ")]
+    #[case::helix_normal(PromptEditMode::Helix(PromptHelixMode::Normal), ": ")]
+    #[case::helix_select(PromptEditMode::Helix(PromptHelixMode::Select), "+ ")]
+    #[case::custom(PromptEditMode::Custom("fish".into()), "(fish)")]
+    fn indicator_table_splits_the_modal_states(
+        #[case] mode: PromptEditMode,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(
+            DefaultPrompt::default().render_prompt_indicator(mode),
+            expected
+        );
+    }
+
+    /// The equal-width contract the module docs promise, asserted on the
+    /// shipped constants. `Custom` is exempt: its width is the caller's.
+    #[rstest]
+    #[case::base(DEFAULT_PROMPT_INDICATOR)]
+    #[case::insert(DEFAULT_INSERT_PROMPT_INDICATOR)]
+    #[case::normal(DEFAULT_NORMAL_PROMPT_INDICATOR)]
+    #[case::select(DEFAULT_SELECT_PROMPT_INDICATOR)]
+    fn mode_indicators_are_two_columns_of_ascii(#[case] indicator: &str) {
+        assert!(indicator.is_ascii());
+        assert_eq!(indicator.width(), 2);
+    }
+
+    /// The continuation marker is the one that opts out, so pin that it does:
+    /// a silent narrowing to two columns would make it read as a mode.
     #[test]
-    fn indicator_table_splits_the_modal_states_at_equal_width() {
-        let prompt = DefaultPrompt::default();
-        let table = [
-            (PromptEditMode::Default, "> "),
-            (PromptEditMode::Emacs, "> "),
-            (PromptEditMode::Vi(PromptViMode::Insert), "> "),
-            (PromptEditMode::Vi(PromptViMode::Normal), ": "),
-            (PromptEditMode::Vi(PromptViMode::Visual), "+ "),
-            (PromptEditMode::Helix(PromptHelixMode::Insert), "> "),
-            (PromptEditMode::Helix(PromptHelixMode::Normal), ": "),
-            (PromptEditMode::Helix(PromptHelixMode::Select), "+ "),
-        ];
-        for (mode, expected) in table {
-            let label = format!("{mode:?}");
-            assert_eq!(prompt.render_prompt_indicator(mode), expected, "{label}");
-            assert!(expected.is_ascii(), "{label} must stay ASCII");
-            assert_eq!(expected.len(), 2, "{label} must stay two columns");
-        }
+    fn the_multiline_indicator_is_wider_than_a_mode() {
+        assert!(DEFAULT_MULTILINE_INDICATOR.is_ascii());
+        assert!(DEFAULT_MULTILINE_INDICATOR.width() > 2);
     }
 
     #[cfg(unix)]

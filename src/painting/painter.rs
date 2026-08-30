@@ -1339,9 +1339,10 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     /// A prompt fragment for the layout tests: any two ASCII columns will do.
-    /// Deliberately not [`crate::DefaultPrompt`]'s indicator, since these tests
-    /// assert column arithmetic against a hard-coded 2, and changing the
-    /// shipped glyph must not rewrite what they measure.
+    /// It happens to read like [`crate::DEFAULT_PROMPT_INDICATOR`] but is
+    /// independent of it, since these tests assert column arithmetic against a
+    /// hard-coded 2 and changing a shipped glyph must not rewrite what they
+    /// measure. Nothing here renders a [`crate::DefaultPrompt`].
     const TEST_PROMPT: &str = "> ";
 
     #[derive(Debug, Clone, PartialEq, Eq)]
