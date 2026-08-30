@@ -128,32 +128,42 @@ impl Editor {
             // covered turns on which side of the *anchor* it falls, which only
             // `put_cursor` can see. Helix lowers its own (`gs`) through
             // `put_cursor` in select mode too, so take that path either way.
-            EditCommand::Extend(t) if t.direction().is_none() => {
-                let head = self.resolve_head(*t);
-                self.move_head_to(head, true);
-            }
+            EditCommand::Extend(t) if t.direction().is_none() => self.apply_move(*t, true),
             EditCommand::Extend(t) => match self.caret_extent() {
-                SelectionExtent::CoverLanding => {
-                    let head = self.resolve_head(*t);
-                    self.move_head_to(head, true);
-                }
-                // `motion_origin` departs backward travel from the visible
-                // caret, which under a block caret already sits one grapheme
-                // inside the head. `extend_span` would park the head on `op_end`
-                // and the caret is rendered one grapheme back again, so that
-                // offset lands twice and one press moves two cells (#1190).
+                SelectionExtent::CoverLanding => self.apply_move(*t, true),
+                // Backward travel departs from the visible caret, which under a
+                // block caret already sits one grapheme inside the head.
+                // `extend_span` would park the head on `op_end` and the caret is
+                // rendered one grapheme back again, so that offset lands twice
+                // and one press moves two cells (#1190). Only while the cursor
+                // is still forward: once a press reverses it the caret *is* the
+                // head and the offset cancels, which is why the doubling shows
+                // up on the first press out of a forward selection and not after.
+                //
                 // `put_cursor` instead places the head so the caret comes to rest
-                // exactly on the resolved target.
+                // exactly on the resolved target. That is `CoverLanding`'s head
+                // placement inside a `Span` mode, which the two are otherwise
+                // orthogonal to (see `SelectionExtent`): backward travel is the
+                // one direction where `Span` has no inclusivity of its own to
+                // encode, since `op_end` and the caret disagree about the same
+                // grapheme.
                 //
                 // Forward keeps `extend_span`, since it departs from the head and
                 // has no offset to undo.
                 SelectionExtent::Span if t.direction() == Some(Direction::Backward) => {
-                    let head = self.resolve_head(*t);
-                    self.move_head_to(head, true);
+                    self.apply_move(*t, true)
                 }
                 SelectionExtent::Span => {
+                    // Only forward travel reaches here: the arms above take the
+                    // directionless and backward targets. Forward departs from
+                    // the head rather than the visible caret, since a forward
+                    // block selection puts the caret on the near edge of its head
+                    // grapheme and the head on the far edge. Departing from the
+                    // caret would make an exclusive forward motion a no-op,
+                    // landing on the boundary the previous `Extend` parked the
+                    // head on.
                     let geom = self.caret_geometry();
-                    let origin = self.motion_origin(*t);
+                    let origin = self.line_buffer.cursor().head();
                     let op_end = resolve_motion(self.get_buffer(), origin, *t, geom).op_end;
                     let next =
                         self.line_buffer
@@ -772,30 +782,6 @@ impl Editor {
             cursor.head()
         } else {
             cursor.caret(self.line_buffer.get_buffer())
-        }
-    }
-
-    /// The edge `target` departs from — the origin an `Extend` resolves against,
-    /// as opposed to [`insertion_point`](Self::insertion_point)'s *where the
-    /// cursor is*.
-    ///
-    /// A forward block selection puts the caret on the near edge of its head
-    /// grapheme and the head on the far edge, so forward travel departs from the
-    /// head and backward travel from the caret. Departing from the caret both
-    /// ways makes an exclusive forward motion a no-op — it lands on the very
-    /// boundary the previous `Extend` parked the head on.
-    ///
-    /// Which way `target` travels is read against the *visible* cursor, so the
-    /// answer never depends on the edge being picked. Under `Between` both edges
-    /// are the head, so this is a no-op there.
-    ///
-    /// Only half the answer: which rebuild consumes the origin matters just as
-    /// much, see the `Span` arms of the `Extend` dispatch.
-    fn motion_origin(&self, target: MotionTarget) -> usize {
-        let reference = self.insertion_point();
-        match target.direction() {
-            Some(Direction::Forward) => self.line_buffer.cursor().head(),
-            _ => reference,
         }
     }
 
@@ -4791,8 +4777,8 @@ mod test {
             editor.move_to_position(4, false);
             editor.run_edit_command(&EditCommand::Extend(word_start_fwd()));
             // "bar " with the caret on the trailing space, thus one `h` walks it
-            // onto `r` and the selection reads "bar". Pinned 6 while the backward
-            // rebuild still moved the caret two cells (#1190).
+            // onto `r` and the selection reads "bar". This pinned 6 back when the
+            // backward rebuild moved the caret two cells (#1190).
             editor.run_edit_command(&EditCommand::Extend(MotionTarget::Grapheme(
                 Direction::Backward,
             )));
@@ -4800,18 +4786,24 @@ mod test {
             assert_eq!(editor.get_selection(), Some((4, 7)));
         }
 
-        // --- one cell per backward press (#1190) ---
+        // --- the caret rests on the resolved target (#1190) ---
         //
         // Every case starts from a selection left *forward* and wider than one
         // grapheme, since that is the only shape the two-cell step shows up in.
         // From the resting block the first press reverses the cursor, and a
         // backward cursor's caret is its head, thus the doubling cancels there.
+        //
+        // For a grapheme target that reads as one cell per press; for the word
+        // and line targets it reads as landing on the target rather than one
+        // past it. Both are the same invariant. The anchor is pinned alongside,
+        // since a rebuild that got the caret right and the anchor wrong would
+        // draw the wrong highlight.
 
         #[rstest]
         #[case::grapheme(MotionTarget::Grapheme(Direction::Backward), vec![4, 3, 2, 1, 0])]
         #[case::word_start(word_start_bwd(), vec![4, 0, 0])]
         #[case::line_start(MotionTarget::LineEdge(Direction::Backward), vec![0, 0])]
-        fn helix_extend_backward_walks_one_cell_per_press(
+        fn helix_extend_backward_rests_the_caret_on_the_target(
             #[case] target: MotionTarget,
             #[case] carets: Vec<usize>,
         ) {
@@ -4821,6 +4813,11 @@ mod test {
             for expected in carets {
                 editor.run_edit_command(&EditCommand::Extend(target));
                 assert_eq!(editor.insertion_point(), expected);
+                assert_eq!(
+                    editor.get_selection(),
+                    Some((0, expected + 1)),
+                    "the anchor stays where `%` left it"
+                );
             }
         }
 
