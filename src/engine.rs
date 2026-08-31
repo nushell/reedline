@@ -2812,6 +2812,7 @@ mod tests {
             .edit_buffer(|b| b.set_insertion_point(2), UndoBehavior::MoveCursor); // at len, legal under Between
         drive(&mut rl, &[ch('x')]); // flipts to OnGrapheme, emits nothing
         assert_eq!(rl.current_insertion_point(), 1);
+        assert_eq!(rl.current_selection(), None);
     }
 
     #[test]
@@ -2822,6 +2823,23 @@ mod tests {
         drive(&mut rl, &[ch('h'), ch('i')]);
         assert_eq!(rl.editor.get_buffer(), "hi");
         assert_eq!(rl.current_insertion_point(), 2);
+        assert_eq!(rl.current_selection(), None);
+    }
+
+    #[test]
+    fn test_current_selection() {
+        let mut rl = seam_engine(Box::<crate::Emacs>::default());
+        drive(
+            &mut rl,
+            &[
+                ch('h'),
+                ch('i'),
+                KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT),
+            ],
+        );
+        assert_eq!(rl.editor.get_buffer(), "hi");
+        assert_eq!(rl.current_insertion_point(), 1);
+        assert_eq!(rl.current_selection(), Some((1, 2)));
     }
 
     #[test]
