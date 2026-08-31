@@ -933,6 +933,11 @@ impl Reedline {
         self.editor.get_buffer()
     }
 
+    /// Returns the current selection range of the input buffer, otherwise None.
+    pub fn current_selection(&self) -> Option<(usize, usize)> {
+        self.editor.get_selection()
+    }
+
     /// Writes `msg` to the terminal with a following carriage return and newline
     fn print_line(&mut self, msg: &str) -> Result<()> {
         self.painter.paint_line(msg)
