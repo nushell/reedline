@@ -36,9 +36,9 @@ use {
             semantic_prompt::{Osc133ClickEventsMarkers, SemanticPromptMarkers},
         },
         utils::text_manipulation,
-        AbbrExpandContext, Direction, EditCommand, ExampleHighlighter, Highlighter, LineBuffer,
-        Menu, MenuEvent, MouseButton, Prompt, PromptHistorySearch, ReedlineMenu, Signal,
-        UndoBehavior, ValidationResult, Validator,
+        AbbrExpandContext, AutoPairAction, AutoPairContext, AutoPairs, Direction, EditCommand,
+        ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, MouseButton, Prompt,
+        PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult, Validator,
     },
     crossterm::{
         cursor::{SetCursorStyle, Show},
@@ -187,6 +187,9 @@ pub struct Reedline {
 
     // Use ansi coloring or not
     use_ansi_coloring: bool,
+
+    // Automatically insert and manage configured character pairs.
+    auto_pairs: Option<AutoPairs>,
 
     // Whether to enable mouse click-to-cursor functionality
     mouse_click_mode: MouseClickMode,
@@ -378,6 +381,7 @@ impl Reedline {
             hide_hints: false,
             validator,
             use_ansi_coloring: true,
+            auto_pairs: None,
             mouse_click_mode: MouseClickMode::default(),
             cwd: None,
             menus: Vec::new(),
@@ -549,6 +553,46 @@ impl Reedline {
     #[must_use]
     pub fn with_ansi_colors(mut self, use_ansi_coloring: bool) -> Self {
         self.use_ansi_coloring = use_ansi_coloring;
+        self
+    }
+
+    /// A builder that configures automatic pair insertion for the Reedline engine.
+    ///
+    /// By default, auto-pairing applies at every position for the configured pairs.
+    /// To suppress it in certain syntactic positions (e.g. string literals, or in the
+    /// middle of a word), override [`Highlighter::should_auto_pair`].
+    ///
+    /// For `InsertChar`, the closer is looked up before the opener. A character that
+    /// is registered as both a closer of one pair and an opener of another therefore
+    /// resolves based on whether that closer currently sits at the cursor, not on the
+    /// order the pairs were passed to [`AutoPairs::new`].
+    ///
+    /// This builder does not touch the terminal's bracketed paste setting.
+    /// If bracketed paste is enabled (see [`Self::use_bracketed_paste`]), a paste is
+    /// delivered as [`EditCommand::InsertString`](crate::EditCommand::InsertString),
+    /// which never goes through auto-pairing. If bracketed paste is disabled, pasted
+    /// characters arrive the same way as typed ones and are auto-paired like typing:
+    /// pasting text that has an opener without its closer (e.g. `foo(bar`) inserts a
+    /// closing character that was never in the clipboard content. For this reason it
+    /// is recommended to combine `with_auto_pairs` with
+    /// `use_bracketed_paste(cfg!(not(target_os = "windows")))`. On Windows,
+    /// stock crossterm reads console input through
+    /// the Win32 console API and has no ANSI input parser, so there is no
+    /// `Event::Paste` path to enable there (see crossterm-rs/crossterm#737).
+    ///
+    /// Auto-pairing applies to edits in the regular line buffer. Reverse-history
+    /// search edits a separate search query and are not passed through the
+    /// auto-pairing machinery.
+    #[must_use]
+    pub fn with_auto_pairs(mut self, auto_pairs: AutoPairs) -> Self {
+        self.auto_pairs = Some(auto_pairs);
+        self
+    }
+
+    /// Disable automatic pair insertion.
+    #[must_use]
+    pub fn disable_auto_pairs(mut self) -> Self {
+        self.auto_pairs = None;
         self
     }
 
@@ -2049,7 +2093,75 @@ impl Reedline {
 
         // Run the commands over the edit buffer
         for command in commands {
+            if let Some(command) = self.auto_pair_command(command) {
+                self.editor.run_edit_command(&command);
+                continue;
+            }
+
             self.editor.run_edit_command(command);
+        }
+    }
+
+    fn auto_pair_command(&self, command: &EditCommand) -> Option<EditCommand> {
+        let auto_pairs = self.auto_pairs.as_ref()?;
+
+        // Resolve which auto-pair action (if any) `command` would trigger, along
+        // with the pair it acts on and the `EditCommand` that would replace it.
+        // The search order matters: for `InsertChar`, closers are checked before
+        // openers, so a character that is configured as both a closer of one pair
+        // and an opener of another resolves based on whether the cursor currently
+        // sits on the closer, not on the order pairs were registered in.
+        let (pair, action, converted) = match command {
+            EditCommand::InsertChar(ch) => {
+                let closer_at_cursor = auto_pairs
+                    .closing_pair(*ch)
+                    .filter(|(_, close)| self.editor.is_auto_pair_closer_at_cursor(*close));
+
+                if let Some(pair) = closer_at_cursor {
+                    (
+                        pair,
+                        AutoPairAction::SkipExistingCloser,
+                        EditCommand::MoveRight { select: false },
+                    )
+                } else if let Some((open, close)) = auto_pairs.opening_pair(*ch) {
+                    (
+                        (open, close),
+                        AutoPairAction::Open,
+                        EditCommand::InsertPair { open, close },
+                    )
+                } else {
+                    return None;
+                }
+            }
+            EditCommand::Backspace => {
+                let pair = auto_pairs.pairs().find(|(open, close)| {
+                    self.editor.is_empty_auto_pair_at_cursor(*open, *close)
+                })?;
+                (
+                    pair,
+                    AutoPairAction::BackspacePair,
+                    EditCommand::BackspacePair {
+                        open: pair.0,
+                        close: pair.1,
+                    },
+                )
+            }
+            _ => return None,
+        };
+
+        // Give the highlighter a chance to veto the action before committing to
+        // it. All three actions pass through this same gate: returning `false`
+        // means "run the original command verbatim", handled by the caller
+        // treating `None` from this function as a pass-through.
+        let buffer = self.editor.get_buffer();
+        let insertion_point = self.editor.insertion_point();
+        let selection = self.editor.get_selection().map(|(start, end)| start..end);
+        let context = AutoPairContext::new(buffer, insertion_point, pair, selection, action);
+
+        if self.highlighter.should_auto_pair(&context) {
+            Some(converted)
+        } else {
+            None
         }
     }
 
@@ -2741,6 +2853,732 @@ mod tests {
         for k in keys {
             drive(rl, &[*k]);
         }
+    }
+
+    fn auto_pair_engine(pairs: &[(char, char)]) -> Reedline {
+        Reedline::create().with_auto_pairs(AutoPairs::new(pairs.iter().copied()))
+    }
+
+    #[test]
+    fn auto_pairs_disabled_keeps_literal_typing() {
+        let mut rl = Reedline::create();
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+
+        assert_eq!(rl.editor.get_buffer(), "(");
+        assert_eq!(rl.editor.insertion_point(), 1);
+    }
+
+    #[test]
+    fn auto_pairs_ignore_unconfigured_openers() {
+        let mut rl = auto_pair_engine(&[('[', ']')]);
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+
+        assert_eq!(rl.editor.get_buffer(), "(");
+        assert_eq!(rl.editor.insertion_point(), 1);
+    }
+
+    #[test]
+    fn auto_pairs_insert_pair_and_continue_inside() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 1);
+
+        rl.run_edit_commands(&[EditCommand::InsertChar('a')]);
+
+        assert_eq!(rl.editor.get_buffer(), "(a)");
+        assert_eq!(rl.editor.insertion_point(), 2);
+    }
+
+    #[test]
+    fn auto_pairs_skip_existing_closer() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.run_edit_commands(&[EditCommand::InsertChar('('), EditCommand::InsertChar(')')]);
+
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 2);
+    }
+
+    #[test]
+    fn auto_pairs_backspace_removes_empty_pair_as_one_undo_step() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+
+        rl.run_edit_commands(&[EditCommand::Backspace]);
+
+        assert_eq!(rl.editor.get_buffer(), "");
+        assert_eq!(rl.editor.insertion_point(), 0);
+
+        rl.run_edit_commands(&[EditCommand::Undo]);
+
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 1);
+    }
+
+    #[test]
+    fn auto_pairs_backspace_after_buffer_replacement_removes_empty_pair() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+
+        // A history/menu replacement bypasses the key event that originally
+        // created the pair. Backspace must still inspect the live buffer and
+        // remove the empty pair as one operation.
+        rl.run_edit_commands(&[
+            EditCommand::InsertString("stale input".into()),
+            EditCommand::Clear,
+            EditCommand::InsertString("()".into()),
+            EditCommand::MoveLeft { select: false },
+        ]);
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 1);
+
+        rl.run_edit_commands(&[EditCommand::Backspace]);
+
+        assert_eq!(rl.editor.get_buffer(), "");
+        assert_eq!(rl.editor.insertion_point(), 0);
+    }
+
+    #[test]
+    fn auto_pairs_backspace_after_pair_newline_keeps_closer() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 1);
+
+        // The newline separates the pair, so Backspace must remove only the
+        // newline rather than treating the surrounding characters as an empty
+        // pair.
+        rl.run_edit_commands(&[EditCommand::InsertNewline]);
+        assert_eq!(rl.editor.get_buffer(), "(\n)");
+        assert_eq!(rl.editor.insertion_point(), 2);
+
+        rl.run_edit_commands(&[EditCommand::Backspace]);
+
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 1);
+    }
+
+    #[test]
+    fn auto_pairs_wrap_selection_with_opener() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.run_edit_commands(&[
+            EditCommand::InsertString("abc".into()),
+            EditCommand::MoveToStart { select: false },
+            EditCommand::MoveRight { select: true },
+            EditCommand::MoveRight { select: true },
+            EditCommand::MoveRight { select: true },
+            EditCommand::InsertChar('('),
+        ]);
+
+        assert_eq!(rl.editor.get_buffer(), "(abc)");
+        assert_eq!(rl.editor.get_selection(), None);
+        assert_eq!(rl.editor.insertion_point(), 5);
+    }
+
+    #[test]
+    fn auto_pairs_do_not_rewrite_insert_string() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.run_edit_commands(&[EditCommand::InsertString("()".into())]);
+
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 2);
+    }
+
+    #[test]
+    fn auto_pairs_support_same_character_pairs() {
+        let mut rl = auto_pair_engine(&[('"', '"')]);
+        rl.run_edit_commands(&[EditCommand::InsertChar('"')]);
+
+        assert_eq!(rl.editor.get_buffer(), "\"\"");
+        assert_eq!(rl.editor.insertion_point(), 1);
+
+        rl.run_edit_commands(&[EditCommand::InsertChar('"')]);
+
+        assert_eq!(rl.editor.get_buffer(), "\"\"");
+        assert_eq!(rl.editor.insertion_point(), 2);
+
+        rl.run_edit_commands(&[
+            EditCommand::MoveLeft { select: false },
+            EditCommand::Backspace,
+        ]);
+
+        assert_eq!(rl.editor.get_buffer(), "");
+        assert_eq!(rl.editor.insertion_point(), 0);
+    }
+
+    // --- `Highlighter::should_auto_pair` veto -------------------------------
+
+    /// Vetoes exactly one [`AutoPairAction`], letting the other two proceed
+    /// unmodified — used to prove the three actions are gated independently.
+    struct VetoActionHighlighter(AutoPairAction);
+
+    impl Highlighter for VetoActionHighlighter {
+        fn highlight(&self, _line: &str, _cursor: usize) -> crate::StyledText {
+            crate::StyledText::new()
+        }
+
+        fn should_auto_pair(&self, context: &AutoPairContext<'_>) -> bool {
+            context.action() != self.0
+        }
+    }
+
+    fn auto_pair_engine_with_veto(pairs: &[(char, char)], vetoed: AutoPairAction) -> Reedline {
+        auto_pair_engine(pairs).with_highlighter(Box::new(VetoActionHighlighter(vetoed)))
+    }
+
+    #[test]
+    fn auto_pairs_veto_open_falls_back_to_literal_insert_char() {
+        let mut rl = auto_pair_engine_with_veto(&[('(', ')')], AutoPairAction::Open);
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+
+        // Fallback must be exactly `InsertChar('(')`, not `InsertPair`.
+        assert_eq!(rl.editor.get_buffer(), "(");
+        assert_eq!(rl.editor.insertion_point(), 1);
+    }
+
+    #[test]
+    fn auto_pairs_veto_open_does_not_affect_skip_over_or_backspace_pair() {
+        let mut rl = auto_pair_engine_with_veto(&[('(', ')')], AutoPairAction::Open);
+
+        // Build "(a)" directly (bypassing the vetoed `Open` action) and place
+        // the cursor right before the closer.
+        rl.run_edit_commands(&[
+            EditCommand::InsertString("(a)".into()),
+            EditCommand::MoveLeft { select: false },
+        ]);
+        assert_eq!(rl.editor.insertion_point(), 2);
+
+        // `SkipExistingCloser` is not vetoed here, so it must still fire.
+        rl.run_edit_commands(&[EditCommand::InsertChar(')')]);
+        assert_eq!(rl.editor.get_buffer(), "(a)");
+        assert_eq!(rl.editor.insertion_point(), 3);
+
+        // Rebuild an empty pair the same way and confirm `BackspacePair` still
+        // collapses it as one step even though `Open` is vetoed.
+        rl.run_edit_commands(&[
+            EditCommand::Clear,
+            EditCommand::InsertString("()".into()),
+            EditCommand::MoveLeft { select: false },
+            EditCommand::Backspace,
+        ]);
+        assert_eq!(rl.editor.get_buffer(), "");
+        assert_eq!(rl.editor.insertion_point(), 0);
+    }
+
+    #[test]
+    fn auto_pairs_veto_skip_existing_closer_falls_back_to_literal_insert_char() {
+        let mut rl = auto_pair_engine_with_veto(&[('(', ')')], AutoPairAction::SkipExistingCloser);
+
+        rl.run_edit_commands(&[
+            EditCommand::InsertString("(a)".into()),
+            EditCommand::MoveLeft { select: false },
+        ]);
+        assert_eq!(rl.editor.insertion_point(), 2);
+
+        // Decision order: even though the cursor sits on an existing closer
+        // (which would normally win unconditionally), the veto is consulted
+        // and a literal `)` is inserted instead of skipping over.
+        rl.run_edit_commands(&[EditCommand::InsertChar(')')]);
+        assert_eq!(rl.editor.get_buffer(), "(a))");
+        assert_eq!(rl.editor.insertion_point(), 3);
+
+        // `Open` is unaffected by this veto.
+        rl.run_edit_commands(&[EditCommand::Clear, EditCommand::InsertChar('(')]);
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 1);
+    }
+
+    #[test]
+    fn auto_pairs_veto_backspace_pair_falls_back_to_plain_backspace() {
+        let mut rl = auto_pair_engine_with_veto(&[('(', ')')], AutoPairAction::BackspacePair);
+
+        // `Open` is not vetoed, so this still produces a real empty pair.
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 1);
+
+        // `BackspacePair` is vetoed: fallback is a plain `Backspace`, deleting
+        // only the grapheme to the left of the cursor.
+        rl.run_edit_commands(&[EditCommand::Backspace]);
+        assert_eq!(rl.editor.get_buffer(), ")");
+        assert_eq!(rl.editor.insertion_point(), 0);
+    }
+
+    #[test]
+    fn auto_pairs_veto_open_with_selection_replaces_selection_literally() {
+        let mut rl = auto_pair_engine_with_veto(&[('(', ')')], AutoPairAction::Open);
+        rl.run_edit_commands(&[
+            EditCommand::InsertString("abc".into()),
+            EditCommand::MoveToStart { select: false },
+            EditCommand::MoveRight { select: true },
+            EditCommand::MoveRight { select: true },
+            EditCommand::MoveRight { select: true },
+            EditCommand::InsertChar('('),
+        ]);
+
+        // Contrast with `auto_pairs_wrap_selection_with_opener` (no veto),
+        // which produces "(abc)" with the cursor at 5: vetoing `Open` must
+        // instead replace the selection with a literal '(', same as ordinary
+        // typing over a selection.
+        assert_eq!(rl.editor.get_buffer(), "(");
+        assert_eq!(rl.editor.get_selection(), None);
+        assert_eq!(rl.editor.insertion_point(), 1);
+    }
+
+    #[test]
+    fn auto_pairs_veto_sees_buffer_and_cursor_after_preceding_commands_in_batch() {
+        // The context passed to `should_auto_pair` must reflect live state —
+        // not a stale snapshot taken before other commands in the same batch
+        // (e.g. a history navigation or completion insert) ran.
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<(String, usize, AutoPairAction)>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        struct RecordingHighlighter {
+            seen: std::sync::Arc<std::sync::Mutex<Vec<(String, usize, AutoPairAction)>>>,
+        }
+
+        impl Highlighter for RecordingHighlighter {
+            fn highlight(&self, _line: &str, _cursor: usize) -> crate::StyledText {
+                crate::StyledText::new()
+            }
+
+            fn should_auto_pair(&self, context: &AutoPairContext<'_>) -> bool {
+                self.seen.lock().unwrap().push((
+                    context.buffer().to_string(),
+                    context.insertion_point(),
+                    context.action(),
+                ));
+                true
+            }
+        }
+
+        let mut rl = auto_pair_engine(&[('(', ')')])
+            .with_highlighter(Box::new(RecordingHighlighter { seen: seen.clone() }));
+
+        // Replace the whole buffer (as a history navigation or menu accept
+        // would) and immediately type an opener in the same batch.
+        rl.run_edit_commands(&[
+            EditCommand::Clear,
+            EditCommand::InsertString("echo hi".into()),
+            EditCommand::InsertChar('('),
+        ]);
+
+        let recorded = seen.lock().unwrap();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].0, "echo hi");
+        assert_eq!(recorded[0].1, "echo hi".len());
+        assert_eq!(recorded[0].2, AutoPairAction::Open);
+    }
+
+    // Regression: `auto_pair_command` used to derive the context's selection
+    // by comparing `selection_anchor()` against `insertion_point()` directly.
+    // Under a forward vi-normal (block) selection those two disagree with the
+    // actual selected range: `insertion_point()` is the *caret*, one grapheme
+    // back from the cursor's `head` (see `Editor::insertion_point` /
+    // `Cursor::caret`), while `Editor::get_selection()` — the range
+    // `insert_pair` (and thus the real `InsertPair` wrap) actually uses —
+    // reports `cursor.start()..cursor.end()` with `end()` at the widened
+    // `head`. The old code silently dropped the selection's last grapheme
+    // from the context it handed to `should_auto_pair`.
+    //
+    // This mirrors the exact selection shape pinned by
+    // `vi_normal_selection_cut_is_inclusive` in `core_editor::editor`'s own
+    // tests: from "hello" at position 0, two forward `MoveRight { select:
+    // true }` steps land the head on 'l' (byte 2) but widen the selection to
+    // byte 3 to cover it.
+    #[test]
+    fn auto_pairs_context_selection_matches_vi_block_forward_selection() {
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<std::ops::Range<usize>>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        struct RecordingSelectionHighlighter {
+            seen: std::sync::Arc<std::sync::Mutex<Vec<std::ops::Range<usize>>>>,
+        }
+
+        impl Highlighter for RecordingSelectionHighlighter {
+            fn highlight(&self, _line: &str, _cursor: usize) -> crate::StyledText {
+                crate::StyledText::new()
+            }
+
+            fn should_auto_pair(&self, context: &AutoPairContext<'_>) -> bool {
+                if let Some(selection) = context.selection() {
+                    self.seen.lock().unwrap().push(selection);
+                }
+                true
+            }
+        }
+
+        // A fixed `EditMode` that always reports Vi-normal, so `run_edit_commands`'s
+        // `sync_edit_mode` (which re-adopts `Reedline`'s own edit mode on every
+        // call, independent of whatever `Editor::set_edit_mode` was last told)
+        // does not flip the block-caret rest policy back to `Bar` behind our
+        // back between the selection setup below and the `InsertChar` that
+        // exercises `auto_pair_command`.
+        struct AlwaysViNormal;
+        impl EditMode for AlwaysViNormal {
+            fn parse_event(&mut self, _e: ReedlineRawEvent) -> ReedlineEvent {
+                ReedlineEvent::None
+            }
+            fn edit_mode(&self) -> PromptEditMode {
+                PromptEditMode::Vi(PromptViMode::Normal)
+            }
+        }
+
+        let mut rl = auto_pair_engine(&[('(', ')')])
+            .with_highlighter(Box::new(RecordingSelectionHighlighter {
+                seen: seen.clone(),
+            }))
+            .with_edit_mode(Box::new(AlwaysViNormal));
+
+        rl.run_edit_commands(&[EditCommand::InsertString("hello".into())]);
+        rl.editor.run_edit_command(&EditCommand::MoveToPosition {
+            position: 0,
+            select: false,
+        });
+        rl.editor
+            .run_edit_command(&EditCommand::MoveRight { select: true });
+        rl.editor
+            .run_edit_command(&EditCommand::MoveRight { select: true });
+
+        // Sanity-check the premise: a forward block selection whose head sits
+        // one grapheme past what `insertion_point()` alone would suggest.
+        assert_eq!(rl.editor.insertion_point(), 2);
+        let expected_selection = rl.editor.get_selection().expect("selection active");
+        assert_eq!(expected_selection, (0, 3));
+
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+
+        let recorded = seen.lock().unwrap();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(
+            recorded[0],
+            expected_selection.0..expected_selection.1,
+            "context selection must match Editor::get_selection(), not a range \
+             derived from insertion_point()"
+        );
+
+        // `insert_pair` wraps the exact same range `get_selection()` reported,
+        // so the buffer confirms the context wasn't merely coincidentally
+        // correct: 'l' at byte 2 must be inside the pair.
+        assert_eq!(rl.editor.get_buffer(), "(hel)lo");
+    }
+
+    /// A small context-sensitive policy used to exercise the consumer-facing
+    /// `Highlighter` hook. It demonstrates that syntax-aware consumers can
+    /// veto opening a pair while leaving the other auto-pair actions alone.
+    struct ContextAwareAutoPairHighlighter;
+
+    impl ContextAwareAutoPairHighlighter {
+        fn inside_unclosed_quote(buffer: &str, point: usize, quote: char) -> bool {
+            let mut in_quote = false;
+            let mut escaped = false;
+            for ch in buffer[..point].chars() {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                match ch {
+                    '\\' => escaped = true,
+                    c if c == quote => in_quote = !in_quote,
+                    _ => {}
+                }
+            }
+            in_quote
+        }
+    }
+
+    impl Highlighter for ContextAwareAutoPairHighlighter {
+        fn highlight(&self, _line: &str, _cursor: usize) -> crate::StyledText {
+            crate::StyledText::new()
+        }
+
+        fn should_auto_pair(&self, context: &AutoPairContext<'_>) -> bool {
+            if context.action() != AutoPairAction::Open {
+                return true;
+            }
+
+            let (open, close) = context.pair();
+            let buffer = context.buffer();
+            let point = context.insertion_point();
+
+            if open == close && Self::inside_unclosed_quote(buffer, point, open) {
+                return false;
+            }
+
+            true
+        }
+    }
+
+    fn context_aware_auto_pair_engine() -> Reedline {
+        auto_pair_engine(&[('(', ')'), ('"', '"')])
+            .with_highlighter(Box::new(ContextAwareAutoPairHighlighter))
+    }
+
+    #[test]
+    fn context_policy_allows_non_quote_pair_inside_unclosed_region() {
+        let mut rl = context_aware_auto_pair_engine();
+        rl.run_edit_commands(&[EditCommand::InsertString("\"abc".into())]);
+
+        // A non-quote pair is allowed even inside an unclosed region.
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+        assert_eq!(rl.editor.get_buffer(), "\"abc()");
+        assert_eq!(rl.editor.insertion_point(), 5);
+    }
+
+    #[test]
+    fn context_policy_vetoes_same_delimiter_inside_unclosed_region() {
+        let mut rl = context_aware_auto_pair_engine();
+        rl.run_edit_commands(&[EditCommand::InsertString("\"".into())]);
+        assert_eq!(rl.editor.insertion_point(), 1);
+
+        // Typing the same quote again would normally open a new pair (cursor
+        // is at the end of the buffer), but we are inside an unclosed string
+        // of that same quote kind, so it must close it literally instead.
+        rl.run_edit_commands(&[EditCommand::InsertChar('"')]);
+        assert_eq!(rl.editor.get_buffer(), "\"\"");
+        assert_eq!(rl.editor.insertion_point(), 2, "literal insert advances past the closing quote, unlike a paired insert which would leave the cursor at 1");
+    }
+
+    // --- undo granularity across all six action x veto combinations --------
+
+    #[test]
+    fn auto_pairs_undo_granularity_open_not_vetoed() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+        assert_eq!(rl.editor.get_buffer(), "()");
+
+        rl.run_edit_commands(&[EditCommand::Undo]);
+        assert_eq!(rl.editor.get_buffer(), "");
+        assert_eq!(rl.editor.insertion_point(), 0);
+    }
+
+    #[test]
+    fn auto_pairs_undo_granularity_open_vetoed() {
+        let mut rl = auto_pair_engine_with_veto(&[('(', ')')], AutoPairAction::Open);
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+        assert_eq!(rl.editor.get_buffer(), "(");
+
+        rl.run_edit_commands(&[EditCommand::Undo]);
+        assert_eq!(rl.editor.get_buffer(), "");
+        assert_eq!(rl.editor.insertion_point(), 0);
+    }
+
+    #[test]
+    fn auto_pairs_undo_granularity_skip_existing_closer_not_vetoed() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+        rl.run_edit_commands(&[EditCommand::InsertChar(')')]);
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 2);
+
+        // The skip-over is a plain cursor move (`MoveRight`), and cursor
+        // moves never open their own undo boundary in reedline — they merge
+        // into whatever edit precedes them (verified directly against plain
+        // `InsertChar` + `MoveLeft` with no auto-pairing involved). So one
+        // `Undo` here reverts the *pair insertion* too, landing back at the
+        // pre-`Open` empty buffer, not at the interim "()" state.
+        rl.run_edit_commands(&[EditCommand::Undo]);
+        assert_eq!(rl.editor.get_buffer(), "");
+        assert_eq!(rl.editor.insertion_point(), 0);
+    }
+
+    #[test]
+    fn auto_pairs_undo_granularity_skip_existing_closer_vetoed() {
+        let mut rl = auto_pair_engine_with_veto(&[('(', ')')], AutoPairAction::SkipExistingCloser);
+        rl.run_edit_commands(&[
+            EditCommand::InsertString("(a)".into()),
+            EditCommand::MoveLeft { select: false },
+        ]);
+        rl.run_edit_commands(&[EditCommand::InsertChar(')')]);
+        assert_eq!(rl.editor.get_buffer(), "(a))");
+
+        rl.run_edit_commands(&[EditCommand::Undo]);
+        assert_eq!(rl.editor.get_buffer(), "(a)");
+        assert_eq!(rl.editor.insertion_point(), 2);
+    }
+
+    #[test]
+    fn auto_pairs_undo_granularity_backspace_pair_not_vetoed() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+        rl.run_edit_commands(&[EditCommand::Backspace]);
+        assert_eq!(rl.editor.get_buffer(), "");
+
+        rl.run_edit_commands(&[EditCommand::Undo]);
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 1);
+    }
+
+    #[test]
+    fn auto_pairs_undo_granularity_backspace_pair_vetoed() {
+        let mut rl = auto_pair_engine_with_veto(&[('(', ')')], AutoPairAction::BackspacePair);
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+        rl.run_edit_commands(&[EditCommand::Backspace]);
+        assert_eq!(rl.editor.get_buffer(), ")");
+
+        rl.run_edit_commands(&[EditCommand::Undo]);
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 1);
+    }
+
+    // --- edge cases: same-char pairs, overlaps, multi-line, grapheme -------
+
+    #[test]
+    fn auto_pairs_overlapping_pair_definitions_resolve_by_search_order() {
+        // 'b' is both a closer (of `a`/`b`) and an opener (of `b`/`c`).
+        // Closers are searched before openers, but only the cursor-at-closer
+        // check short-circuits to a skip; otherwise the opener check runs.
+        let mut rl = auto_pair_engine(&[('a', 'b'), ('b', 'c')]);
+
+        // Not sitting on an existing 'b' closer (buffer is empty), so 'b' is
+        // treated as an opener of the second pair.
+        rl.run_edit_commands(&[EditCommand::InsertChar('b')]);
+        assert_eq!(rl.editor.get_buffer(), "bc");
+        assert_eq!(rl.editor.insertion_point(), 1);
+
+        // Now place the cursor right before an existing 'b', which is also
+        // configured as the closer of the first pair — skip-over wins.
+        rl.run_edit_commands(&[
+            EditCommand::Clear,
+            EditCommand::InsertString("ab".into()),
+            EditCommand::MoveLeft { select: false },
+        ]);
+        assert_eq!(rl.editor.insertion_point(), 1);
+
+        rl.run_edit_commands(&[EditCommand::InsertChar('b')]);
+        assert_eq!(rl.editor.get_buffer(), "ab");
+        assert_eq!(rl.editor.insertion_point(), 2);
+    }
+
+    #[test]
+    fn auto_pairs_multiline_and_crlf_buffer() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.run_edit_commands(&[EditCommand::InsertString("line1\r\nline2".into())]);
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+
+        assert_eq!(rl.editor.get_buffer(), "line1\r\nline2()");
+        assert_eq!(rl.editor.insertion_point(), "line1\r\nline2(".len());
+    }
+
+    #[test]
+    fn auto_pairs_skip_over_grapheme_with_combining_mark_after_closer() {
+        // The adjacency check (`grapheme_right().starts_with(close)`) is
+        // exercised here with the closer immediately followed by a combining
+        // mark, so `close` and the mark form a single grapheme cluster.
+        // This pins current behaviour; see written report for whether this
+        // is considered correct.
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        let combining_acute = '\u{0301}';
+        rl.run_edit_commands(&[EditCommand::InsertString(format!("(){combining_acute}"))]);
+        // The trailing ')' + combining mark form a single grapheme cluster,
+        // so one `MoveLeft` from the end lands right before it.
+        rl.run_edit_commands(&[EditCommand::MoveLeft { select: false }]);
+        assert_eq!(rl.editor.insertion_point(), 1);
+
+        rl.run_edit_commands(&[EditCommand::InsertChar(')')]);
+
+        // The whole grapheme cluster (closer + combining mark) is skipped
+        // over in one motion, landing the cursor at the end of the buffer.
+        assert_eq!(rl.editor.get_buffer(), format!("(){combining_acute}"));
+        assert_eq!(
+            rl.editor.insertion_point(),
+            format!("(){combining_acute}").len()
+        );
+    }
+
+    // --- vi / helix InsertChar replay ---------------------------------------
+
+    #[test]
+    fn vi_insert_mode_auto_pair_routes_through_veto() {
+        let mut rl = seam_engine(Box::<crate::Vi>::default())
+            .with_auto_pairs(AutoPairs::new([('(', ')')]))
+            .with_highlighter(Box::new(VetoActionHighlighter(AutoPairAction::Open)));
+
+        type_each(&mut rl, &[ch('(')]);
+
+        assert_eq!(rl.editor.get_buffer(), "(");
+        assert_eq!(rl.editor.insertion_point(), 1);
+    }
+
+    #[test]
+    fn vi_insert_mode_auto_pair_still_pairs_when_not_vetoed() {
+        let mut rl =
+            seam_engine(Box::<crate::Vi>::default()).with_auto_pairs(AutoPairs::new([('(', ')')]));
+
+        type_each(&mut rl, &[ch('(')]);
+
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 1);
+    }
+
+    #[test]
+    fn helix_insert_mode_auto_pair_routes_through_veto() {
+        let mut rl = seam_engine(Box::<crate::Helix>::default())
+            .with_auto_pairs(AutoPairs::new([('(', ')')]))
+            .with_highlighter(Box::new(VetoActionHighlighter(AutoPairAction::Open)));
+
+        type_each(&mut rl, &[ch('(')]);
+
+        assert_eq!(rl.editor.get_buffer(), "(");
+        assert_eq!(rl.editor.insertion_point(), 1);
+    }
+
+    #[test]
+    fn helix_insert_mode_auto_pair_still_pairs_when_not_vetoed() {
+        let mut rl = seam_engine(Box::<crate::Helix>::default())
+            .with_auto_pairs(AutoPairs::new([('(', ')')]));
+
+        type_each(&mut rl, &[ch('(')]);
+
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 1);
+    }
+
+    // --- `Event::Paste` must never be rewritten -----------------------------
+
+    #[test]
+    fn auto_pairs_balanced_paste_event_is_not_rewritten() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.painter.force_prompt_anchored_for_test(0);
+        let prompt = DefaultPrompt::default();
+        let _ = rl
+            .process_input_batch(&prompt, vec![Event::Paste("(a)".into())])
+            .expect("batch ok");
+
+        assert_eq!(rl.editor.get_buffer(), "(a)");
+        assert_eq!(rl.editor.insertion_point(), 3);
+    }
+
+    #[test]
+    fn auto_pairs_unbalanced_paste_event_is_not_rewritten() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.painter.force_prompt_anchored_for_test(0);
+        let prompt = DefaultPrompt::default();
+        let _ = rl
+            .process_input_batch(&prompt, vec![Event::Paste("(a".into())])
+            .expect("batch ok");
+
+        // Pasted text is inserted verbatim via `InsertString`, which never
+        // goes through `auto_pair_command` — even though the pasted opener
+        // has no matching closer.
+        assert_eq!(rl.editor.get_buffer(), "(a");
+        assert_eq!(rl.editor.insertion_point(), 2);
+    }
+
+    #[test]
+    fn auto_pairs_do_not_rewrite_reverse_history_search_query() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.enter_history_search();
+
+        rl.handle_history_search_event(ReedlineEvent::Edit(vec![EditCommand::InsertChar('(')]))
+            .expect("history search event handled");
+
+        assert_eq!(rl.input_mode, InputMode::HistorySearch);
+        assert_eq!(rl.editor.get_buffer(), "");
+        assert_eq!(
+            rl.history_cursor.get_navigation(),
+            HistoryNavigationQuery::SubstringSearch("(".into())
+        );
     }
 
     // FLIP SAFETY NET (Group C) — visual operability at the engine seam.

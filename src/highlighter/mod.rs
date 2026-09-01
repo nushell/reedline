@@ -1,7 +1,7 @@
 mod example;
 mod simple_match;
 
-use crate::StyledText;
+use crate::{auto_pairs::AutoPairContext, StyledText};
 
 pub use example::ExampleHighlighter;
 pub use simple_match::SimpleMatchHighlighter;
@@ -36,6 +36,22 @@ pub trait Highlighter: Send {
     /// The default implementation always returns `true` (always expand)
     fn should_expand_abbr(&self, line: &str, cursor: usize, context: AbbrExpandContext) -> bool {
         let _ = (line, cursor, context);
+        true
+    }
+
+    /// Returns `true` if the automatic pairing behaviour described by `context`
+    /// should happen, `false` to suppress it and run the originally typed
+    /// [`EditCommand`](crate::EditCommand) verbatim instead (`InsertChar(open)` for
+    /// [`crate::AutoPairAction::Open`], `InsertChar(close)` for
+    /// [`crate::AutoPairAction::SkipExistingCloser`], `Backspace` for
+    /// [`crate::AutoPairAction::BackspacePair`])
+    ///
+    /// The default implementation always returns `true` (always auto-pair)
+    ///
+    /// See [`Reedline::with_auto_pairs`](crate::Reedline::with_auto_pairs) for how
+    /// this interacts with pair lookup order and with pasted text.
+    fn should_auto_pair(&self, context: &AutoPairContext<'_>) -> bool {
+        let _ = context;
         true
     }
 }

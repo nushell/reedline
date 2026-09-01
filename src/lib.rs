@@ -250,6 +250,9 @@
 mod core_editor;
 pub use core_editor::{Editor, LineBuffer};
 
+mod auto_pairs;
+pub use auto_pairs::{AutoPairAction, AutoPairContext, AutoPairs};
+
 mod enums;
 pub use enums::{
     Direction, EditCommand, EditCommandDiscriminants, FindStop, Granularity, MotionTarget,
