@@ -3,7 +3,9 @@ use crate::PromptHelixMode;
 use crate::{CursorConfig, PromptEditMode, PromptViMode};
 
 use {
-    super::utils::{coerce_crlf, deferred_wrap_row, estimate_required_lines, line_width},
+    super::utils::{
+        advance_grapheme, coerce_crlf, deferred_wrap_row, line_width, resolve_wrap, wrap_position,
+    },
     crate::{
         menu::{Menu, ReedlineMenu},
         painting::PromptLines,
@@ -18,7 +20,6 @@ use {
     std::io::{Result, Write},
     std::ops::RangeInclusive,
     unicode_segmentation::UnicodeSegmentation,
-    unicode_width::UnicodeWidthStr,
 };
 #[cfg(feature = "external_printer")]
 use {crate::LineBuffer, crossterm::cursor::MoveUp};
@@ -789,14 +790,19 @@ impl Painter {
                     .unwrap_or(snapshot.after_cursor.len());
                 (0, end)
             } else {
-                let cursor_distance = estimate_required_lines(
-                    &format!(
-                        "{}{}{}",
-                        snapshot.prompt_str_left, snapshot.prompt_indicator, snapshot.before_cursor
-                    ),
+                // The same walk `PromptLines::distance_from_prompt` uses, on
+                // the snapshot's pieces: a division here would disagree with
+                // the layout by a row on a trailing newline or an exactly
+                // filled row, and clip `after_cursor` at the wrong place.
+                let cursor_distance = wrap_position(
+                    [
+                        snapshot.prompt_str_left.as_str(),
+                        snapshot.prompt_indicator.as_str(),
+                        snapshot.before_cursor.as_str(),
+                    ],
                     screen_width,
                 )
-                .saturating_sub(1) as u16;
+                .map_or(0, |end| resolve_wrap(end, screen_width).1);
                 let remaining_lines = snapshot.screen_height.saturating_sub(cursor_distance);
                 let offset = remaining_lines.saturating_sub(1) as usize;
                 skip_buffer_lines_range(&snapshot.after_cursor, 0, Some(offset))
@@ -820,19 +826,16 @@ impl Painter {
 
         let mut check_segment = |segment: &str, base_offset: usize| -> Option<usize> {
             for (index, grapheme) in segment.grapheme_indices(true) {
-                if grapheme == "\n" {
-                    current_row = current_row.saturating_add(1);
-                    current_col = 0;
-                    continue;
-                }
+                // Same rule as the layout walk, so the offset this maps back to
+                // is the grapheme the layout put under the click. A zero-width
+                // grapheme occupies no column and so is never the target; the
+                // base grapheme it combines with already matched.
+                let (at, width) =
+                    advance_grapheme((current_row, current_col), grapheme, screen_width);
+                (current_row, current_col) = at;
 
-                let width = grapheme.width().max(1) as u16;
-                if current_col.saturating_add(width) > screen_width {
-                    current_row = current_row.saturating_add(1);
-                    current_col = 0;
-                }
-
-                if current_row == target_row
+                if width > 0
+                    && current_row == target_row
                     && column >= current_col
                     && column < current_col.saturating_add(width)
                 {

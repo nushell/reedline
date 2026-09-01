@@ -55,19 +55,19 @@ pub(crate) fn estimate_required_lines(input: &str, screen_width: u16) -> usize {
 
 /// Reports the additional lines needed due to wrapping for the given line.
 ///
-/// Does not account for any potential line breaks in `line`
+/// Callers pre-split, so `line` is not expected to contain a line break;
+/// [`wrap_position`] would count one as a row.
 ///
 /// If `line` fits in `terminal_columns` returns 0. A zero-width
-/// `terminal_columns` can be reported by terminals mid-resize or when
-/// the size is unknown; return 0 in that case rather than dividing by
-/// zero (see #842).
+/// `terminal_columns` can be reported by terminals mid-resize or when the
+/// size is unknown; there is no layout to report, so [`wrap_position`]
+/// answers `None` and this reports 0 (see #842).
 ///
-/// Dividing assumes glyphs pack a row exactly, which a double-width
-/// grapheme at the margin does not. A reserved row too few or too many is
-/// recoverable, so the cheap model stays here; [`deferred_wrap_row`] pays
-/// for an exact one where the error would land on screen.
+/// Rows the line *wraps onto*, not rows the cursor reaches: a line filling
+/// the width exactly wraps onto none and leaves the cursor pending on the
+/// next. Only the callers placing a cursor count that row.
 ///
-/// FIXME: The zero-column guard below papers over a caller bug, it
+/// FIXME: the zero-column guard papers over a caller bug, it
 /// doesn't solve it. `menu::list_menu::ListMenu::menu_required_lines`
 /// passes `terminal_columns.saturating_sub(indicator_width + count_digits)`,
 /// so on a terminal whose width is not greater than the indicator plus
@@ -77,17 +77,10 @@ pub(crate) fn estimate_required_lines(input: &str, screen_width: u16) -> usize {
 /// subtracting the indicator width from the entry width). Tracked in
 /// #842 / #428; remove this comment once the caller is fixed.
 pub(crate) fn estimate_single_line_wraps(line: &str, terminal_columns: u16) -> usize {
-    let terminal_columns: usize = terminal_columns.into();
-    if terminal_columns == 0 {
+    let Some((_, row)) = wrap_position([line], terminal_columns) else {
         return 0;
-    }
-    let estimated_width = line_width(line);
-
-    // integer ceiling rounding division for positive divisors
-    let estimated_line_count = estimated_width.div_ceil(terminal_columns);
-
-    // Any wrapping will add to our overall line count
-    estimated_line_count.saturating_sub(1)
+    };
+    row as usize
 }
 
 /// Compute the line width for ANSI escaped text
@@ -95,8 +88,8 @@ pub(crate) fn line_width(line: &str) -> usize {
     strip_ansi(line).width()
 }
 
-/// Where printing `pieces` leaves the cursor, when it lands on the terminal's
-/// right margin in the *deferred wrap* state.
+/// Which row to move to when printing `pieces` lands the cursor on the
+/// terminal's right margin, in the *deferred wrap* state.
 ///
 /// A terminal does not move to the next row when a glyph lands in the final
 /// column; it flags the cursor pending and only wraps once the next glyph
@@ -106,49 +99,93 @@ pub(crate) fn line_width(line: &str) -> usize {
 /// the run that row is, or `None` off the margin, where restoring is already
 /// unambiguous. `pieces` are laid out end to end, since the walk is a fold and
 /// never looks backwards.
-///
-/// Counted a grapheme at a time rather than by dividing the run's width, which
-/// [`estimate_required_lines`] and friends still do. A double-width grapheme
-/// with one column left cannot be split, so the terminal blanks that column and
-/// wraps early: division reads a 42-column run on a 21-column terminal as two
-/// exact rows ending on the margin, when the terminal needs three and leaves
-/// the cursor mid-row. That is the difference between restoring the cursor and
-/// moving it somewhere it never was.
 pub(crate) fn deferred_wrap_row<'a>(
     pieces: impl IntoIterator<Item = &'a str>,
     terminal_columns: u16,
 ) -> Option<u16> {
-    let columns: usize = terminal_columns.into();
-    if columns == 0 {
+    let end = wrap_position(pieces, terminal_columns)?;
+    (end.0 >= terminal_columns).then(|| resolve_wrap(end, terminal_columns).1)
+}
+
+/// Where the cursor rests once a [`wrap_position`] landing is resolved: a run
+/// ending on the margin left the wrap pending, and that belongs to the home
+/// column of the next row (#1141), not to the column it filled.
+///
+/// The single owner of that rule, since every caller placing a cursor needs it
+/// and one of them getting the saturation wrong is a panic, not a drawing bug.
+pub(crate) fn resolve_wrap((col, row): (u16, u16), terminal_columns: u16) -> (u16, u16) {
+    if col >= terminal_columns {
+        (0, row.saturating_add(1))
+    } else {
+        (col, row)
+    }
+}
+
+/// Where printing `pieces` leaves the cursor, walked a grapheme at a time
+/// rather than divided out of the run's width. A double-width grapheme with
+/// one column left cannot be split, so the terminal blanks that column and
+/// wraps early: division reads a 42-column run on a 21-column terminal as two
+/// exact rows ending on the margin, when the terminal needs three.
+///
+/// Returns `(column, rows past the start of the run)`. The column may equal
+/// `terminal_columns`: the *deferred wrap* state, where the run has filled the
+/// row but nothing has arrived to push it over. Resolving that is the caller's
+/// job: [`resolve_wrap`] for the cursor-placing ones, and the estimators do
+/// not count it at all.
+pub(crate) fn wrap_position<'a>(
+    pieces: impl IntoIterator<Item = &'a str>,
+    terminal_columns: u16,
+) -> Option<(u16, u16)> {
+    if terminal_columns == 0 {
         return None;
     }
-
-    // `col == columns` *is* the deferred wrap: the run has filled the row but
-    // nothing has arrived to push it over yet.
-    let (mut row, mut col) = (0u16, 0usize);
+    let (mut row, mut col) = (0u16, 0u16);
     for piece in pieces {
         for grapheme in strip_ansi(piece).graphemes(true) {
-            match grapheme {
-                "\n" => (row, col) = (row.saturating_add(1), 0),
-                "\r" => col = 0,
-                _ => {
-                    let width = grapheme.width();
-                    // The wrap this grapheme's arrival was deferred until.
-                    if col >= columns {
-                        (row, col) = (row.saturating_add(1), 0);
-                    }
-                    // No room for the whole grapheme: the trailing column stays
-                    // blank and the terminal wraps before drawing it.
-                    if col + width > columns {
-                        (row, col) = (row.saturating_add(1), 0);
-                    }
-                    col += width;
-                }
-            }
+            let (at, width) = advance_grapheme((row, col), grapheme, terminal_columns);
+            (row, col) = at;
+            col = col.saturating_add(width);
         }
     }
+    Some((col, row))
+}
 
-    (col >= columns).then(|| row.saturating_add(1))
+/// One step of the [`wrap_position`] walk: where `grapheme` is drawn starting
+/// from `(row, col)`, and how many columns it occupies.
+///
+/// The caller advances by adding the returned width, so the returned position
+/// is where the grapheme *is*, not where the cursor ends up. Split out because
+/// the reverse mapping in `Painter::screen_to_buffer_offset` has to walk the
+/// same rule to turn a screen position back into a buffer offset, and the two
+/// disagreeing is how a click lands on the wrong grapheme.
+pub(crate) fn advance_grapheme(
+    (row, col): (u16, u16),
+    grapheme: &str,
+    terminal_columns: u16,
+) -> ((u16, u16), u16) {
+    match grapheme {
+        "\n" => ((row.saturating_add(1), 0), 0),
+        "\r" => ((row, 0), 0),
+        _ => {
+            let width = grapheme.width() as u16;
+            let (mut row, mut col) = (row, col);
+            // The wrap this grapheme's arrival was deferred until.
+            // Both checks can fire for one grapheme, so a single `||`
+            // loses a row: a zero-width one trips only this.
+            if col >= terminal_columns {
+                (row, col) = (row.saturating_add(1), 0);
+            }
+            // No room for the whole grapheme: the trailing column stays
+            // blank and the terminal wraps before drawing it. Only from a
+            // column the run has already reached, since a grapheme wider
+            // than the whole terminal has no row it would fit on and
+            // wrapping it again would spend a row per glyph.
+            if col > 0 && col.saturating_add(width) > terminal_columns {
+                (row, col) = (row.saturating_add(1), 0);
+            }
+            ((row, col), width)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -243,6 +280,60 @@ mod test {
         assert_eq!(deferred_wrap_row([printed], columns), expected);
     }
 
+    /// The column [`deferred_wrap_row`] throws away: it only asks whether the
+    /// run reached the margin, so the cases above prove one bit of this tuple.
+    /// The two `"hello"` cases are that tuple at two widths, since a column is
+    /// only a margin relative to what it is compared against.
+    #[rstest]
+    #[case("hello", 5, Some((5, 0)))]
+    #[case("hello", 6, Some((5, 0)))]
+    // Wide graphemes straddling an odd margin, which division reads as an
+    // exact row and gets both axes wrong on.
+    #[case("日本語日本語", 11, Some((2, 1)))]
+    #[case("日本語日本語日本語日本", 11, Some((2, 2)))]
+    #[case("日a日a日a日a", 7, Some((6, 1)))]
+    #[case("aaa日本語", 7, Some((2, 1)))]
+    #[case("hello world", 5, Some((1, 2)))]
+    // A hard break lands on column 0 of the next row without touching the
+    // margin, so the column alone cannot stand in for the deferred wrap.
+    #[case("ab\n", 5, Some((0, 1)))]
+    #[case("ab\nc", 5, Some((1, 1)))]
+    // A zero-width grapheme at the margin, which the straddle check cannot
+    // see since adding nothing never exceeds the width.
+    #[case(&format!("{}\u{200b}", "a".repeat(20)), 20, Some((0, 1)))]
+    // Wider than the whole terminal: there is no row it would fit on, so it
+    // overflows the one it is on rather than wrapping to another. The column
+    // ends past the margin and `resolve_wrap` moves the cursor off it.
+    #[case("日日", 1, Some((2, 1)))]
+    // No layout exists without columns to lay out in.
+    #[case(&"a".repeat(20), 0, None)]
+    fn wrap_position_reports_the_landing_column(
+        #[case] printed: &str,
+        #[case] columns: u16,
+        #[case] expected: Option<(u16, u16)>,
+    ) {
+        assert_eq!(wrap_position([printed], columns), expected);
+    }
+
+    /// A margin landing on the last row a `u16` can name. `wrap_position`
+    /// saturates `row`, so the resolver has to as well, or it panics in debug
+    /// on a buffer long enough to reach it.
+    #[test]
+    fn resolve_wrap_saturates_at_the_last_row() {
+        assert_eq!(resolve_wrap((20, u16::MAX), 20), (0, u16::MAX));
+        assert_eq!(resolve_wrap((20, 3), 20), (0, 4));
+        // Off the margin the landing passes through untouched.
+        assert_eq!(resolve_wrap((5, u16::MAX), 20), (5, u16::MAX));
+    }
+
+    /// `pieces` are laid end to end, not measured one at a time: `"ab"` and
+    /// `"cd"` each fit three columns alone, and together they do not.
+    #[test]
+    fn wrap_position_lays_pieces_end_to_end() {
+        assert_eq!(wrap_position(["ab", "cd"], 3), Some((1, 1)));
+        assert_eq!(wrap_position(["abcd"], 3), Some((1, 1)));
+    }
+
     /// Regression: no-color rendering strips ANSI bytes before CRLF coercion,
     /// so text after the cursor can start with the raw LF that moves to the
     /// next continuation prompt. The leading replacement was lost before
@@ -266,6 +357,11 @@ mod test {
     #[case("hello", 80, 0)]
     #[case("abcdefghij", 5, 1)]
     #[case("abcdefghijk", 5, 2)]
+    // Wide graphemes straddle the margin instead of packing it, so the text
+    // takes a row division cannot see: 22 columns across 11 is two exact rows
+    // by division and three by layout, 10 across 5 is two and three.
+    #[case("日本語日本語日本語日本", 11, 2)]
+    #[case(&"あ".repeat(5), 5, 2)]
     fn estimate_single_line_wraps_basic(
         #[case] line: &str,
         #[case] columns: u16,
