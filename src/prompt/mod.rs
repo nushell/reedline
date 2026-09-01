@@ -8,4 +8,8 @@ pub use base::{
     DEFAULT_PROMPT_MULTILINE_COLOR, DEFAULT_PROMPT_RIGHT_COLOR,
 };
 
-pub use default::{DefaultPrompt, DefaultPromptSegment};
+pub use default::{
+    DefaultPrompt, DefaultPromptSegment, DEFAULT_INSERT_PROMPT_INDICATOR,
+    DEFAULT_MULTILINE_INDICATOR, DEFAULT_NORMAL_PROMPT_INDICATOR, DEFAULT_PROMPT_INDICATOR,
+    DEFAULT_SELECT_PROMPT_INDICATOR,
+};

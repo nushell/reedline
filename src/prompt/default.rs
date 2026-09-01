@@ -1,3 +1,14 @@
+//! [`DefaultPrompt`] and the indicator constants it renders.
+//!
+//! The four mode indicators are two columns of ASCII each, thus a mode switch
+//! never reflows the input line and no terminal needs a font it might not
+//! have. [`DEFAULT_MULTILINE_INDICATOR`] is deliberately wider, since it marks
+//! a line the prompt did not start rather than a mode.
+//!
+//! The modal three are named for the state, not the dialect: vi and helix
+//! share every value, and the one state whose name they disagree on (vi's
+//! visual, helix's select) would otherwise have nowhere to sit.
+
 use crate::prompt::base::PromptHelixMode;
 use crate::{Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, PromptViMode};
 
@@ -6,10 +17,21 @@ use {
     std::{borrow::Cow, env},
 };
 
-/// The default prompt indicator
+/// Emacs and [`PromptEditMode::Default`], and the glyph the modal insert modes
+/// share. See the module docs for the contract every indicator here keeps.
 pub static DEFAULT_PROMPT_INDICATOR: &str = "> ";
-pub static DEFAULT_VI_INSERT_PROMPT_INDICATOR: &str = ": ";
-pub static DEFAULT_VI_NORMAL_PROMPT_INDICATOR: &str = "> ";
+/// Modal insert. The same glyph as [`DEFAULT_PROMPT_INDICATOR`] on purpose:
+/// both `Vi::default` and `Helix::default` start here, and nothing about
+/// typing differs from emacs, so the mode a newcomer lands in should not look
+/// like a mode they do not know.
+pub static DEFAULT_INSERT_PROMPT_INDICATOR: &str = "> ";
+/// Modal normal. Keystrokes are commands here, which is what the ex prompt's
+/// `:` has meant all along.
+pub static DEFAULT_NORMAL_PROMPT_INDICATOR: &str = ": ";
+/// Vi visual and helix select: the mode whose motions grow a span.
+pub static DEFAULT_SELECT_PROMPT_INDICATOR: &str = "+ ";
+/// Continuation lines, in every edit mode. Wider than the indicators on
+/// purpose: it marks a line the prompt did not start, not a mode.
 pub static DEFAULT_MULTILINE_INDICATOR: &str = "::: ";
 
 /// Simple [`Prompt`] displaying a configurable left and a right prompt.
@@ -64,17 +86,14 @@ impl Prompt for DefaultPrompt {
         match edit_mode {
             PromptEditMode::Default | PromptEditMode::Emacs => DEFAULT_PROMPT_INDICATOR.into(),
             PromptEditMode::Helix(hx_mode) => match hx_mode {
-                PromptHelixMode::Normal | PromptHelixMode::Select => {
-                    DEFAULT_VI_NORMAL_PROMPT_INDICATOR.into()
-                }
-                PromptHelixMode::Insert => DEFAULT_VI_INSERT_PROMPT_INDICATOR.into(),
+                PromptHelixMode::Normal => DEFAULT_NORMAL_PROMPT_INDICATOR.into(),
+                PromptHelixMode::Select => DEFAULT_SELECT_PROMPT_INDICATOR.into(),
+                PromptHelixMode::Insert => DEFAULT_INSERT_PROMPT_INDICATOR.into(),
             },
             PromptEditMode::Vi(vi_mode) => match vi_mode {
-                // Visual reuses the normal indicator (no distinct default glyph yet).
-                PromptViMode::Normal | PromptViMode::Visual => {
-                    DEFAULT_VI_NORMAL_PROMPT_INDICATOR.into()
-                }
-                PromptViMode::Insert => DEFAULT_VI_INSERT_PROMPT_INDICATOR.into(),
+                PromptViMode::Normal => DEFAULT_NORMAL_PROMPT_INDICATOR.into(),
+                PromptViMode::Visual => DEFAULT_SELECT_PROMPT_INDICATOR.into(),
+                PromptViMode::Insert => DEFAULT_INSERT_PROMPT_INDICATOR.into(),
             },
             PromptEditMode::Custom(str) => format!("({str})").into(),
         }
@@ -156,8 +175,59 @@ fn get_now() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::format_working_dir;
+    use super::{
+        format_working_dir, DefaultPrompt, DEFAULT_INSERT_PROMPT_INDICATOR,
+        DEFAULT_MULTILINE_INDICATOR, DEFAULT_NORMAL_PROMPT_INDICATOR, DEFAULT_PROMPT_INDICATOR,
+        DEFAULT_SELECT_PROMPT_INDICATOR,
+    };
+    use crate::{Prompt, PromptEditMode, PromptHelixMode, PromptViMode};
+    use rstest::rstest;
     use std::path::{Path, PathBuf};
+    use unicode_width::UnicodeWidthStr;
+
+    /// The whole point of the assignment, pinned as literals rather than as the
+    /// constants: insert shares emacs's glyph since every modal session starts
+    /// there, and the three states whose keys mean different things each render
+    /// differently. Asserting against the constants would restate the `match`.
+    #[rstest]
+    #[case::default(PromptEditMode::Default, "> ")]
+    #[case::emacs(PromptEditMode::Emacs, "> ")]
+    #[case::vi_insert(PromptEditMode::Vi(PromptViMode::Insert), "> ")]
+    #[case::vi_normal(PromptEditMode::Vi(PromptViMode::Normal), ": ")]
+    #[case::vi_visual(PromptEditMode::Vi(PromptViMode::Visual), "+ ")]
+    #[case::helix_insert(PromptEditMode::Helix(PromptHelixMode::Insert), "> ")]
+    #[case::helix_normal(PromptEditMode::Helix(PromptHelixMode::Normal), ": ")]
+    #[case::helix_select(PromptEditMode::Helix(PromptHelixMode::Select), "+ ")]
+    #[case::custom(PromptEditMode::Custom("fish".into()), "(fish)")]
+    fn indicator_table_splits_the_modal_states(
+        #[case] mode: PromptEditMode,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(
+            DefaultPrompt::default().render_prompt_indicator(mode),
+            expected
+        );
+    }
+
+    /// The equal-width contract the module docs promise, asserted on the
+    /// shipped constants. `Custom` is exempt: its width is the caller's.
+    #[rstest]
+    #[case::base(DEFAULT_PROMPT_INDICATOR)]
+    #[case::insert(DEFAULT_INSERT_PROMPT_INDICATOR)]
+    #[case::normal(DEFAULT_NORMAL_PROMPT_INDICATOR)]
+    #[case::select(DEFAULT_SELECT_PROMPT_INDICATOR)]
+    fn mode_indicators_are_two_columns_of_ascii(#[case] indicator: &str) {
+        assert!(indicator.is_ascii());
+        assert_eq!(indicator.width(), 2);
+    }
+
+    /// The continuation marker is the one that opts out, so pin that it does:
+    /// a silent narrowing to two columns would make it read as a mode.
+    #[test]
+    fn the_multiline_indicator_is_wider_than_a_mode() {
+        assert!(DEFAULT_MULTILINE_INDICATOR.is_ascii());
+        assert!(DEFAULT_MULTILINE_INDICATOR.width() > 2);
+    }
 
     #[cfg(unix)]
     #[test]

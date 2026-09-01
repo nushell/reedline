@@ -5,6 +5,7 @@
 
 use reedline::{
     Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, Reedline, Signal,
+    DEFAULT_MULTILINE_INDICATOR,
 };
 use std::{borrow::Cow, cell::Cell, io};
 
@@ -14,7 +15,6 @@ use std::{borrow::Cow, cell::Cell, io};
 // or rather increments each time the prompt is rendered.
 #[derive(Clone)]
 pub struct CustomPrompt(Cell<u32>, &'static str);
-pub static DEFAULT_MULTILINE_INDICATOR: &str = "::: ";
 impl Prompt for CustomPrompt {
     fn render_prompt_left(&self) -> Cow<'_, str> {
         {
