@@ -828,25 +828,31 @@ impl Editor {
     pub(crate) fn is_cursor_at_buffer_end(&self) -> bool {
         let buf = self.get_buffer();
         let cursor = self.line_buffer.cursor();
-        // An active selection is never a clean end-of-buffer point. Completing a
-        // history hint (or appending) here would run through `delete_selection`
-        // and clobber the selection — so report `false`, matching the old
-        // caret-based check, which a forward selection's caret (one inward from
-        // `len`) already failed.
-        if !cursor.is_empty() {
+        // A selection is never a clean end-of-buffer point: accepting a hint
+        // here would run through `prepare_append_at_buffer_end` and silently
+        // drop it. Under a bar caret the resting cursor is an empty point, so
+        // any non-empty cursor is a selection and shape settles it. A block
+        // caret rests as a min-width-1 range, so shape alone cannot tell a
+        // resting caret from a `v`-started one-grapheme selection covering the
+        // last grapheme; only the mode can. Asking the mode under a bar caret
+        // too would miss the shift-selections emacs and vi insert can hold.
+        let selection = if self.caret_geometry() == CaretGeometry::Block {
+            next_grapheme_boundary(buf, cursor.start()) < cursor.end()
+                || (!cursor.is_empty() && self.edit_mode.is_selection_mode())
+        } else {
+            !cursor.is_empty()
+        };
+        if selection {
             return false;
         }
+        // Measure from the visible caret: `insertion_point` already resolves
+        // the covered grapheme for Block and the trailing gap for Bar, whether
+        // the cursor is a point or a min-width-1 block.
+        let caret = self.insertion_point();
         if self.caret_geometry() == CaretGeometry::Block {
-            // Cell caret (vi normal): the resting point sits *on* the last
-            // grapheme, one inward from `len`. "At the end" means that cell is the
-            // final one — nothing lies to its right. (A bare `head == len` check
-            // never holds here, which is why a history hint stopped completing in
-            // normal mode after the cursor became the single source of truth.)
-            next_grapheme_boundary(buf, cursor.head()) == buf.len()
+            next_grapheme_boundary(buf, caret) == buf.len()
         } else {
-            // Bar caret (emacs / vi insert): at the end iff the head rests past
-            // the last grapheme.
-            cursor.head() == buf.len()
+            caret == buf.len()
         }
     }
 
@@ -3387,6 +3393,28 @@ mod test {
     }
 
     #[test]
+    fn cursor_at_buffer_end_fails_on_a_bar_caret_selection() {
+        // A bar caret rests as an empty point, so any non-empty cursor is a
+        // real selection however narrow: a one-grapheme shift-selection covering
+        // the last grapheme is not `multi_grapheme` and emacs is not a selection
+        // mode, so shape and mode each miss it on their own. Completing a hint
+        // here would collapse the cursor and drop the selection.
+        for mode in [
+            PromptEditMode::Emacs,
+            PromptEditMode::Default,
+            PromptEditMode::Vi(PromptViMode::Insert),
+        ] {
+            let mut editor = editor_with("abc");
+            editor.set_edit_mode(mode.clone());
+            editor.run_edit_command(&EditCommand::MoveToLineEnd { select: false });
+            editor.run_edit_command(&EditCommand::MoveLeft { select: false });
+            editor.run_edit_command(&EditCommand::MoveRight { select: true });
+            assert_eq!(editor.get_selection(), Some((2, 3)), "{mode:?}");
+            assert!(!editor.is_cursor_at_buffer_end(), "{mode:?}");
+        }
+    }
+
+    #[test]
     fn test_vi_normal_mode_inclusive_selection() {
         let mut editor = editor_with("This is some test content");
         editor.line_buffer.set_insertion_point(0);
@@ -4382,6 +4410,20 @@ mod test {
             let mut editor = editor_with(buffer);
             editor.set_edit_mode(PromptEditMode::Helix(crate::PromptHelixMode::Normal));
             editor
+        }
+
+        #[test]
+        fn cursor_at_buffer_end_holds_for_the_resting_block_caret() {
+            // Regression: the resting cursor is a min-width-1 block
+            // `[len-1, len)`, not an empty point, so "at buffer end" must still
+            // hold there, or up/`k` does plain history traversal instead of the
+            // prefix search vi normal gets.
+            let mut editor = helix_editor("abc");
+            editor.run_edit_command(&EditCommand::MoveToLineEnd { select: false });
+            assert!(editor.is_cursor_at_buffer_end());
+            // Not at the end: a min-width-1 block on the first grapheme.
+            editor.run_edit_command(&EditCommand::MoveToLineStart { select: false });
+            assert!(!editor.is_cursor_at_buffer_end());
         }
 
         #[test]

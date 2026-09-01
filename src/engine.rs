@@ -5502,6 +5502,10 @@ mod tests {
         seam_engine(Box::<crate::Vi>::default()).with_hinter(Box::new(FixedHinter(hint)))
     }
 
+    fn helix_with_hint(hint: &'static str) -> Reedline {
+        seam_engine(Box::<crate::Helix>::default()).with_hinter(Box::new(FixedHinter(hint)))
+    }
+
     #[test]
     fn vi_normal_history_hint_appends_at_buffer_end() {
         // The reported bug: a block caret rests on the last grapheme, so the
@@ -5530,6 +5534,91 @@ mod tests {
         )
         .unwrap();
         assert_eq!(rl.editor.get_buffer(), "abc");
+    }
+
+    /// Helix normal rests as a min-width-1 block, not an empty point. The
+    /// buffer-end guard must read that as a resting caret, not a selection, or
+    /// a history hint never completes in normal mode.
+    #[test]
+    fn helix_normal_history_hint_appends_at_buffer_end() {
+        let mut rl = helix_with_hint("def");
+        type_each(&mut rl, &[ch('a'), ch('b'), ch('c'), key(KeyCode::Esc)]);
+        assert!(
+            !rl.editor.line_buffer().cursor().is_empty(),
+            "setup: the helix block caret is a one-grapheme range"
+        );
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::HistoryHintComplete,
+        )
+        .unwrap();
+        assert_eq!(rl.editor.get_buffer(), "abcdef");
+    }
+
+    /// A `v`-started helix selection is still protected, like vi visual.
+    #[test]
+    fn helix_select_selection_blocks_hint_completion() {
+        let mut rl = helix_with_hint("def");
+        type_each(
+            &mut rl,
+            &[ch('a'), ch('b'), ch('c'), key(KeyCode::Esc), ch('v')],
+        );
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::HistoryHintComplete,
+        )
+        .unwrap();
+        assert_eq!(rl.editor.get_buffer(), "abc");
+    }
+
+    /// A retained motion selection in helix *normal* (here `b` sweeping back
+    /// over the word) is multi-grapheme, so it blocks completion even though
+    /// normal is not a selection mode.
+    #[test]
+    fn helix_normal_motion_selection_blocks_hint_completion() {
+        let mut rl = helix_with_hint("def");
+        type_each(
+            &mut rl,
+            &[ch('a'), ch('b'), ch('c'), key(KeyCode::Esc), ch('b')],
+        );
+        let cursor = rl.editor.line_buffer().cursor();
+        assert!(
+            cursor.end() - cursor.start() > 1,
+            "setup: `b` leaves a multi-grapheme selection standing"
+        );
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::HistoryHintComplete,
+        )
+        .unwrap();
+        assert_eq!(rl.editor.get_buffer(), "abc");
+    }
+
+    /// The issue as filed pressed a key, not an event: `Right` reaches
+    /// `HistoryHintComplete` through the keymap's `UntilFound` chain, so this
+    /// covers the wiring the event-level tests above skip past.
+    #[test]
+    fn helix_normal_right_key_completes_the_hint() {
+        let mut rl = helix_with_hint("def");
+        type_each(&mut rl, &[ch('a'), ch('b'), ch('c'), key(KeyCode::Esc)]);
+        drive(&mut rl, &[key(KeyCode::Right)]);
+        assert_eq!(rl.editor.get_buffer(), "abcdef");
+    }
+
+    /// The prefix-search side of the same guard: helix normal's resting block
+    /// still counts as "at buffer end", so `k` prefix-searches history like vi
+    /// normal instead of walking it plainly.
+    #[test]
+    fn helix_normal_k_uses_prefix_search() {
+        let mut rl = seam_engine(Box::<crate::Helix>::default());
+        for entry in ["ls -la", "ls /tmp", "echo hi"] {
+            rl.history
+                .save(HistoryItem::from_command_line(entry))
+                .unwrap();
+        }
+        type_each(&mut rl, &[ch('l'), ch('s'), key(KeyCode::Esc)]);
+        drive(&mut rl, &[ch('k')]);
+        assert_eq!(rl.editor.get_buffer(), "ls /tmp");
     }
 
     #[test]
