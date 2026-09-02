@@ -174,6 +174,28 @@ pub struct PainterSuspendedState {
     /// Recorded here rather than tested at re-use, since by then the screen may have
     /// been resized by whatever ran in between.
     was_flush_at_bottom: bool,
+    /// The cell the cursor sat on when the painter was suspended, `None` when the
+    /// terminal could not be queried. An in-place return lands on exactly this
+    /// cell again; a program that scrolled the screen does not.
+    cursor: Option<(u16, u16)>,
+}
+
+impl PainterSuspendedState {
+    /// Whether the prompt captured in this state can be drawn again where it was,
+    /// given the cell the cursor is on now that the host has returned.
+    ///
+    /// Above the bottom row the stored range decides on its own, as it always has.
+    /// A prompt that sat flush against the bottom is the ambiguous case from
+    /// nushell/reedline#1130: a program that scrolled the terminal also returns
+    /// inside the stored range. The recorded `cursor` tells the two apart, and
+    /// nushell/reedline#1196 is what happens when it is not consulted. A cursor
+    /// that could not be recorded counts as moved: without a measurement there
+    /// is no ground to claim the screen is untouched.
+    fn can_reuse_prompt_at(&self, (column, row): (u16, u16)) -> bool {
+        let inside_range = self.previous_prompt_rows_range.contains(&row);
+        let cursor_unmoved = Some((column, row)) == self.cursor;
+        inside_range && (!self.was_flush_at_bottom || cursor_unmoved)
+    }
 }
 
 /// Screen bounds of the right prompt when it is visible.
@@ -216,15 +238,7 @@ fn select_prompt_row(
     (column, row): (u16, u16), // NOTE: Positions are 0 based here
 ) -> PromptRowSelector {
     if let Some(painter_state) = suspended_state {
-        // Re-use the previous prompt position when the cursor came back inside it,
-        // unless that prompt sat flush against the bottom of the screen. A suspended
-        // program that scrolled the terminal returns with the cursor pinned on the
-        // bottom row, still inside the stored range and indistinguishable from an
-        // in-place return, so re-using there would redraw over the scrolled-up output.
-        // See nushell/reedline#1130.
-        if !painter_state.was_flush_at_bottom
-            && painter_state.previous_prompt_rows_range.contains(&row)
-        {
+        if painter_state.can_reuse_prompt_at((column, row)) {
             let start_row = *painter_state.previous_prompt_rows_range.start();
             return PromptRowSelector::UseExistingPrompt { start_row };
         }
@@ -474,6 +488,9 @@ impl Painter {
             // `final_row` can overshoot the last visible row for a prompt at the very
             // bottom, so this is `>=` rather than an equality.
             was_flush_at_bottom: final_row >= self.screen_height().saturating_sub(1),
+            // One DSR round-trip per suspension is cheap next to whatever the host
+            // is about to run, and it turns "might have scrolled" into a fact.
+            cursor: self.stdout.cursor_position().ok(),
         }
     }
 
@@ -1476,6 +1493,7 @@ mod tests {
         let state = PainterSuspendedState {
             previous_prompt_rows_range: 11..=13,
             was_flush_at_bottom: false,
+            cursor: None,
         };
         assert_eq!(
             select_prompt_row(Some(&state), (0, 12)),
@@ -1484,6 +1502,21 @@ mod tests {
         assert_eq!(
             select_prompt_row(Some(&state), (3, 12)),
             PromptRowSelector::UseExistingPrompt { start_row: 11 }
+        );
+    }
+
+    // A host command that printed output leaves the cursor below the stored
+    // range. That output must survive, so a fresh prompt starts under it.
+    #[test]
+    fn test_select_prompt_row_does_not_reuse_when_cursor_left_the_range() {
+        let state = PainterSuspendedState {
+            previous_prompt_rows_range: 11..=13,
+            was_flush_at_bottom: false,
+            cursor: Some((4, 12)),
+        };
+        assert_eq!(
+            select_prompt_row(Some(&state), (0, 16)),
+            PromptRowSelector::MakeNewPrompt { new_row: 16 }
         );
     }
 
@@ -1499,11 +1532,71 @@ mod tests {
         let state = PainterSuspendedState {
             previous_prompt_rows_range: 5..=7,
             was_flush_at_bottom: true,
+            cursor: None,
         };
         assert_eq!(
             select_prompt_row(Some(&state), (0, 7)),
             PromptRowSelector::MakeNewPrompt { new_row: 7 }
         );
+    }
+
+    // Regression test for nushell/reedline#1196.
+    //
+    // A prompt flush against the bottom is suspended for a host command that
+    // prints nothing (`commandline edit`) or for an alternate-screen editor.
+    // The cursor comes back on the exact cell it left from, so the prompt must
+    // be re-used rather than drawn again one row below.
+    #[test]
+    fn test_select_prompt_row_reuses_flush_prompt_when_cursor_is_unmoved() {
+        let state = PainterSuspendedState {
+            previous_prompt_rows_range: 5..=7,
+            was_flush_at_bottom: true,
+            cursor: Some((10, 7)),
+        };
+        assert_eq!(
+            select_prompt_row(Some(&state), (10, 7)),
+            PromptRowSelector::UseExistingPrompt { start_row: 5 }
+        );
+    }
+
+    // The nushell/reedline#1130 case with the cursor recorded: the host program
+    // scrolled and left the cursor on column 0 of the bottom row, which is not
+    // the cell the painter was suspended on.
+    #[test]
+    fn test_select_prompt_row_does_not_reuse_flush_prompt_when_cursor_moved() {
+        let state = PainterSuspendedState {
+            previous_prompt_rows_range: 5..=7,
+            was_flush_at_bottom: true,
+            cursor: Some((10, 7)),
+        };
+        assert_eq!(
+            select_prompt_row(Some(&state), (0, 7)),
+            PromptRowSelector::MakeNewPrompt { new_row: 7 }
+        );
+    }
+
+    // Above the bottom row the recorded cell is not consulted: the range check
+    // alone decides, exactly as before.
+    #[test]
+    fn test_select_prompt_row_ignores_cursor_when_not_flush() {
+        let state = PainterSuspendedState {
+            previous_prompt_rows_range: 5..=7,
+            was_flush_at_bottom: false,
+            cursor: Some((10, 7)),
+        };
+        assert_eq!(
+            select_prompt_row(Some(&state), (0, 6)),
+            PromptRowSelector::UseExistingPrompt { start_row: 5 }
+        );
+    }
+
+    // Without a terminal to answer the query there is no cursor to compare
+    // against, and the state records that honestly.
+    #[test]
+    fn test_state_before_suspension_records_no_cursor_without_terminal() {
+        let mut painter = Painter::new(W::sink());
+        painter.handle_resize(80, 8);
+        assert_eq!(painter.state_before_suspension().cursor, None);
     }
 
     // The flush-at-bottom fact is captured against the screen the prompt was
