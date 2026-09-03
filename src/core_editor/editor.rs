@@ -4167,87 +4167,250 @@ mod test {
     }
 
     #[rstest]
-    #[case("", 0..0, TextObjectType::Quotes(TextObjectQuote::DoubleQuote), "\"\"")] // add text object in an empty buffer
-    #[case("", 0..0, TextObjectType::Brackets(TextObjectBracket::CurlyBracket), "{}")] // add another type of text object in an empty buffer
-    #[case("text", 0..4, TextObjectType::Brackets(TextObjectBracket::CurlyBracket), "{text}")] // add a text object around a word
-    #[case("text", 0..1, TextObjectType::Brackets(TextObjectBracket::CurlyBracket), "{t}ext")] // add a text object around a character
-    #[case("text", 0..4, TextObjectType::Word, "text")] // Attempting to add a "word" around a word, which won't do anything
-    #[case("text", 0..4, TextObjectType::BigWord, "text")] // Attempting to add a "big word" around a word, which won't do anything
-    #[case("text1 text2 text3", 6..11, TextObjectType::Brackets(TextObjectBracket::CurlyBracket), "text1 {text2} text3")] // Add a text object around a word in the middle of the buffer
-    #[case("text1 {text2} text3", 7..12, TextObjectType::Brackets(TextObjectBracket::CurlyBracket), "text1 {{text2}} text3")] // Add a new text object around a word inside of the same text object
+    #[case(
+        "",
+        Cursor::new(0, 0),
+        TextObjectType::Quotes(TextObjectQuote::DoubleQuote),
+        "\"\""
+    )] // add text object in an empty buffer
+    #[case(
+        "",
+        Cursor::new(0, 0),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        "{}"
+    )] // add another type of text object in an empty buffer
+    #[case(
+        "text",
+        Cursor::new(0, 4),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        "{text}"
+    )] // add a text object around a word
+    #[case(
+        "text",
+        Cursor::new(0, 1),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        "{t}ext"
+    )] // add a text object around a character
+    #[case("text", Cursor::new(0, 4), TextObjectType::Word, "text")] // Attempting to add a "word" around a word, which won't do anything
+    #[case("text", Cursor::new(0, 4), TextObjectType::BigWord, "text")] // Attempting to add a "big word" around a word, which won't do anything
+    #[case(
+        "text1 text2 text3",
+        Cursor::new(6, 11),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        "text1 {text2} text3"
+    )] // Add a text object around a word in the middle of the buffer
+    #[case(
+        "text1 {text2} text3",
+        Cursor::new(7, 12),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        "text1 {{text2}} text3"
+    )] // Add a new text object around a word inside of the same text object
     fn test_add_text_object(
         #[case] input: &str,
-        #[case] cursor_range: Range<usize>,
+        #[case] cursor: Cursor,
         #[case] object_type: TextObjectType,
         #[case] expected_output: &str,
     ) {
         let mut editor = editor_with(input);
-        editor.place(Cursor::new(cursor_range.start, cursor_range.end));
+        editor.place(cursor);
 
         editor.add_text_object(object_type);
         let result = editor.get_buffer();
         assert_eq!(result, expected_output);
     }
     #[rstest]
-    #[case("", 0..0, TextObjectType::Quotes(TextObjectQuote::DoubleQuote), "")] // remove text object in an empty buffer
-    #[case("", 0..0, TextObjectType::Brackets(TextObjectBracket::CurlyBracket), "")] // remove another type of text object in an empty buffer
-    #[case("{}", 0..1, TextObjectType::Brackets(TextObjectBracket::CurlyBracket), "")] // remove another type of text object in an empty buffer
-    #[case("{text}", 0..4, TextObjectType::Brackets(TextObjectBracket::CurlyBracket), "text")] // remove a text object around a word
-    #[case("{t}ext", 0..1, TextObjectType::Brackets(TextObjectBracket::CurlyBracket), "text")] // remove a text object around a character
-    #[case("{text}", 0..4, TextObjectType::Word, "{text}")] // Attempting to remove a "word" around a word, which won't do anything
-    #[case("{text}", 0..4, TextObjectType::BigWord, "{text}")] // Attempting to remove a "big word" around a word, which won't do anything
-    #[case("text1 {text2} text3", 6..11, TextObjectType::Brackets(TextObjectBracket::CurlyBracket), "text1 text2 text3")] // remove a text object around a word in the middle of the buffer
-    #[case("text1 {{text2}} text3", 7..12, TextObjectType::Brackets(TextObjectBracket::CurlyBracket), "text1 {text2} text3")]
+    #[case(
+        "",
+        Cursor::new(0, 0),
+        TextObjectType::Quotes(TextObjectQuote::DoubleQuote),
+        ""
+    )] // remove text object in an empty buffer
+    #[case(
+        "",
+        Cursor::new(0, 0),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        ""
+    )] // remove another type of text object in an empty buffer
+    #[case(
+        "{}",
+        Cursor::new(0, 1),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        ""
+    )] // remove another type of text object in an empty buffer
+    #[case(
+        "{text}",
+        Cursor::new(0, 4),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        "text"
+    )] // remove a text object around a word
+    #[case(
+        "{t}ext",
+        Cursor::new(0, 1),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        "text"
+    )] // remove a text object around a character
+    #[case("{text}", Cursor::new(0, 4), TextObjectType::Word, "{text}")] // Attempting to remove a "word" around a word, which won't do anything
+    #[case("{text}", Cursor::new(0, 4), TextObjectType::BigWord, "{text}")] // Attempting to remove a "big word" around a word, which won't do anything
+    #[case(
+        "text1 {text2} text3",
+        Cursor::new(6, 11),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        "text1 text2 text3"
+    )] // remove a text object around a word in the middle of the buffer
+    #[case(
+        "text1 {{text2}} text3",
+        Cursor::new(7, 12),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        "text1 {text2} text3"
+    )]
     // remove a new text object around a word inside of the same text object
     // For the following test, removing a text object may occur only around the cursor head
-    #[case("text1 {text2} text3", 0..8, TextObjectType::Brackets(TextObjectBracket::CurlyBracket), "text1 text2 text3")] // anchor outside (left), head inside
-    #[case("text1 {text2} text3", 18..8, TextObjectType::Brackets(TextObjectBracket::CurlyBracket), "text1 text2 text3")]
+    #[case(
+        "text1 {text2} text3",
+        Cursor::new(0, 8),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        "text1 text2 text3"
+    )] // anchor outside (left), head inside
+    #[case(
+        "text1 {text2} text3",
+        Cursor::new(18, 8),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        "text1 text2 text3"
+    )]
     // anchor outside (right), head inside
-    // #[case("text1 {text2} text3", 0..2, TextObjectType::Brackets(TextObjectBracket::CurlyBracket), "text1 text2 text3")] // anchor outside, head outside (left) TODO: Bug here, see https://github.com/nushell/reedline/issues/1195
-    // #[case("text1 {text2} text3", 16..2, TextObjectType::Brackets(TextObjectBracket::CurlyBracket), "text1 {text2} text3")] // anchor outside (right), head outside (left) TODO: Bug here, see https://github.com/nushell/reedline/issues/1195
-    #[case("text1 {text2} text3", 18..16, TextObjectType::Brackets(TextObjectBracket::CurlyBracket), "text1 {text2} text3")] // anchor outside, head outside (right)
-    #[case("text1 {text2} text3", 2..16, TextObjectType::Brackets(TextObjectBracket::CurlyBracket), "text1 {text2} text3")] // anchor outside (left), head outside (right)
+    // #[case("text1 {text2} text3", Cursor::new(0, 2), TextObjectType::Brackets(TextObjectBracket::CurlyBracket), "text1 text2 text3")] // anchor outside, head outside (left) TODO: Bug here, see https://github.com/nushell/reedline/issues/1195
+    // #[case("text1 {text2} text3", Cursor::new(16, 2), TextObjectType::Brackets(TextObjectBracket::CurlyBracket), "text1 {text2} text3")] // anchor outside (right), head outside (left) TODO: Bug here, see https://github.com/nushell/reedline/issues/1195
+    #[case(
+        "text1 {text2} text3",
+        Cursor::new(18, 16),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        "text1 {text2} text3"
+    )] // anchor outside, head outside (right)
+    #[case(
+        "text1 {text2} text3",
+        Cursor::new(2, 16),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        "text1 {text2} text3"
+    )] // anchor outside (left), head outside (right)
     fn test_remove_text_object(
         #[case] input: &str,
-        #[case] cursor_range: Range<usize>,
+        #[case] cursor: Cursor,
         #[case] object_type: TextObjectType,
         #[case] expected_output: &str,
     ) {
         let mut editor = editor_with(input);
-        editor.place(Cursor::new(cursor_range.start, cursor_range.end));
+        editor.place(cursor);
 
         editor.remove_text_object(object_type);
         let result = editor.get_buffer();
         assert_eq!(result, expected_output);
     }
     #[rstest]
-    #[case("", 0..0, TextObjectType::Quotes(TextObjectQuote::DoubleQuote), TextObjectType::Brackets(TextObjectBracket::Parenthesis), "")] // replace text object in an empty buffer
-    #[case("", 0..0, TextObjectType::Brackets(TextObjectBracket::CurlyBracket), TextObjectType::Brackets(TextObjectBracket::Parenthesis), "")] // replace another type of text object in an empty buffer
-    #[case("{}", 0..1, TextObjectType::Brackets(TextObjectBracket::CurlyBracket), TextObjectType::Brackets(TextObjectBracket::Parenthesis), "()")] // replace a text object surrounded by nothing else
-    #[case("{text}", 0..4, TextObjectType::Brackets(TextObjectBracket::CurlyBracket), TextObjectType::Brackets(TextObjectBracket::Parenthesis), "(text)")] // replace a text object around a word
-    #[case("{t}ext", 0..1, TextObjectType::Brackets(TextObjectBracket::CurlyBracket), TextObjectType::Brackets(TextObjectBracket::Parenthesis), "(t)ext")] // replace a text object around a character
-    #[case("{text}", 0..4, TextObjectType::Word, TextObjectType::Brackets(TextObjectBracket::Parenthesis), "{text}")] // Attempting to replace a "word" around a word, which won't do anything
-    #[case("{text}", 0..4, TextObjectType::BigWord, TextObjectType::Brackets(TextObjectBracket::Parenthesis), "{text}")] // Attempting to replace a "big word" around a word, which won't do anything
-    #[case("text1 {text2} text3", 6..11, TextObjectType::Brackets(TextObjectBracket::CurlyBracket), TextObjectType::Brackets(TextObjectBracket::Parenthesis), "text1 (text2) text3")] // replace a text object around a word in the middle of the buffer
-    #[case("text1 {{text2}} text3", 7..12, TextObjectType::Brackets(TextObjectBracket::CurlyBracket), TextObjectType::Brackets(TextObjectBracket::Parenthesis), "text1 {(text2)} text3")]
+    #[case(
+        "",
+        Cursor::new(0, 0),
+        TextObjectType::Quotes(TextObjectQuote::DoubleQuote),
+        TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        ""
+    )] // replace text object in an empty buffer
+    #[case(
+        "",
+        Cursor::new(0, 0),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        ""
+    )] // replace another type of text object in an empty buffer
+    #[case(
+        "{}",
+        Cursor::new(0, 1),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        "()"
+    )] // replace a text object surrounded by nothing else
+    #[case(
+        "{text}",
+        Cursor::new(0, 4),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        "(text)"
+    )] // replace a text object around a word
+    #[case(
+        "{t}ext",
+        Cursor::new(0, 1),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        "(t)ext"
+    )] // replace a text object around a character
+    #[case(
+        "{text}",
+        Cursor::new(0, 4),
+        TextObjectType::Word,
+        TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        "{text}"
+    )] // Attempting to replace a "word" around a word, which won't do anything
+    #[case(
+        "{text}",
+        Cursor::new(0, 4),
+        TextObjectType::BigWord,
+        TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        "{text}"
+    )] // Attempting to replace a "big word" around a word, which won't do anything
+    #[case(
+        "text1 {text2} text3",
+        Cursor::new(6, 11),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        "text1 (text2) text3"
+    )] // replace a text object around a word in the middle of the buffer
+    #[case(
+        "text1 {{text2}} text3",
+        Cursor::new(7, 12),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        "text1 {(text2)} text3"
+    )]
     // replace a new text object around a word inside of the same text object
     // For the following test, replacing a text object may occur only around the cursor head
-    #[case("text1 {text2} text3", 0..8, TextObjectType::Brackets(TextObjectBracket::CurlyBracket), TextObjectType::Brackets(TextObjectBracket::Parenthesis), "text1 (text2) text3")] // anchor outside (left), head inside
-    #[case("text1 {text2} text3", 18..8, TextObjectType::Brackets(TextObjectBracket::CurlyBracket), TextObjectType::Brackets(TextObjectBracket::Parenthesis), "text1 (text2) text3")]
+    #[case(
+        "text1 {text2} text3",
+        Cursor::new(0, 8),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        "text1 (text2) text3"
+    )] // anchor outside (left), head inside
+    #[case(
+        "text1 {text2} text3",
+        Cursor::new(18, 8),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        "text1 (text2) text3"
+    )]
     // anchor outside (right), head inside
-    // #[case("text1 {text2} text3", 0..2, (TextObjectType::Brackets(TextObjectBracket::CurlyBracket), TextObjectType::Brackets(TextObjectBracket::Parenthesis)), "text1 {text2} text3")] // anchor outside, head outside (left) TODO: Bug here, see https://github.com/nushell/reedline/issues/1195
-    // #[case("text1 {text2} text3", 16..2, TextObjectType::Brackets(TextObjectBracket::CurlyBracket), TextObjectType::Brackets(TextObjectBracket::Parenthesis), "text1 {text2} text3")] // anchor outside (right), head outside (left) TODO: Bug here, see https://github.com/nushell/reedline/issues/1195
-    #[case("text1 {text2} text3", 18..16, TextObjectType::Brackets(TextObjectBracket::CurlyBracket), TextObjectType::Brackets(TextObjectBracket::Parenthesis), "text1 {text2} text3")] //
-    #[case("text1 {text2} text3", 2..16, TextObjectType::Brackets(TextObjectBracket::CurlyBracket), TextObjectType::Brackets(TextObjectBracket::Parenthesis), "text1 {text2} text3")] // anchor outside (left), head outside (right)
+    // #[case("text1 {text2} text3", Cursor::new(0, 2), (TextObjectType::Brackets(TextObjectBracket::CurlyBracket), TextObjectType::Brackets(TextObjectBracket::Parenthesis)), "text1 {text2} text3")] // anchor outside, head outside (left) TODO: Bug here, see https://github.com/nushell/reedline/issues/1195
+    // #[case("text1 {text2} text3", Cursor::new(16, 2), TextObjectType::Brackets(TextObjectBracket::CurlyBracket), TextObjectType::Brackets(TextObjectBracket::Parenthesis), "text1 {text2} text3")] // anchor outside (right), head outside (left) TODO: Bug here, see https://github.com/nushell/reedline/issues/1195
+    #[case(
+        "text1 {text2} text3",
+        Cursor::new(18, 16),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        "text1 {text2} text3"
+    )] //
+    #[case(
+        "text1 {text2} text3",
+        Cursor::new(2, 16),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        "text1 {text2} text3"
+    )] // anchor outside (left), head outside (right)
     fn test_replace_text_object(
         #[case] input: &str,
-        #[case] cursor_range: Range<usize>,
+        #[case] cursor: Cursor,
         #[case] old: TextObjectType,
         #[case] new: TextObjectType,
         #[case] expected_output: &str,
     ) {
         let mut editor = editor_with(input);
-        editor.place(Cursor::new(cursor_range.start, cursor_range.end));
+        editor.place(cursor);
 
         editor.replace_text_object(old, new);
         let result = editor.get_buffer();
