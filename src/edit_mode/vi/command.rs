@@ -513,11 +513,9 @@ fn char_to_text_object(c: char, scope: TextObjectScope) -> Option<TextObject> {
             scope,
             object_type: TextObjectType::Quotes(TextObjectQuote::All),
         }),
-        _ => TextObjectType::from_char(c).and_then(|tot| {
-            Some(TextObject {
-                scope,
-                object_type: tot,
-            })
+        _ => TextObjectType::from_char(c).map(|tot| TextObject {
+            scope,
+            object_type: tot,
         }),
     }
 }
