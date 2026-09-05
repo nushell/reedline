@@ -266,6 +266,12 @@ pub use painting::{Painter, StyledText};
 mod engine;
 pub use engine::{MouseClickMode, Reedline};
 
+mod paste_interceptor;
+pub use paste_interceptor::{PasteAction, PasteInterceptor};
+
+mod paste_burst_hook;
+pub use paste_burst_hook::PasteBurstHook;
+
 mod result;
 pub use result::{ReedlineError, ReedlineErrorVariants, Result};
 
