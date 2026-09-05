@@ -241,15 +241,15 @@ struct BufferEditor {
 }
 
 impl BufferEditor {
-    /// Renders the editor command template,
+    /// renders the editor command template,
     /// substituting `{file}`, `{line}`, and `{col}` where present.
     pub(crate) fn render_command(&self, line_buffer: &LineBuffer) -> Command {
-        let mut cmd = Command::new(self.command.get_program());
+        let mut rendered = Command::new(self.command.get_program());
 
         for (key, value) in self.command.get_envs() {
             match value {
-                Some(value) => cmd.env(key, value),
-                None => cmd.env_remove(key),
+                Some(value) => rendered.env(key, value),
+                None => rendered.env_remove(key),
             };
         }
 
@@ -267,14 +267,14 @@ impl BufferEditor {
                 .replace("{line}", &line)
                 .replace("{col}", &col);
 
-            cmd.arg(arg);
+            rendered.arg(arg);
         }
 
         if !has_file_placeholder {
-            cmd.arg(&self.temp_file);
+            rendered.arg(&self.temp_file);
         }
 
-        cmd
+        rendered
     }
 
     /// writes the buffer to the temp file,
