@@ -49,20 +49,44 @@ impl Hinter for CwdAwareHinter {
                     .unwrap_or_default()
                     .to_string()
             } else {
-                history
-                    .search(SearchQuery::last_with_prefix(
-                        line.to_string(),
-                        history.session(),
-                    ))
-                    .unwrap_or_default()
-                    .first()
-                    .map_or_else(String::new, |entry| {
-                        entry
-                            .command_line
-                            .get(line.len()..)
+                if let Some(last_word) = line.split_whitespace().last() {
+                    let mut cwd_match = String::new();
+
+                    if let Ok(entries) = std::fs::read_dir(cwd) {
+                        for entry in entries.flatten() {
+                            if let Some(name) = entry.file_name().to_str() {
+                                if name.starts_with(last_word) && name != last_word {
+                                    cwd_match = name.to_string();
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if !cwd_match.is_empty() {
+                        cwd_match
+                            .get(last_word.len()..)
                             .unwrap_or_default()
                             .to_string()
-                    })
+                    } else {
+                        history
+                            .search(SearchQuery::last_with_prefix(
+                                line.to_string(),
+                                history.session(),
+                            ))
+                            .unwrap_or_default()
+                            .first()
+                            .map_or_else(String::new, |entry| {
+                                entry
+                                    .command_line
+                                    .get(line.len()..)
+                                    .unwrap_or_default()
+                                    .to_string()
+                            })
+                    }
+                } else {
+                    String::new()
+                }
             }
         } else {
             String::new()
