@@ -1442,6 +1442,7 @@ impl Reedline {
             | ReedlineEvent::HistoryHintWordComplete
             | ReedlineEvent::OpenEditor
             | ReedlineEvent::Menu(_)
+            | ReedlineEvent::MenuAccept
             | ReedlineEvent::MenuNext
             | ReedlineEvent::MenuPrevious
             | ReedlineEvent::MenuUp
@@ -1489,6 +1490,20 @@ impl Reedline {
                     }
                 }
                 Ok(EventStatus::Inapplicable)
+            }
+            ReedlineEvent::MenuAccept => {
+                // Same accept as `Enter` over an open menu, minus the submit that
+                // `Enter` falls through to when no menu is open. An empty menu has
+                // nothing to splice, so that reports inapplicable too rather than
+                // spending the keypress on closing it.
+                match self.menus.iter_mut().find(|menu| menu.is_active()) {
+                    Some(menu) if !menu.get_values().is_empty() => {
+                        menu.replace_in_buffer(&mut self.editor);
+                        menu.menu_event(MenuEvent::Deactivate);
+                        Ok(EventStatus::Handled)
+                    }
+                    _ => Ok(EventStatus::Inapplicable),
+                }
             }
             ReedlineEvent::MenuNext => {
                 if let Some(menu) = self.menus.iter_mut().find(|menu| menu.is_active()) {
@@ -5481,6 +5496,94 @@ mod tests {
             send_edit(&mut reedline, command.clone());
             assert_eq!(menu_is_active(&reedline), persistent);
         }
+    }
+
+    fn send(reedline: &mut Reedline, event: ReedlineEvent) -> EventStatus {
+        reedline
+            .handle_event(&DefaultPrompt::default(), event)
+            .unwrap()
+    }
+
+    /// Engine with a completion menu opened over "th" by a completer that has no
+    /// word starting with it, so the menu is active but holds no values.
+    fn engine_with_empty_menu() -> Reedline {
+        let completer = Box::new(DefaultCompleter::new_with_wordlen(
+            vec![String::from("xylophone")],
+            1,
+        ));
+        let completion_menu = ReedlineMenu::EngineCompleter(Box::new(
+            ColumnarMenu::default().with_name("completion_menu"),
+        ));
+        let mut reedline = Reedline::create()
+            .with_completer(completer)
+            .with_menu(completion_menu)
+            .with_quick_completions(true);
+
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("th"))]);
+        send(
+            &mut reedline,
+            ReedlineEvent::Menu(String::from("completion_menu")),
+        );
+        assert!(menu_is_active(&reedline), "setup");
+        assert!(reedline.menus[0].get_values().is_empty(), "setup");
+        reedline
+    }
+
+    #[test]
+    fn menu_accept_splices_the_selection_and_closes_the_menu() {
+        let mut reedline = engine_with_active_menu(true, false);
+
+        let status = send(&mut reedline, ReedlineEvent::MenuAccept);
+
+        assert!(matches!(status, EventStatus::Handled));
+        assert_eq!(reedline.current_buffer_contents(), "that");
+        assert!(!menu_is_active(&reedline));
+    }
+
+    #[test]
+    fn menu_accept_without_an_open_menu_is_inapplicable() {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("th"))]);
+
+        let status = send(&mut reedline, ReedlineEvent::MenuAccept);
+
+        assert!(matches!(status, EventStatus::Inapplicable));
+        assert_eq!(reedline.current_buffer_contents(), "th");
+    }
+
+    /// Nothing to splice, so the keypress is not spent on closing the menu; the
+    /// event falls through to whatever the binding lists next.
+    #[test]
+    fn menu_accept_over_an_empty_menu_is_inapplicable_and_leaves_it_open() {
+        let mut reedline = engine_with_empty_menu();
+
+        let status = send(&mut reedline, ReedlineEvent::MenuAccept);
+
+        assert!(matches!(status, EventStatus::Inapplicable));
+        assert!(menu_is_active(&reedline));
+        assert_eq!(reedline.current_buffer_contents(), "th");
+    }
+
+    /// The binding this exists for: space accepts the highlighted completion and
+    /// then types itself, and stays a plain space when no menu is open.
+    #[test]
+    fn menu_accept_chains_with_an_edit_as_a_space_binding() {
+        let space_binding = || {
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::MenuAccept,
+                ReedlineEvent::Edit(vec![EditCommand::InsertChar(' ')]),
+            ])
+        };
+
+        let mut reedline = engine_with_active_menu(true, false);
+        send(&mut reedline, space_binding());
+        assert_eq!(reedline.current_buffer_contents(), "that ");
+        assert!(!menu_is_active(&reedline));
+
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("th"))]);
+        send(&mut reedline, space_binding());
+        assert_eq!(reedline.current_buffer_contents(), "th ");
     }
 
     /// A hinter that always offers a fixed suggestion, so the completion flow can

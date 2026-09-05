@@ -1108,6 +1108,15 @@ pub enum ReedlineEvent {
     /// Trigger a menu event. It activates a menu with the event name
     Menu(String),
 
+    /// Accept the highlighted menu item without submitting the line.
+    ///
+    /// Splices the selection into the buffer and closes the menu, as `Enter` does while
+    /// a menu is open, but stops there. Inapplicable when no menu is active or the
+    /// active one has nothing to accept, so it composes: `UntilFound` falls through to
+    /// the next event, and `Multiple` can follow it with an edit, e.g. a space that
+    /// accepts the completion and keeps typing.
+    MenuAccept,
+
     /// Next element in the menu
     MenuNext,
 
