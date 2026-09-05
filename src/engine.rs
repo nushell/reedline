@@ -253,29 +253,23 @@ impl BufferEditor {
             };
         }
 
-        const FILE: &str = "{file}";
-        const LINE: &str = "{line}";
-        const COL: &str = "{col}";
-
-        let has_file_placeholder = self
-            .command
-            .get_args()
-            .map(OsStr::to_string_lossy)
-            .any(|arg| arg.contains(FILE));
-
         let file = self.temp_file.to_string_lossy();
         let line = (line_buffer.line() + 1).to_string();
         let col = (line_buffer.col() + 1).to_string();
 
-        let args = self
-            .command
-            .get_args()
-            .map(OsStr::to_string_lossy)
-            .map(|arg| arg.replace(FILE, &file))
-            .map(|arg| arg.replace(LINE, &line))
-            .map(|arg| arg.replace(COL, &col));
+        let mut has_file_placeholder = false;
 
-        cmd.args(args);
+        for arg in self.command.get_args().map(OsStr::to_string_lossy) {
+            has_file_placeholder |= arg.contains("{file}");
+
+            let arg = arg
+                .replace("{file}", &file)
+                .replace("{line}", &line)
+                .replace("{col}", &col);
+
+            cmd.arg(arg);
+        }
+
         if !has_file_placeholder {
             cmd.arg(&self.temp_file);
         }
