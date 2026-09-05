@@ -686,6 +686,55 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "_sqlite")]
+    #[test]
+    fn search_by_cwd_prefix_is_literal_and_case_sensitive() -> crate::Result<()> {
+        use crate::history::base::SearchQuery;
+
+        let mut db = SqliteBackedHistory::in_memory()?;
+        for (cmd, cwd) in [
+            ("underscore", "/home/me/my_project"),
+            ("dash", "/home/me/my-project"),
+            ("upper", "/Home/Me/My_Project"),
+            ("parent", "/home/me"),
+        ] {
+            let mut item = HistoryItem::from_command_line(cmd);
+            item.cwd = Some(cwd.to_string());
+            db.save(item)?;
+        }
+
+        let by_prefix = |prefix: &str| SearchQuery {
+            filter: SearchFilter {
+                cwd_prefix: Some(prefix.to_string()),
+                ..SearchFilter::anything(None)
+            },
+            ..SearchQuery::everything(SearchDirection::Forward, None)
+        };
+        let found = |prefix: &str| -> crate::Result<Vec<String>> {
+            Ok(db
+                .search(by_prefix(prefix))?
+                .into_iter()
+                .map(|i| i.command_line)
+                .collect())
+        };
+
+        // `_` is not a `LIKE` wildcard here, so `my-project` must not match.
+        assert_eq!(found("/home/me/my_")?, vec!["underscore".to_string()]);
+        // Matching is case sensitive, like the `command_line` filter.
+        assert_eq!(found("/Home/Me")?, vec!["upper".to_string()]);
+        // A plain prefix still catches the directory and everything below it.
+        assert_eq!(
+            found("/home/me")?,
+            vec![
+                "underscore".to_string(),
+                "dash".to_string(),
+                "parent".to_string()
+            ]
+        );
+        assert_eq!(db.count(by_prefix("/home/me/my_"))?, 1);
+        Ok(())
+    }
+
     #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
     #[test]
     fn save_and_load_with_extra() -> crate::Result<()> {
