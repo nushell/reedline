@@ -328,6 +328,12 @@ pub enum EditCommand {
         select: bool,
     },
 
+    /// Move one WORD to the right
+    MoveBigWordRight {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
+
     /// Move one word to the right, stop at start of word
     MoveWordRightStart {
         /// Select the text between the current cursor position and destination
@@ -812,6 +818,7 @@ impl EditCommand {
             | EditCommand::MoveWordLeft { select, .. }
             | EditCommand::MoveBigWordLeft { select, .. }
             | EditCommand::MoveWordRight { select, .. }
+            | EditCommand::MoveBigWordRight { select, .. }
             | EditCommand::MoveWordRightStart { select, .. }
             | EditCommand::MoveBigWordRightStart { select, .. }
             | EditCommand::MoveWordRightEnd { select, .. }
