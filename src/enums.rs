@@ -57,6 +57,34 @@ pub enum TextObjectScope {
     Around,
 }
 
+/// Text object quote types
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub enum TextObjectQuote {
+    /// '
+    SingleQuote,
+    /// "
+    DoubleQuote,
+    /// \`
+    Tick,
+    /// (, ), \[, ], {, }, <, >
+    All,
+}
+
+/// Text object bracket types
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub enum TextObjectBracket {
+    /// (, )
+    Parenthesis,
+    /// \[, ]
+    SquareBracket,
+    /// {, }
+    CurlyBracket,
+    /// <, >
+    AngleBracket,
+    /// (, ), \[, ], {, }, <, >
+    All,
+}
+
 /// Type of text object to operate on
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub enum TextObjectType {
@@ -64,10 +92,28 @@ pub enum TextObjectType {
     Word,
     /// WORD (delimited only by whitespace)
     BigWord,
-    /// (, ), \[, ], {, }
-    Brackets,
-    /// ", ', `
-    Quote,
+    /// Brackets pairs (`(`, `)`, `[`, `]`, `{`, `}`, `<`, `>`)
+    Brackets(TextObjectBracket),
+    /// Quotes pairs (`"`, `'`, `\``)
+    Quotes(TextObjectQuote),
+}
+
+impl TextObjectType {
+    /// Convert a character to its corresponding [`TextObjectType`](Self)
+    pub fn from_char(ch: char) -> Option<Self> {
+        match ch {
+            'w' => Some(Self::Word),
+            'W' => Some(Self::BigWord),
+            '(' | ')' => Some(Self::Brackets(TextObjectBracket::Parenthesis)),
+            '[' | ']' => Some(Self::Brackets(TextObjectBracket::SquareBracket)),
+            '{' | '}' => Some(Self::Brackets(TextObjectBracket::CurlyBracket)),
+            '<' | '>' => Some(Self::Brackets(TextObjectBracket::AngleBracket)),
+            '"' => Some(Self::Quotes(TextObjectQuote::DoubleQuote)),
+            '\'' => Some(Self::Quotes(TextObjectQuote::SingleQuote)),
+            '`' => Some(Self::Quotes(TextObjectQuote::Tick)),
+            _ => None,
+        }
+    }
 }
 
 /// Text objects that can be operated on with vim-style commands
@@ -394,6 +440,9 @@ pub enum EditCommand {
     /// Select up to a [`MotionTarget`]: drop a fresh anchor at the caret, then
     /// move the head to the target, so the selection covers the span just traveled.
     Select(MotionTarget),
+
+    /// Select a [`TextObject`]
+    SelectTextObject(TextObject),
 
     /// Cut like [`EditCommand::Cut`], except that a `LineWise` span keeps its
     /// line terminators: only the lines' *content* is consumed, so one blank
@@ -753,43 +802,33 @@ pub enum EditCommand {
     #[cfg(feature = "system_clipboard")]
     PasteSystem,
 
-    /// Delete text between matching characters atomically
-    CutInsidePair {
-        /// Left character of the pair
-        left: char,
-        /// Right character of the pair (usually matching bracket)
-        right: char,
-    },
-    /// Yank text between matching characters atomically
-    CopyInsidePair {
-        /// Left character of the pair
-        left: char,
-        /// Right character of the pair (usually matching bracket)
-        right: char,
-    },
-    /// Delete text around matching characters atomically (including the pair characters)
-    CutAroundPair {
-        /// Left character of the pair
-        left: char,
-        /// Right character of the pair (usually matching bracket)
-        right: char,
-    },
-    /// Yank text around matching characters atomically (including the pair characters)
-    CopyAroundPair {
-        /// Left character of the pair
-        left: char,
-        /// Right character of the pair (usually matching bracket)
-        right: char,
-    },
     /// Cut the specified text object
     CutTextObject {
         /// The text object to operate on
         text_object: TextObject,
     },
+
     /// Copy the specified text object
     CopyTextObject {
         /// The text object to operate on
         text_object: TextObject,
+    },
+    /// Add the specified text object around the selection
+    AddTextObject {
+        /// The text object to operate on
+        text_object: TextObjectType,
+    },
+    /// Remove the nearest specified text object around the cursor head
+    RemoveTextObject {
+        /// The text object to operate on
+        text_object: TextObjectType,
+    },
+    /// Replace the nearest specified text object around the cursor head
+    ReplaceTextObject {
+        /// The old text object to replace
+        old: TextObjectType,
+        /// The new text object to replace with
+        new: TextObjectType,
     },
 }
 
@@ -878,8 +917,6 @@ impl EditCommand {
             | EditCommand::UppercaseSelection
             | EditCommand::SwitchcaseSelection
             | EditCommand::Paste
-            | EditCommand::CutInsidePair { .. }
-            | EditCommand::CutAroundPair { .. }
             | EditCommand::CutTextObject { .. }
             | EditCommand::PasteAtSelectionEdge { .. } => EditType::EditText,
 
@@ -911,9 +948,11 @@ impl EditCommand {
             | EditCommand::CopyRightBefore(_)
             | EditCommand::CopyLeftUntil(_)
             | EditCommand::CopyLeftBefore(_)
-            | EditCommand::CopyInsidePair { .. }
-            | EditCommand::CopyAroundPair { .. }
             | EditCommand::CopyTextObject { .. } => EditType::NoOp,
+
+            EditCommand::AddTextObject { .. }
+            | EditCommand::RemoveTextObject { .. }
+            | EditCommand::ReplaceTextObject { .. } => EditType::MoveCursor { select: true },
 
             // The six MotionTarget verbs. `Move`/`Extend` carry the old `select`
             // bool in the verb itself (Extend must be `select: true` so the editor
@@ -922,7 +961,9 @@ impl EditCommand {
             EditCommand::Move(_) => EditType::MoveCursor { select: false },
             EditCommand::Extend(_) => EditType::MoveCursor { select: true },
             EditCommand::CollapseSelection(_) => EditType::MoveCursor { select: false },
-            EditCommand::Select(_) => EditType::MoveCursor { select: true },
+            EditCommand::Select(_) | EditCommand::SelectTextObject(_) => {
+                EditType::MoveCursor { select: true }
+            }
             EditCommand::Cut { .. } => EditType::EditText,
             EditCommand::Copy { .. } => EditType::NoOp,
             EditCommand::Change { .. } => EditType::EditText,

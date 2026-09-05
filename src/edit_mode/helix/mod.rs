@@ -13,7 +13,8 @@ use super::{is_plain_char, is_text_char, parse_non_key_event};
 
 use crate::{
     enums::EventStatus, Direction, EditCommand, EditMode, FindStop, Granularity, Keybindings,
-    MotionTarget, PromptEditMode, PromptHelixMode, ReedlineEvent, WordEdge, WordKind,
+    MotionTarget, PromptEditMode, PromptHelixMode, ReedlineEvent, TextObject, TextObjectScope,
+    TextObjectType, WordEdge, WordKind,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, EnumString)]
@@ -39,6 +40,12 @@ enum Pending {
     Replace,
     /// `g` is waiting for the goto target (`h`/`l`/`g`/`e`).
     Goto,
+    /// `m` is waiting for the matching action
+    MatchStepOne,
+    /// `m`-`a`/`i`/`s`/`d`/`r` is waiting for the surrounding character
+    MatchStepTwo(MatchAction),
+    /// `mr` is waiting for the second text object
+    MatchReplace(TextObjectType),
 }
 
 /// Every parse_event will result in one of three outcomes:
@@ -75,6 +82,31 @@ enum Verb {
     /// of line movement and history traversal applies is decided by the engine
     /// against the *whole* buffer, above where a motion resolves.
     LineOrHistory(Direction),
+    /// `m`. Apply action onto surrounding characters
+    Match(Match),
+}
+
+/// Every matching action possible
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MatchAction {
+    /// `i`. Selects inside a text object
+    Inner,
+    /// `a`. Select around a text object
+    Around,
+    /// `s`. Insert a text object around the selection
+    Set,
+    /// `d`. Delete the nearest text object around the cursor head
+    Delete,
+    /// `r`. Replace a text object by another around the cursor head
+    Replace,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Match {
+    text_object: TextObjectType,
+    /// Useful for replace match action
+    text_object2: Option<TextObjectType>,
+    action: MatchAction,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,7 +170,7 @@ pub struct Helix {
     mode: HelixMode,
     /// Count prefix being accumulated (`3w`).
     count: Option<usize>,
-    /// Prefix key waiting for its argument (`f`/`r`/`g`).
+    /// Prefix key waiting for its argument (`f`/`r`/`g`/`m`).
     pending: Option<Pending>,
 }
 
@@ -336,6 +368,49 @@ fn complete_pending(pending: Pending, count: usize, key: KeyEvent) -> Outcome {
             };
             exec(count, Verb::CollapsingMotion(target), None)
         }
+        Pending::MatchStepOne => {
+            let target = match ch {
+                'a' => MatchAction::Around,
+                'i' => MatchAction::Inner,
+                's' => MatchAction::Set,
+                'd' => MatchAction::Delete,
+                'r' => MatchAction::Replace,
+                _ => return Outcome::Reject,
+            };
+            Outcome::Absorb(Pending::MatchStepTwo(target))
+        }
+        Pending::MatchStepTwo(action) => {
+            let Some(text_object) = TextObjectType::from_char(ch) else {
+                return Outcome::Reject;
+            };
+            if matches!(action, MatchAction::Replace) {
+                return Outcome::Absorb(Pending::MatchReplace(text_object));
+            }
+            exec(
+                count,
+                Verb::Match(Match {
+                    text_object,
+                    text_object2: None,
+                    action,
+                }),
+                None,
+            )
+        }
+        Pending::MatchReplace(old) => {
+            let Some(new) = TextObjectType::from_char(ch) else {
+                return Outcome::Reject;
+            };
+
+            exec(
+                count,
+                Verb::Match(Match {
+                    text_object: old,
+                    text_object2: Some(new),
+                    action: MatchAction::Replace,
+                }),
+                None,
+            )
+        }
     }
 }
 
@@ -376,6 +451,7 @@ fn interpret(mode: HelixMode, count: Option<usize>, key: KeyEvent) -> Outcome {
                 stop: FindStop::Before,
             }),
             'r' => Outcome::Absorb(Pending::Replace),
+            'm' => Outcome::Absorb(Pending::MatchStepOne),
             'w' => exec(
                 count,
                 Verb::SelectingMotion(word(WordKind::Word, WordEdge::Start, Direction::Forward)),
@@ -556,6 +632,32 @@ fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
         // command repeated: it re-reads the selection every time.
         Verb::SelectAll => ReedlineEvent::Edit(vec![EditCommand::SelectAll]),
         Verb::SelectLine => action.repeated(EditCommand::SelectLine),
+        Verb::Match(m) => match m.action {
+            MatchAction::Inner => action.repeated(EditCommand::SelectTextObject(TextObject {
+                scope: TextObjectScope::Inner,
+                object_type: m.text_object,
+            })),
+            MatchAction::Around => action.repeated(EditCommand::SelectTextObject(TextObject {
+                scope: TextObjectScope::Around,
+                object_type: m.text_object,
+            })),
+            MatchAction::Set => ReedlineEvent::Edit(vec![EditCommand::AddTextObject {
+                text_object: m.text_object,
+            }]),
+            MatchAction::Delete => ReedlineEvent::Edit(vec![EditCommand::RemoveTextObject {
+                text_object: m.text_object,
+            }]),
+            MatchAction::Replace => {
+                let Some(new) = m.text_object2 else {
+                    // Should not happened, but just in case...
+                    return ReedlineEvent::None;
+                };
+                ReedlineEvent::Edit(vec![EditCommand::ReplaceTextObject {
+                    old: m.text_object,
+                    new,
+                }])
+            }
+        },
         Verb::Deselect => ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint]),
         Verb::ChangeMode => ReedlineEvent::None,
         // `Up`/`Down` already carry the whole rule: move by line while another
