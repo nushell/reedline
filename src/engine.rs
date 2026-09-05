@@ -246,6 +246,13 @@ impl BufferEditor {
     pub(crate) fn render_command(&self, line_buffer: &LineBuffer) -> Command {
         let mut cmd = Command::new(self.command.get_program());
 
+        for (key, value) in self.command.get_envs() {
+            match value {
+                Some(value) => cmd.env(key, value),
+                None => cmd.env_remove(key),
+            };
+        }
+
         const FILE: &str = "{file}";
         const LINE: &str = "{line}";
         const COL: &str = "{col}";
