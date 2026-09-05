@@ -4,10 +4,27 @@ extend-exclude = ["src/core_editor/line_buffer.rs"]
 [default.extend-words]
 # Ignore false-positives
 iterm = "iterm"
+nd = "nd"
 # For testing completion of the word build
 bui = "bui"
+# For testing partial completion
+ba = "ba"
 # For testing string truncation
 descriptio = "descriptio"
 ot = "ot"
+strin = "strin"
+helo  = "helo"
 # for sqlite backed history
 wheres = "wheres"
+# for list_menu tests
+an1other = "an1other"
+ver2y = "ver2y"
+l3ine = "l3ine"
+4should = "4should"
+wr5ap = "wr5ap"
+ine = "ine"
+# for grapheme tests slicing "café" / "hello"
+caf = "caf"
+hel = "hel"
+# for word-cut tests deleting a char from "foo bar" / "foo.bar baz"
+fo = "fo"

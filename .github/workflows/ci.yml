@@ -28,17 +28,19 @@ jobs:
           - style: basqlite
             flags: "--features bashisms,sqlite"
 
+
     runs-on: ${{ matrix.platform }}
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
 
       - name: Setup Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1.3.4
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+            components: clippy, rustfmt
+
       - name: Setup nextest
         uses: taiki-e/install-action@nextest
-      - name: Setup cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Rustfmt
         run: cargo fmt --all -- --check
@@ -47,7 +49,38 @@ jobs:
         run: cargo clippy ${{ matrix.flags }} --all-targets --all -- -D warnings
 
       - name: Tests
-        run: cargo llvm-cov nextest --all ${{ matrix.flags }} --lcov --output-path lcov.info
+        run: cargo nextest run --all ${{ matrix.flags }}
+
+      - name: Check for clean repo
+        shell: bash
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "there are changes";
+            git status --porcelain
+            exit 1
+          else
+            echo "no changes in working directory";
+          fi
+
+      - name: Check lockfile
+        run: cargo check --locked ${{ matrix.flags }} --all-targets --all
 
       - name: Doctests
         run: cargo test --doc ${{ matrix.flags }}
+
+  # Guards the `rust-version` claim in Cargo.toml, compiling the library as a
+  # consumer on the MSRV would. Kept as a CI job instead of a rust-toolchain.toml
+  # on purpose; everything else floats on stable.
+  msrv-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Rust toolchain (MSRV)
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: "1.95"
+
+      - name: Check the library builds on the MSRV
+        run: cargo check --locked --all-features

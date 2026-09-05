@@ -37,6 +37,26 @@ pub enum SearchDirection {
     Forward,
 }
 
+/// A typed expected value for [`SearchFilter::more_info_json`] filters.
+///
+/// Each variant maps to a JSON scalar type and produces a type-precise SQL comparison
+/// using `json_type()` to avoid collisions between JSON booleans, integers, and strings.
+/// Arrays and objects are intentionally unsupported.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum JsonFilterValue {
+    /// Match a JSON `null` at the given path.
+    Null,
+    /// Match a JSON boolean (`true` or `false`) at the given path.
+    Bool(bool),
+    /// Match a JSON integer at the given path. Does not match JSON `true`/`false` or strings.
+    Integer(i64),
+    /// Match a JSON floating-point number at the given path.
+    Real(f64),
+    /// Match a JSON string at the given path. Does not match numbers or booleans.
+    Text(String),
+}
+
 /// Defines additional filters for querying the [`History`]
 pub struct SearchFilter {
     /// Query for the command line content
@@ -53,6 +73,19 @@ pub struct SearchFilter {
     pub exit_successful: Option<bool>,
     /// Filter on the session id
     pub session: Option<HistorySessionId>,
+    /// Filter by JSON path in the `more_info` column using SQLite's `json_type()` /
+    /// `json_extract()`.
+    ///
+    /// Each entry is `(json_path, expected_value)`. The [`JsonFilterValue`] variant
+    /// determines the exact SQL comparison used, preventing collisions between JSON
+    /// booleans, integers, and strings (e.g. `Bool(true)` will not match integer `1`
+    /// or string `"true"`).
+    ///
+    /// Rows where `more_info` is SQL `NULL` or the JSON path does not exist will not match.
+    /// Only evaluated by [`crate::SqliteBackedHistory`] typed search methods
+    /// (`search_with_extra`); the non-typed [`History`] trait methods and
+    /// [`crate::FileBackedHistory`] ignore this field.
+    pub more_info_json: Option<Vec<(String, JsonFilterValue)>>,
 }
 
 impl SearchFilter {
@@ -88,6 +121,7 @@ impl SearchFilter {
             cwd_prefix: None,
             exit_successful: None,
             session,
+            more_info_json: None,
         }
     }
 }
@@ -146,24 +180,14 @@ impl SearchQuery {
         ))
     }
 
-    /// Get the most recent entry starting with the `prefix` and `cwd` same as the current cwd
+    /// Get the most recent entry starting with the `prefix` and `cwd`
     pub fn last_with_prefix_and_cwd(
         prefix: String,
+        cwd: String,
         session: Option<HistorySessionId>,
     ) -> SearchQuery {
-        let cwd = std::env::current_dir();
-        if let Ok(cwd) = cwd {
-            SearchQuery::last_with_search(SearchFilter::from_text_search_cwd(
-                cwd.to_string_lossy().to_string(),
-                CommandLineSearch::Prefix(prefix),
-                session,
-            ))
-        } else {
-            SearchQuery::last_with_search(SearchFilter::from_text_search(
-                CommandLineSearch::Prefix(prefix),
-                session,
-            ))
-        }
+        let prefix = CommandLineSearch::Prefix(prefix);
+        SearchQuery::last_with_search(SearchFilter::from_text_search_cwd(cwd, prefix, session))
     }
 
     /// Query to get all entries in the given [`SearchDirection`]
@@ -193,8 +217,6 @@ pub trait History: Send {
     /// load a history item by its id
     fn load(&self, id: HistoryItemId) -> Result<HistoryItem>;
 
-    /// retrieves the next unused session id
-
     /// count the results of a query
     fn count(&self, query: SearchQuery) -> Result<i64>;
     /// return the total number of history items
@@ -222,9 +244,9 @@ pub trait History: Send {
 
 #[cfg(test)]
 mod test {
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[cfg(feature = "_sqlite")]
     const IS_FILE_BASED: bool = false;
-    #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
+    #[cfg(not(feature = "_sqlite"))]
     const IS_FILE_BASED: bool = true;
 
     use crate::HistorySessionId;
@@ -246,11 +268,11 @@ mod test {
 
     use super::*;
     fn create_filled_example_history() -> Result<Box<dyn History>> {
-        #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+        #[cfg(feature = "_sqlite")]
         let mut history = crate::SqliteBackedHistory::in_memory()?;
-        #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
+        #[cfg(not(feature = "_sqlite"))]
         let mut history = crate::FileBackedHistory::default();
-        #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
+        #[cfg(not(feature = "_sqlite"))]
         history.save(create_item(1, "/", "dummy", 0))?; // add dummy item so ids start with 1
         history.save(create_item(1, "/home/me", "cd ~/Downloads", 0))?; // 1
         history.save(create_item(1, "/home/me/Downloads", "unzp foo.zip", 1))?; // 2
@@ -268,7 +290,7 @@ mod test {
         Ok(Box::new(history))
     }
 
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[cfg(feature = "_sqlite")]
     #[test]
     fn update_item() -> Result<()> {
         let mut history = create_filled_example_history()?;
@@ -350,6 +372,24 @@ mod test {
     }
 
     #[test]
+    fn search_prefix_is_case_sensitive() -> Result<()> {
+        // Basic prefix search should preserve case
+        //
+        // https://github.com/nushell/nushell/issues/10131
+        let history = create_filled_example_history()?;
+        let res = history.search(SearchQuery {
+            filter: SearchFilter::from_text_search(
+                CommandLineSearch::Prefix("LS ".to_string()),
+                None,
+            ),
+            ..SearchQuery::everything(SearchDirection::Backward, None)
+        })?;
+        search_returned(&*history, res, vec![])?;
+
+        Ok(())
+    }
+
+    #[test]
     fn search_includes() -> Result<()> {
         let history = create_filled_example_history()?;
         let res = history.search(SearchQuery {
@@ -392,7 +432,7 @@ mod test {
     // test that clear() works as expected across multiple instances of History
     #[test]
     fn clear_history_with_backing_file() -> Result<()> {
-        #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+        #[cfg(feature = "_sqlite")]
         fn open_history() -> Box<dyn History> {
             Box::new(
                 crate::SqliteBackedHistory::with_file("target/test-history.db".into(), None, None)
@@ -400,7 +440,7 @@ mod test {
             )
         }
 
-        #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
+        #[cfg(not(feature = "_sqlite"))]
         fn open_history() -> Box<dyn History> {
             Box::new(
                 crate::FileBackedHistory::with_file(100, "target/test-history.txt".into()).unwrap(),
@@ -428,7 +468,7 @@ mod test {
         Ok(())
     }
 
-    #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
+    #[cfg(not(feature = "_sqlite"))]
     #[test]
     fn history_size_zero() -> Result<()> {
         let mut history = crate::FileBackedHistory::new(0)?;

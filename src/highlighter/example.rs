@@ -1,4 +1,4 @@
-use crate::highlighter::Highlighter;
+use crate::highlighter::{AbbrExpandContext, Highlighter};
 use crate::StyledText;
 use nu_ansi_term::{Color, Style};
 
@@ -15,6 +15,35 @@ pub struct ExampleHighlighter {
 }
 
 impl Highlighter for ExampleHighlighter {
+    // A simple example of disabling abbreviation expansion within string literals
+    fn should_expand_abbr(&self, line: &str, cursor: usize, _context: AbbrExpandContext) -> bool {
+        if line.is_empty() || cursor == 0 {
+            return true;
+        }
+        let mut in_single = false;
+        let mut in_double = false;
+        let mut escaped = false;
+        let mut byte_pos = 0;
+        for &byte in line.as_bytes() {
+            if byte_pos >= cursor {
+                break;
+            }
+            if escaped {
+                escaped = false;
+                byte_pos += 1;
+                continue;
+            }
+            match byte {
+                b'\\' => escaped = true,
+                b'\'' if !in_double => in_single = !in_single,
+                b'"' if !in_single => in_double = !in_double,
+                _ => {}
+            }
+            byte_pos += 1;
+        }
+        !(in_single || in_double)
+    }
+
     fn highlight(&self, line: &str, _cursor: usize) -> StyledText {
         let mut styled_text = StyledText::new();
 
@@ -37,17 +66,14 @@ impl Highlighter for ExampleHighlighter {
                     acc
                 }
             });
-            let buffer_split: Vec<&str> = line.splitn(2, &longest_match).collect();
-
-            styled_text.push((
-                Style::new().fg(self.neutral_color),
-                buffer_split[0].to_string(),
-            ));
-            styled_text.push((Style::new().fg(self.match_color), longest_match));
-            styled_text.push((
-                Style::new().bold().fg(self.neutral_color),
-                buffer_split[1].to_string(),
-            ));
+            if let Some((before, after)) = line.split_once(&longest_match) {
+                styled_text.push((Style::new().fg(self.neutral_color), before.to_string()));
+                styled_text.push((Style::new().fg(self.match_color), longest_match));
+                styled_text.push((
+                    Style::new().bold().fg(self.neutral_color),
+                    after.to_string(),
+                ));
+            }
         } else if self.external_commands.is_empty() {
             styled_text.push((Style::new().fg(self.neutral_color), line.to_string()));
         } else {

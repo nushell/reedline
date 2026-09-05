@@ -1,8 +1,8 @@
 use std::{collections::HashSet, ops::Deref};
 
 use crate::{
-    history::SearchQuery, menu_functions::parse_selection_char, Completer, History, HistoryItem,
-    Result, Span, Suggestion,
+    history::SearchQuery, menu_functions::parse_selection_char, Completer, CompletionResult,
+    History, HistoryItem, Result, Span, Suggestion,
 };
 
 const SELECTION_CHAR: char = '!';
@@ -10,10 +10,6 @@ const SELECTION_CHAR: char = '!';
 // The HistoryCompleter is created just before updating the menu
 // It pulls data from the object that contains access to the History
 pub(crate) struct HistoryCompleter<'menu>(&'menu dyn History);
-
-// Safe to implement Send since the HistoryCompleter should only be used when
-// updating the menu and that must happen in the same thread
-unsafe impl<'menu> Send for HistoryCompleter<'menu> {}
 
 fn search_unique(
     completer: &HistoryCompleter,
@@ -30,14 +26,15 @@ fn search_unique(
         .filter(move |value| seen_matching_command_lines.insert(value.command_line.clone())))
 }
 
-impl<'menu> Completer for HistoryCompleter<'menu> {
-    fn complete(&mut self, line: &str, pos: usize) -> Vec<Suggestion> {
-        match search_unique(self, line) {
+impl Completer for HistoryCompleter<'_> {
+    fn complete(&mut self, line: &str, pos: usize) -> CompletionResult {
+        let suggestions = match search_unique(self, line) {
             Err(_) => vec![],
             Ok(search_results) => search_results
                 .map(|value| self.create_suggestion(line, pos, value.command_line.deref()))
                 .collect(),
-        }
+        };
+        CompletionResult::fresh(suggestions)
     }
 
     // TODO: Implement `fn partial_complete()`
@@ -52,6 +49,9 @@ impl<'menu> HistoryCompleter<'menu> {
         Self(history)
     }
 
+    /// Assumes `line.len() <= pos` (i.e. `line` is the cursor-prefix slice).
+    /// Update this span calculation before HistoryMenu opts into `InputMode::FullBuffer`,
+    /// where `line` would be the entire buffer and `pos - line.len()` would underflow.
     fn create_suggestion(&self, line: &str, pos: usize, value: &str) -> Suggestion {
         let span = Span {
             start: pos - line.len(),
@@ -65,6 +65,7 @@ impl<'menu> HistoryCompleter<'menu> {
             extra: None,
             span,
             append_whitespace: false,
+            ..Default::default()
         }
     }
 }
@@ -110,7 +111,8 @@ mod tests {
         let input = "git s";
         let mut sut = HistoryCompleter::new(&history);
 
-        let actual = sut.complete(input, input.len());
+        let completion = sut.complete(input, input.len());
+        let actual = completion.suggestions();
         let num_completions = sut.total_completions(input, input.len());
 
         assert_eq!(actual[0].value, "git status", "it was the last command");
@@ -149,8 +151,9 @@ mod tests {
         let mut sut = HistoryCompleter::new(&history);
         let actual: Vec<String> = sut
             .complete(line, line.len())
-            .into_iter()
-            .map(|suggestion| suggestion.value)
+            .suggestions()
+            .iter()
+            .map(|suggestion| suggestion.value.clone())
             .collect();
         assert_eq!(actual, expected);
         Ok(())

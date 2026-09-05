@@ -1,12 +1,12 @@
 [package]
-authors = ["JT <jonathan.d.turner@gmail.com>", "The Nushell Project Developers"]
+authors = ["The Nushell Project Developers"]
 description = "A readline-like crate for CLI text input"
 edition = "2021"
 license = "MIT"
 name = "reedline"
 repository = "https://github.com/nushell/reedline"
-rust-version = "1.62.1"
-version = "0.30.0"
+rust-version = "1.95.0"
+version = "0.51.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
@@ -20,33 +20,37 @@ chrono = { version = "0.4.19", default-features = false, features = [
     "clock",
     "serde",
 ] }
-crossbeam = { version = "0.8.2", optional = true }
-crossterm = { version = "0.27.0", features = ["serde"] }
+crossterm = { version = "0.29.0", features = ["serde"] }
 fd-lock = "4.0.2"
-itertools = "0.12.0"
+itertools = "0.15.0"
 nu-ansi-term = "0.50.0"
-rusqlite = { version = "0.31.0", optional = true }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = { version = "1.0.79", optional = true }
+rusqlite = { version = "0.40.1", optional = true }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.151", optional = true }
 strip-ansi-escapes = "0.2.0"
-strum = "0.26"
-strum_macros = "0.26"
-thiserror = "1.0.31"
-unicode-segmentation = "1.9.0"
-unicode-width = "0.1.9"
+strum = { version = "0.28.0", features = ["derive"] }
+thiserror = "2.0.19"
+unicase = "2.8.0"
+unicode-segmentation = "1.13.3"
+unicode-width = "0.2"
 
 [dev-dependencies]
-gethostname = "0.4.0"
+gethostname = "1.1.0"
 pretty_assertions = "1.4.0"
-rstest = { version = "0.18.0", default-features = false }
+rstest = { version = "0.26.1", default-features = false }
+serde_json = "1.0"
 tempfile = "3.3.0"
 
 [features]
+default = []
 bashisms = []
-external_printer = ["crossbeam"]
-sqlite = ["rusqlite/bundled", "serde_json"]
-sqlite-dynlib = ["rusqlite", "serde_json"]
+external_printer = []
+sqlite = ["rusqlite/bundled", "serde_json", "_sqlite"]
+sqlite-dynlib = ["rusqlite", "serde_json", "_sqlite"]
+# Internal marker enabled by both sqlite features; never enable it directly.
+_sqlite = []
 system_clipboard = ["arboard"]
+libc = ["crossterm/libc"]
 
 [[example]]
 name = "cwd_aware_hinter"

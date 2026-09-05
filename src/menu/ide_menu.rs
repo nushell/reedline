@@ -1,7 +1,10 @@
 use super::{Menu, MenuBuilder, MenuEvent, MenuSettings};
 use crate::{
     core_editor::Editor,
-    menu_functions::{can_partially_complete, completer_input, replace_in_buffer},
+    menu_functions::{
+        available_lines, get_match_indices, resolve_completer_input, scroll_offset,
+        style_suggestion, truncate_with_ansi, CompletionDisplay, CompletionPhase,
+    },
     painting::Painter,
     Completer, Suggestion,
 };
@@ -97,7 +100,7 @@ impl Default for DefaultIdeMenuDetails {
             border: None,
             cursor_offset: 0,
             description_mode: DescriptionMode::PreferRight,
-            min_description_width: 0,
+            min_description_width: 15,
             max_description_width: 50,
             max_description_height: 10,
             description_offset: 1,
@@ -125,8 +128,6 @@ struct IdeMenuDetails {
     pub space_right: u16,
     /// Corrected description offset, based on the available space
     pub description_offset: u16,
-    /// The shortest of the strings, which the suggestions are based on
-    pub shortest_base_string: String,
 }
 
 /// Menu to present suggestions like similar to Ide completion menus
@@ -140,14 +141,19 @@ pub struct IdeMenu {
     default_details: DefaultIdeMenuDetails,
     /// Working ide menu details keep changing based on the collected values
     working_details: IdeMenuDetails,
-    /// Menu cached values
-    values: Vec<Suggestion>,
-    /// Selected value. Starts at 0
+    /// Suggestions currently displayed and their derived display metrics
+    completions: CompletionDisplay,
+    /// Where the menu stands between activation and a final answer about the
+    /// line on screen: visibility, what may be decided from the values, and
+    /// whether an empty menu means "still computing" or "no records".
+    phase: CompletionPhase,
+    /// Selected index
     selected: u16,
+    /// Number of values that are skipped when printing,
+    /// depending on selected value and terminal height
+    skip_values: u16,
     /// Event sent to the menu
     event: Option<MenuEvent>,
-    /// Longest suggestion found in the values
-    longest_suggestion: usize,
     /// String collected after the menu is activated
     input: Option<String>,
 }
@@ -159,10 +165,11 @@ impl Default for IdeMenu {
             active: false,
             default_details: DefaultIdeMenuDetails::default(),
             working_details: IdeMenuDetails::default(),
-            values: Vec::new(),
+            completions: CompletionDisplay::default(),
+            phase: CompletionPhase::Unasked,
             selected: 0,
+            skip_values: 0,
             event: None,
-            longest_suggestion: 0,
             input: None,
         }
     }
@@ -287,7 +294,7 @@ impl IdeMenu {
 // Menu functionality
 impl IdeMenu {
     fn move_next(&mut self) {
-        if self.selected < (self.values.len() as u16).saturating_sub(1) {
+        if self.selected < (self.completions.suggestions().len() as u16).saturating_sub(1) {
             self.selected += 1;
         } else {
             self.selected = 0;
@@ -298,7 +305,7 @@ impl IdeMenu {
         if self.selected > 0 {
             self.selected -= 1;
         } else {
-            self.selected = self.values.len().saturating_sub(1) as u16;
+            self.selected = self.completions.suggestions().len().saturating_sub(1) as u16;
         }
     }
 
@@ -307,7 +314,7 @@ impl IdeMenu {
     }
 
     fn get_value(&self) -> Option<Suggestion> {
-        self.values.get(self.index()).cloned()
+        self.completions.suggestions().get(self.index()).cloned()
     }
 
     /// Calculates how many rows the Menu will try to use (if available)
@@ -315,8 +322,10 @@ impl IdeMenu {
         let mut values = self.get_values().len() as u16;
 
         if values == 0 {
-            // When the values are empty the no_records_msg is shown, taking 1 line
-            return 1;
+            // While a background completion is still in flight there is nothing to
+            // show yet, so reserve no space; otherwise the empty menu is a settled
+            // result and reserves 1 line for the no_records_msg.
+            return if self.phase.awaiting_results() { 0 } else { 1 };
         }
 
         if self.default_details.border.is_some() {
@@ -340,15 +349,6 @@ impl IdeMenu {
             .min(self.default_details.max_description_height);
 
         values.max(description_height)
-    }
-
-    /// Returns working details width
-    fn get_width(&self) -> u16 {
-        self.working_details.menu_width
-    }
-
-    fn reset_position(&mut self) {
-        self.selected = 0;
     }
 
     fn no_records_msg(&self, use_ansi_coloring: bool) -> String {
@@ -447,7 +447,7 @@ impl IdeMenu {
                         RESET
                     );
                 } else {
-                    *line = format!("{}{}", line, padding);
+                    *line = format!("{line}{padding}");
                 }
             }
         }
@@ -493,67 +493,57 @@ impl IdeMenu {
             .map(|border| border.vertical)
             .unwrap_or_default();
 
+        let display_value = suggestion.display_value();
+
         let padding_right = (self.working_details.completion_width as usize)
-            .saturating_sub(suggestion.value.chars().count() + border_width + padding);
+            .saturating_sub(self.completions.display_widths[index] + border_width + padding);
 
         let max_string_width =
             (self.working_details.completion_width as usize).saturating_sub(border_width + padding);
 
-        let string = if suggestion.value.chars().count() > max_string_width {
-            let mut chars = suggestion
-                .value
-                .chars()
-                .take(max_string_width.saturating_sub(3))
-                .collect::<String>();
-            chars.push_str("...");
-            chars
-        } else {
-            suggestion.value.clone()
-        };
+        let string = truncate_with_ansi(display_value, max_string_width);
 
         if use_ansi_coloring {
-            let match_len = self.working_details.shortest_base_string.len();
+            // TODO(ysthakur): let the user strip quotes, rather than doing it here
+            let is_quote = |c: char| "`'\"".contains(c);
+            let shortest_base = &self.completions.shortest_base_string;
+            let shortest_base = shortest_base
+                .strip_prefix(is_quote)
+                .unwrap_or(shortest_base);
 
-            // Split string so the match text can be styled
-            let (match_str, remaining_str) = string.split_at(match_len);
+            let match_indices =
+                get_match_indices(display_value, &suggestion.match_indices, shortest_base);
 
-            let suggestion_style_prefix = suggestion
-                .style
-                .unwrap_or(self.settings.color.text_style)
-                .prefix();
+            let suggestion_style = suggestion.style.unwrap_or(self.settings.color.text_style);
 
-            if index == self.index() {
-                format!(
-                    "{}{}{}{}{}{}{}{}{}{}{}{}",
-                    vertical_border,
-                    suggestion_style_prefix,
-                    " ".repeat(padding),
-                    self.settings.color.selected_match_style.prefix(),
-                    match_str,
-                    RESET,
-                    suggestion_style_prefix,
-                    self.settings.color.selected_text_style.prefix(),
-                    remaining_str,
-                    " ".repeat(padding_right),
-                    RESET,
-                    vertical_border,
+            let styled_string = if index == self.index() {
+                style_suggestion(
+                    &string,
+                    &match_indices,
+                    &self.settings.color.selected_text_style,
+                    &self.settings.color.selected_match_style,
+                    None,
                 )
             } else {
-                format!(
-                    "{}{}{}{}{}{}{}{}{}{}{}",
-                    vertical_border,
-                    suggestion_style_prefix,
-                    " ".repeat(padding),
-                    self.settings.color.match_style.prefix(),
-                    match_str,
-                    RESET,
-                    suggestion_style_prefix,
-                    remaining_str,
-                    " ".repeat(padding_right),
-                    RESET,
-                    vertical_border,
+                style_suggestion(
+                    &string,
+                    &match_indices,
+                    &suggestion_style,
+                    &self.settings.color.match_style,
+                    None,
                 )
-            }
+            };
+
+            format!(
+                "{}{}{}{}{}{}{}",
+                vertical_border,
+                suggestion_style.prefix(),
+                " ".repeat(padding),
+                styled_string,
+                " ".repeat(padding_right),
+                RESET,
+                vertical_border,
+            )
         } else {
             let marker = if index == self.index() { ">" } else { "" };
 
@@ -568,6 +558,189 @@ impl IdeMenu {
             )
         }
     }
+
+    /// Apply a queued menu event, refreshing the values or moving the selection
+    fn apply_event(
+        &mut self,
+        event: MenuEvent,
+        editor: &mut Editor,
+        completer: &mut dyn Completer,
+    ) {
+        match event {
+            MenuEvent::Activate(updated) | MenuEvent::Edit(updated) => {
+                self.reload(updated, editor, completer)
+            }
+            MenuEvent::Deactivate => {}
+            MenuEvent::NextElement | MenuEvent::MoveDown => self.move_next(),
+            MenuEvent::PreviousElement | MenuEvent::MoveUp => self.move_previous(),
+            MenuEvent::MoveLeft
+            | MenuEvent::MoveRight
+            | MenuEvent::PreviousPage
+            | MenuEvent::NextPage => {}
+        }
+    }
+
+    /// Recompute the completion box geometry from the current suggestions,
+    /// selection, cursor, and terminal size. Runs on every repaint.
+    pub fn recompute_layout(&mut self, painter: &Painter) {
+        const NO_BORDER: u16 = 0;
+        const BORDER_THICKNESS: u16 = 2;
+        let terminal_width = painter.screen_width();
+
+        let border_width = self
+            .default_details
+            .border
+            .as_ref()
+            .map_or(NO_BORDER, |_| BORDER_THICKNESS);
+
+        let available_lines = available_lines(
+            painter,
+            self.min_rows(),
+            self.default_details.max_completion_height,
+        );
+
+        let completion_width = self.calculate_completion_width(border_width);
+        self.working_details.completion_width = completion_width;
+
+        let (start_pos, end_pos) =
+            self.calculate_horizontal_bounds(terminal_width, completion_width, border_width);
+
+        self.apply_description_and_spacing(
+            start_pos,
+            end_pos,
+            completion_width,
+            terminal_width,
+            available_lines,
+        );
+
+        self.working_details.menu_width = completion_width
+            + self.working_details.description_offset
+            + self.working_details.description_width;
+
+        let visible_items = available_lines.saturating_sub(border_width);
+        self.skip_values = scroll_offset(self.selected, self.skip_values, visible_items);
+    }
+
+    fn calculate_completion_width(&self, border_width: u16) -> u16 {
+        const PADDING_SIDES: u16 = 2;
+        const ELLIPSIS_WIDTH: u16 = 3;
+
+        let desired_width = (self.completions.longest_suggestion.min(u16::MAX as usize) as u16)
+            + (PADDING_SIDES * self.default_details.padding)
+            + border_width;
+
+        // Big enough to show "..."
+        let minimum_required = self
+            .default_details
+            .min_completion_width
+            .max(ELLIPSIS_WIDTH + border_width);
+
+        desired_width
+            .min(self.default_details.max_completion_width)
+            .max(minimum_required)
+    }
+
+    fn calculate_horizontal_bounds(
+        &self,
+        terminal_width: u16,
+        completion_width: u16,
+        border_width: u16,
+    ) -> (u16, u16) {
+        const HALF_DIVISOR: u16 = 2;
+
+        let base = self
+            .working_details
+            .cursor_col
+            .saturating_sub(border_width / HALF_DIVISOR);
+
+        // Columns at which completion box begins
+        let mut start_pos = (base as i16 + self.default_details.cursor_offset).max(0) as u16;
+
+        if self.default_details.correct_cursor_pos {
+            let base_string_width = self.completions.shortest_base_string.width();
+            start_pos = start_pos.saturating_sub(base_string_width as u16);
+        }
+
+        // Not enough space on the right, must push completion box left
+        let start_pos = start_pos.min(terminal_width.saturating_sub(completion_width));
+        // The end of the completion box
+        let end_pos = start_pos + completion_width;
+
+        (start_pos, end_pos)
+    }
+
+    fn apply_description_and_spacing(
+        &mut self,
+        start_pos: u16,
+        end_pos: u16,
+        completion_width: u16,
+        terminal_width: u16,
+        available_lines: u16,
+    ) {
+        const EMPTY_DIMENSION: u16 = 0;
+
+        let active_description = self
+            .get_value()
+            .and_then(|value| value.description)
+            .filter(|desc| !desc.is_empty());
+
+        if let Some(description) = active_description {
+            // Horizontal space on the left and right (not including description)
+            let requested_offset = self.default_details.description_offset;
+            let usable_left = start_pos.saturating_sub(requested_offset);
+            let usable_right = terminal_width.saturating_sub(end_pos + requested_offset);
+
+            let place_on_right = match self.default_details.description_mode {
+                DescriptionMode::Left => false,
+                DescriptionMode::Right => true,
+                DescriptionMode::PreferRight => {
+                    usable_right >= self.default_details.min_description_width
+                }
+            };
+
+            let available_space = if place_on_right {
+                usable_right
+            } else {
+                usable_left
+            };
+            let constrained_space = available_space.min(self.default_details.max_description_width);
+
+            let description_width = self
+                .description_dims(
+                    description,
+                    constrained_space,
+                    available_lines,
+                    self.default_details.min_description_width,
+                )
+                .0;
+
+            let max_allowed_offset =
+                terminal_width.saturating_sub(completion_width + description_width);
+            let final_offset = requested_offset.min(max_allowed_offset);
+            let total_footprint = description_width + final_offset;
+
+            self.working_details.description_width = description_width;
+            self.working_details.description_offset = final_offset;
+            self.working_details.description_is_right = place_on_right;
+
+            let footprint = total_footprint as usize;
+            let (left_offset, right_offset) = (
+                (!place_on_right as usize) * footprint,
+                (place_on_right as usize) * footprint,
+            );
+
+            self.working_details.space_left = start_pos.saturating_sub(left_offset as u16);
+            self.working_details.space_right =
+                terminal_width.saturating_sub(end_pos + right_offset as u16);
+        } else {
+            self.working_details.description_width = EMPTY_DIMENSION;
+            self.working_details.description_offset = EMPTY_DIMENSION;
+            self.working_details.description_is_right = false;
+
+            self.working_details.space_left = start_pos;
+            self.working_details.space_right = terminal_width.saturating_sub(end_pos);
+        }
+    }
 }
 
 impl Menu for IdeMenu {
@@ -576,7 +749,7 @@ impl Menu for IdeMenu {
         &self.settings
     }
 
-    /// Deactivates context menu
+    /// Active status
     fn is_active(&self) -> bool {
         self.active
     }
@@ -598,9 +771,9 @@ impl Menu for IdeMenu {
             self.update_values(editor, completer);
         }
 
-        if can_partially_complete(self.get_values(), editor) {
-            // The values need to be updated because the spans need to be
-            // recalculated for accurate replacement in the string
+        // `common_prefix` guards against stale completions
+        if self.completions.common_prefix(editor) {
+            // Recalculate spans for replacement
             self.update_values(editor, completer);
 
             true
@@ -609,38 +782,39 @@ impl Menu for IdeMenu {
         }
     }
 
-    /// Selects what type of event happened with the menu
-    fn menu_event(&mut self, event: MenuEvent) {
-        match &event {
-            MenuEvent::Activate(_) => self.active = true,
-            MenuEvent::Deactivate => {
-                self.active = false;
-                self.input = None;
-            }
-            _ => {}
-        }
+    fn set_active(&mut self, active: bool) {
+        self.active = active;
+    }
 
+    fn clear_input(&mut self) {
+        self.input = None;
+    }
+
+    fn on_activate(&mut self) {
+        // Clear stale completions from previous activation
+        self.completions = CompletionDisplay::default();
+        self.phase.on_activate();
+    }
+
+    /// Queue menu event
+    fn menu_event(&mut self, event: MenuEvent) {
+        self.handle_menu_event(&event);
         self.event = Some(event);
     }
 
     /// Update menu values
+    fn reset_position(&mut self) {
+        self.selected = 0;
+    }
+
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
-        let (input, pos) = completer_input(
-            editor.get_buffer(),
-            editor.insertion_point(),
-            self.input.as_deref(),
-            self.settings.only_buffer_difference,
-        );
-        let (values, base_ranges) = completer.complete_with_base_ranges(&input, pos);
-
-        self.values = values;
-        self.working_details.shortest_base_string = base_ranges
-            .iter()
-            .map(|range| editor.get_buffer()[range.clone()].to_string())
-            .min_by_key(|s| s.len())
-            .unwrap_or_default();
-
-        self.reset_position();
+        let (input, pos) = resolve_completer_input(editor, &mut self.input, &self.settings);
+        let (result, base_ranges) = completer.complete_with_base_ranges(&input, pos);
+        self.phase.note(&result);
+        if let Some(completions) = CompletionDisplay::from_result(result, &base_ranges, editor) {
+            self.completions = completions;
+            self.reset_position();
+        }
     }
 
     /// The working details for the menu changes based on the size of the lines
@@ -652,160 +826,16 @@ impl Menu for IdeMenu {
         painter: &Painter,
     ) {
         if let Some(event) = self.event.take() {
-            // The working value for the menu are updated first before executing any of the
-            match event {
-                MenuEvent::Activate(updated) => {
-                    self.active = true;
-                    self.reset_position();
-
-                    self.input = if self.settings.only_buffer_difference {
-                        Some(editor.get_buffer().to_string())
-                    } else {
-                        None
-                    };
-
-                    if !updated {
-                        self.update_values(editor, completer);
-                    }
-                }
-                MenuEvent::Deactivate => self.active = false,
-                MenuEvent::Edit(updated) => {
-                    self.reset_position();
-
-                    if !updated {
-                        self.update_values(editor, completer);
-                    }
-                }
-                MenuEvent::NextElement | MenuEvent::MoveDown => self.move_next(),
-                MenuEvent::PreviousElement | MenuEvent::MoveUp => self.move_previous(),
-                MenuEvent::MoveLeft
-                | MenuEvent::MoveRight
-                | MenuEvent::PreviousPage
-                | MenuEvent::NextPage => {}
-            }
-
-            self.longest_suggestion = self.get_values().iter().fold(0, |prev, suggestion| {
-                if prev >= suggestion.value.len() {
-                    prev
-                } else {
-                    suggestion.value.len()
-                }
-            });
-
-            let terminal_width = painter.screen_width();
-            let mut cursor_pos = self.working_details.cursor_col;
-
-            if self.default_details.correct_cursor_pos {
-                let base_string = &self.working_details.shortest_base_string;
-
-                cursor_pos = cursor_pos.saturating_sub(base_string.width() as u16);
-            }
-
-            let border_width = if self.default_details.border.is_some() {
-                2
-            } else {
-                0
-            };
-
-            let description = self
-                .get_value()
-                .map(|v| {
-                    if let Some(v) = v.description {
-                        if v.is_empty() {
-                            return None;
-                        } else {
-                            return Some(v);
-                        }
-                    }
-                    None
-                })
-                .unwrap_or_default();
-
-            let mut min_description_width = if description.is_some() {
-                self.default_details.min_description_width
-            } else {
-                0
-            };
-
-            let completion_width = ((self.longest_suggestion.min(u16::MAX as usize) as u16)
-                + 2 * self.default_details.padding
-                + border_width)
-                .min(self.default_details.max_completion_width)
-                .max(self.default_details.min_completion_width)
-                .min(terminal_width.saturating_sub(min_description_width))
-                .max(3 + border_width); // Big enough to show "..."
-
-            let available_description_width = terminal_width
-                .saturating_sub(completion_width)
-                .min(self.default_details.max_description_width)
-                .max(self.default_details.min_description_width)
-                .min(terminal_width.saturating_sub(completion_width));
-
-            min_description_width = min_description_width.min(available_description_width);
-
-            let description_width = if let Some(description) = description {
-                self.description_dims(
-                    description,
-                    available_description_width,
-                    u16::MAX,
-                    min_description_width,
-                )
-                .0
-            } else {
-                0
-            };
-
-            let max_offset = terminal_width.saturating_sub(completion_width + description_width);
-
-            let description_offset = self.default_details.description_offset.min(max_offset);
-
-            self.working_details.completion_width = completion_width;
-            self.working_details.description_width = description_width;
-            self.working_details.description_offset = description_offset;
-            self.working_details.menu_width =
-                completion_width + description_offset + description_width;
-
-            let cursor_offset = self.default_details.cursor_offset;
-
-            self.working_details.description_is_right = match self.default_details.description_mode
-            {
-                DescriptionMode::Left => false,
-                DescriptionMode::Right => true,
-                DescriptionMode::PreferRight => {
-                    // if there is enough space to the right of the cursor, the description is shown on the right
-                    // otherwise it is shown on the left
-                    let potential_right_distance = (terminal_width as i16)
-                        .saturating_sub(
-                            cursor_pos as i16
-                                + cursor_offset
-                                + description_offset as i16
-                                + completion_width as i16,
-                        )
-                        .max(0) as u16;
-
-                    potential_right_distance >= description_width
-                }
-            };
-
-            let space_left = (if self.working_details.description_is_right {
-                cursor_pos as i16 + cursor_offset
-            } else {
-                (cursor_pos as i16 + cursor_offset)
-                    .saturating_sub(description_width as i16 + description_offset as i16)
-            }
-            .max(0) as u16)
-                .min(terminal_width.saturating_sub(self.get_width()));
-
-            let space_right = terminal_width.saturating_sub(space_left + self.get_width());
-
-            self.working_details.space_left = space_left;
-            self.working_details.space_right = space_right;
+            self.apply_event(event, editor, completer);
         }
+
+        self.recompute_layout(painter);
     }
 
-    /// The buffer gets replaced in the Span location
+    /// Apply via `CompletionDisplay::accept` (guards against stale spans)
     fn replace_in_buffer(&self, editor: &mut Editor) {
-        replace_in_buffer(self.get_value(), editor);
+        self.completions
+            .accept(self.index(), editor, self.settings.output_mode);
     }
 
     /// Minimum rows that should be displayed by the menu
@@ -814,16 +844,31 @@ impl Menu for IdeMenu {
     }
 
     fn get_values(&self) -> &[Suggestion] {
-        &self.values
+        self.completions.suggestions()
+    }
+
+    fn results_are_provisional(&self) -> bool {
+        self.phase.provisional()
+    }
+
+    fn is_awaiting_first_answer(&self) -> bool {
+        self.phase.awaiting_first_answer()
     }
 
     fn menu_required_lines(&self, _terminal_columns: u16) -> u16 {
         self.get_rows()
+            .min(self.default_details.max_completion_height)
     }
 
     fn menu_string(&self, available_lines: u16, use_ansi_coloring: bool) -> String {
         if self.get_values().is_empty() {
-            self.no_records_msg(use_ansi_coloring)
+            if self.phase.awaiting_results() {
+                // A background completion is still running; draw nothing rather
+                // than flashing "NO RECORDS FOUND" before the results land.
+                String::new()
+            } else {
+                self.no_records_msg(use_ansi_coloring)
+            }
         } else {
             let border_width = if self.default_details.border.is_some() {
                 2
@@ -832,22 +877,12 @@ impl Menu for IdeMenu {
             };
 
             let available_lines = available_lines.min(self.default_details.max_completion_height);
-            // The skip values represent the number of lines that should be skipped
-            // while printing the menu
-            let skip_values = if self.selected >= available_lines.saturating_sub(border_width) {
-                let skip_lines = self
-                    .selected
-                    .saturating_sub(available_lines.saturating_sub(border_width))
-                    + 1;
-                skip_lines as usize
-            } else {
-                0
-            };
+            let skip_values = self.skip_values as usize;
 
             let available_values = available_lines.saturating_sub(border_width) as usize;
 
             let max_padding = self.working_details.completion_width.saturating_sub(
-                self.longest_suggestion.min(u16::MAX as usize) as u16 + border_width,
+                self.completions.longest_suggestion.min(u16::MAX as usize) as u16 + border_width,
             ) / 2;
 
             let corrected_padding = self.default_details.padding.min(max_padding) as usize;
@@ -930,7 +965,7 @@ impl Menu for IdeMenu {
                             )
                         }
                         Left(suggestion_line) => {
-                            strings[idx] = format!("{}{}", distance_left, suggestion_line);
+                            strings[idx] = format!("{distance_left}{suggestion_line}");
                         }
                         Right(description_line) => strings.push(format!(
                             "{}{}",
@@ -972,7 +1007,7 @@ impl Menu for IdeMenu {
                             );
                         }
                         Right(description_line) => {
-                            strings.push(format!("{}{}", distance_left, description_line,))
+                            strings.push(format!("{distance_left}{description_line}",))
                         }
                     }
                 }
@@ -1054,10 +1089,7 @@ fn truncate_string_list(list: &mut [String], truncation_chars: &str) {
         let mut new_line = String::new();
         for grapheme in chars.into_iter().rev() {
             if to_replace > 0 {
-                new_line.insert_str(
-                    0,
-                    &truncation_chars[truncation_len - to_replace].to_string(),
-                );
+                new_line.insert(0, truncation_chars[truncation_len - to_replace]);
                 to_replace -= 1;
             } else {
                 new_line.insert_str(0, grapheme);
@@ -1365,11 +1397,13 @@ mod tests {
     }
 
     impl Completer for FakeCompleter {
-        fn complete(&mut self, _line: &str, pos: usize) -> Vec<Suggestion> {
-            self.completions
-                .iter()
-                .map(|c| fake_suggestion(c, pos))
-                .collect()
+        fn complete(&mut self, _line: &str, pos: usize) -> crate::CompletionResult {
+            crate::CompletionResult::fresh(
+                self.completions
+                    .iter()
+                    .map(|c| fake_suggestion(c, pos))
+                    .collect::<Vec<_>>(),
+            )
         }
     }
 
@@ -1381,6 +1415,7 @@ mod tests {
             extra: None,
             span: Span { start: 0, end: pos },
             append_whitespace: false,
+            ..Default::default()
         }
     }
 
@@ -1402,6 +1437,144 @@ mod tests {
         assert!(
             editor.is_cursor_at_buffer_end(),
             "cursor should be at the end after completion"
+        );
+    }
+
+    #[test]
+    fn test_regression_panic_on_long_item() {
+        let commands = vec![
+            "hello world 2".into(),
+            "hello another very large option for hello word that will force one column".into(),
+            "this is the reedline crate".into(),
+            "abaaabas".into(),
+            "abaaacas".into(),
+        ];
+
+        let mut completer = Box::new(crate::DefaultCompleter::new_with_wordlen(commands, 2));
+
+        let mut menu = IdeMenu::default().with_name("testmenu");
+        menu.working_details = IdeMenuDetails {
+            cursor_col: 50,
+            menu_width: 50,
+            completion_width: 50,
+            description_width: 50,
+            description_is_right: true,
+            space_left: 50,
+            space_right: 50,
+            description_offset: 50,
+        };
+        let mut editor = Editor::default();
+        // backtick at the end of the line
+        editor.set_buffer(
+            "hello another very large option for hello word that will force one colu".to_string(),
+            UndoBehavior::CreateUndoPoint,
+        );
+
+        menu.update_values(&mut editor, &mut *completer);
+
+        menu.menu_string(500, true);
+    }
+
+    #[test]
+    fn test_menu_create_value_string() {
+        // https://github.com/nushell/nushell/issues/13951
+        let mut completer = FakeCompleter::new(&["おはよう", "`おはよう(`"]);
+        let mut menu = IdeMenu::default().with_name("testmenu");
+        menu.working_details = IdeMenuDetails {
+            cursor_col: 50,
+            menu_width: 50,
+            completion_width: 50,
+            description_width: 50,
+            description_is_right: true,
+            space_left: 50,
+            space_right: 50,
+            description_offset: 50,
+        };
+        let mut editor = Editor::default();
+
+        editor.set_buffer("おは".to_string(), UndoBehavior::CreateUndoPoint);
+        menu.update_values(&mut editor, &mut completer);
+        assert!(menu.menu_string(2, true).contains("おは"));
+    }
+
+    #[test]
+    fn test_menu_create_value_string_starting_with_multibyte_char() {
+        // https://github.com/nushell/nushell/issues/15938
+        let mut completer = FakeCompleter::new(&["验abc/"]);
+        let mut menu = IdeMenu::default().with_name("testmenu");
+        menu.working_details.completion_width = 50;
+        let mut editor = Editor::default();
+
+        editor.set_buffer("ac".to_string(), UndoBehavior::CreateUndoPoint);
+        menu.update_values(&mut editor, &mut completer);
+        assert!(menu.menu_string(10, true).contains("验"));
+    }
+
+    #[test]
+    fn test_menu_create_value_string_long_unicode_string() {
+        // Test for possible panic if a long filename gets truncated
+        let mut completer = FakeCompleter::new(&[&("验".repeat(205) + "abc/")]);
+        let mut menu = IdeMenu::default().with_name("testmenu");
+        menu.working_details.completion_width = 50;
+        let mut editor = Editor::default();
+
+        editor.set_buffer("a".to_string(), UndoBehavior::CreateUndoPoint);
+        menu.update_values(&mut editor, &mut completer);
+        assert!(menu.menu_string(10, true).contains("验"));
+    }
+
+    /// A completer whose result is always `Pending` (a background compute that
+    /// has produced nothing to show yet).
+    struct PendingCompleter;
+
+    impl Completer for PendingCompleter {
+        fn complete(&mut self, _line: &str, _pos: usize) -> crate::CompletionResult {
+            crate::CompletionResult::Pending
+        }
+    }
+
+    #[test]
+    fn pending_update_does_not_move_the_menu() {
+        // once the menu is
+        // anchored under the cursor, a background completion reporting `Pending`
+        // (no results yet) must keep the current suggestions and position
+        // Rather than hopping and jumping around
+        use crate::painting::W;
+
+        let mut painter = Painter::new(W::sink());
+        painter.handle_resize(100, 40);
+        let mut editor = Editor::default();
+
+        // Full-width cap, like nushell's `max_completion_width: (term size).columns`.
+        let mut menu = IdeMenu::default()
+            .with_name("testmenu")
+            .with_max_completion_width(100);
+
+        // Menu opens with real results, anchored under the cursor.
+        let mut fresh = FakeCompleter::new(&["hello", "help"]);
+        menu.menu_event(MenuEvent::Activate(false));
+        menu.set_cursor_pos((20, 3));
+        menu.update_working_details(&mut editor, &mut fresh, &painter);
+        let anchored = menu.working_details.space_left;
+        let shown = menu.get_values().len();
+        assert_eq!(anchored, 20, "menu should open under the cursor");
+        assert_eq!(shown, 2, "menu should show the fresh results");
+
+        // A background recompute reports `Pending` — no menu event.
+        let mut pending = PendingCompleter;
+        menu.update_values(&mut editor, &mut pending);
+        assert!(menu.event.is_none(), "no menu event should be queued");
+        menu.set_cursor_pos((20, 3));
+        menu.update_working_details(&mut editor, &mut pending, &painter);
+
+        assert_eq!(
+            menu.get_values().len(),
+            shown,
+            "pending results must not clear the suggestions already on screen"
+        );
+        assert_eq!(
+            menu.working_details.space_left, anchored,
+            "menu jumped horizontally when a pending update arrived"
         );
     }
 }

@@ -14,14 +14,15 @@ use {
     },
 };
 
-#[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
+#[cfg(not(feature = "_sqlite"))]
 use reedline::FileBackedHistory;
-use reedline::{CursorConfig, MenuBuilder};
+use reedline::{default_helix_insert_keybindings, default_helix_normal_keybindings, Helix};
+use reedline::{CursorConfig, MenuBuilder, OutputMode};
 
 fn main() -> reedline::Result<()> {
     println!("Ctrl-D to quit");
     // quick command like parameter handling
-    let vi_mode = matches!(std::env::args().nth(1), Some(x) if x == "--vi");
+    let mode_arg = std::env::args().nth(1);
 
     // Setting history_per_session to true will allow the history to be isolated to the current session
     // Setting history_per_session to false will allow the history to be shared across all sessions
@@ -32,16 +33,16 @@ fn main() -> reedline::Result<()> {
         None
     };
 
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[cfg(feature = "_sqlite")]
     let history = Box::new(
         reedline::SqliteBackedHistory::with_file(
             "history.sqlite3".into(),
             history_session_id,
             Some(chrono::Utc::now()),
         )
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?,
+        .map_err(std::io::Error::other)?,
     );
-    #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
+    #[cfg(not(feature = "_sqlite"))]
     let history = Box::new(FileBackedHistory::with_file(50, "history.txt".into())?);
     let commands = vec![
         "test".into(),
@@ -76,7 +77,10 @@ fn main() -> reedline::Result<()> {
     let cursor_config = CursorConfig {
         vi_insert: Some(SetCursorStyle::BlinkingBar),
         vi_normal: Some(SetCursorStyle::SteadyBlock),
-        emacs: None,
+        hx_insert: Some(SetCursorStyle::BlinkingBar),
+        hx_normal: Some(SetCursorStyle::SteadyBlock),
+        hx_select: Some(SetCursorStyle::SteadyUnderScore),
+        ..CursorConfig::default()
     };
 
     let mut line_editor = Reedline::create()
@@ -102,25 +106,15 @@ fn main() -> reedline::Result<()> {
             ColumnarMenu::default().with_name("completion_menu"),
         )))
         .with_menu(ReedlineMenu::HistoryMenu(Box::new(
-            ListMenu::default().with_name("history_menu"),
+            ListMenu::default()
+                .with_name("history_menu")
+                .with_output_mode(OutputMode::FullBuffer),
         )));
 
-    let edit_mode: Box<dyn EditMode> = if vi_mode {
-        let mut normal_keybindings = default_vi_normal_keybindings();
-        let mut insert_keybindings = default_vi_insert_keybindings();
-
-        add_menu_keybindings(&mut normal_keybindings);
-        add_menu_keybindings(&mut insert_keybindings);
-
-        add_newline_keybinding(&mut insert_keybindings);
-
-        Box::new(Vi::new(insert_keybindings, normal_keybindings))
-    } else {
-        let mut keybindings = default_emacs_keybindings();
-        add_menu_keybindings(&mut keybindings);
-        add_newline_keybinding(&mut keybindings);
-
-        Box::new(Emacs::new(keybindings))
+    let edit_mode: Box<dyn EditMode> = match mode_arg.as_deref() {
+        Some("--vi") => vi_edit_mode(),
+        Some("--helix") => helix_edit_mode(),
+        _ => emacs_edit_mode(),
     };
 
     line_editor = line_editor.with_edit_mode(edit_mode);
@@ -141,10 +135,10 @@ fn main() -> reedline::Result<()> {
                 break;
             }
             Ok(Signal::Success(buffer)) => {
-                #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+                #[cfg(feature = "_sqlite")]
                 let start = std::time::Instant::now();
                 // save timestamp, cwd, hostname to history
-                #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+                #[cfg(feature = "_sqlite")]
                 if !buffer.is_empty() {
                     line_editor
                         .update_last_command_context(&|mut c: reedline::HistoryItem| {
@@ -195,13 +189,11 @@ fn main() -> reedline::Result<()> {
                 }
                 if buffer.trim() == "clear-history" {
                     let hstry = Box::new(line_editor.history_mut());
-                    hstry
-                        .clear()
-                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                    hstry.clear().map_err(std::io::Error::other)?;
                     continue;
                 }
                 println!("Our buffer: {buffer}");
-                #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+                #[cfg(feature = "_sqlite")]
                 if !buffer.is_empty() {
                     line_editor
                         .update_last_command_context(&|mut c| {
@@ -215,6 +207,7 @@ fn main() -> reedline::Result<()> {
             Ok(Signal::CtrlC) => {
                 // Prompt has been cleared and should start on the next line
             }
+            Ok(_) => {}
             Err(err) => {
                 println!("Error: {err:?}");
             }
@@ -223,6 +216,42 @@ fn main() -> reedline::Result<()> {
 
     println!();
     Ok(())
+}
+
+fn emacs_edit_mode() -> Box<dyn EditMode> {
+    let mut keybindings = default_emacs_keybindings();
+    add_menu_keybindings(&mut keybindings);
+    add_newline_keybinding(&mut keybindings);
+
+    Box::new(Emacs::new(keybindings))
+}
+
+fn vi_edit_mode() -> Box<dyn EditMode> {
+    let mut normal_keybindings = default_vi_normal_keybindings();
+    let mut insert_keybindings = default_vi_insert_keybindings();
+
+    add_menu_keybindings(&mut normal_keybindings);
+    add_menu_keybindings(&mut insert_keybindings);
+
+    add_newline_keybinding(&mut insert_keybindings);
+
+    Box::new(Vi::new(insert_keybindings, normal_keybindings))
+}
+
+fn helix_edit_mode() -> Box<dyn EditMode> {
+    let mut normal_keybindings = default_helix_normal_keybindings();
+    let mut insert_keybindings = default_helix_insert_keybindings();
+
+    add_menu_keybindings(&mut normal_keybindings);
+    add_menu_keybindings(&mut insert_keybindings);
+
+    add_newline_keybinding(&mut insert_keybindings);
+
+    Box::new(
+        Helix::default()
+            .with_insert_keybindings(insert_keybindings)
+            .with_normal_keybindings(normal_keybindings),
+    )
 }
 
 fn add_menu_keybindings(keybindings: &mut Keybindings) {
@@ -246,6 +275,7 @@ fn add_menu_keybindings(keybindings: &mut Keybindings) {
         KeyCode::Tab,
         ReedlineEvent::UntilFound(vec![
             ReedlineEvent::Menu("completion_menu".to_string()),
+            ReedlineEvent::MenuNext,
             ReedlineEvent::Edit(vec![EditCommand::Complete]),
         ]),
     );

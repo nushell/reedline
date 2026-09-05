@@ -27,9 +27,9 @@ fn create_item(cwd: &str, cmd: &str, exit_status: i64) -> reedline::HistoryItem 
 
 fn create_filled_example_history(home_dir: &str, orig_dir: &str) -> Box<dyn reedline::History> {
     use reedline::History;
-    #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
+    #[cfg(not(feature = "_sqlite"))]
     let mut history = Box::new(reedline::FileBackedHistory::new(100));
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[cfg(feature = "_sqlite")]
     let mut history = Box::new(reedline::SqliteBackedHistory::in_memory().unwrap());
 
     history.save(create_item(orig_dir, "dummy", 0)).unwrap(); // add dummy item so ids start with 1
@@ -80,6 +80,7 @@ fn main() -> io::Result<()> {
                 println!("\nAborted!");
                 break Ok(());
             }
+            _ => {}
         }
         iterations += 1;
     }

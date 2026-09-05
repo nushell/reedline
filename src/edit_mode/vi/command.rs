@@ -1,15 +1,66 @@
-use super::{motion::Motion, motion::ViCharSearch, parser::ReedlineOption};
-use crate::{EditCommand, ReedlineEvent, Vi};
+use super::{motion::Motion, parser::ReedlineOption, ViMode};
+use crate::enums::{TextObject, TextObjectScope, TextObjectType};
+use crate::{Direction, EditCommand, Granularity, MotionTarget, ReedlineEvent, Vi};
 use std::iter::Peekable;
 
-pub fn parse_command<'iter, I>(input: &mut Peekable<I>) -> Option<Command>
+pub fn parse_command<'iter, I>(mode: ViMode, input: &mut Peekable<I>) -> Option<Command>
 where
     I: Iterator<Item = &'iter char>,
 {
     match input.peek() {
         Some('d') => {
             let _ = input.next();
-            Some(Command::Delete)
+            // Checking for "di(" or "diw" etc.
+            if let Some('i') = input.peek() {
+                let _ = input.next();
+                input.next().and_then(|c| {
+                    bracket_pair_for(*c)
+                        .map(|(left, right)| Command::DeleteInsidePair { left, right })
+                        .or_else(|| {
+                            char_to_text_object(*c, TextObjectScope::Inner)
+                                .map(|text_object| Command::DeleteTextObject { text_object })
+                        })
+                })
+            } else if let Some('a') = input.peek() {
+                let _ = input.next();
+                input.next().and_then(|c| {
+                    bracket_pair_for(*c)
+                        .map(|(left, right)| Command::DeleteAroundPair { left, right })
+                        .or_else(|| {
+                            char_to_text_object(*c, TextObjectScope::Around)
+                                .map(|text_object| Command::DeleteTextObject { text_object })
+                        })
+                })
+            } else {
+                Some(Command::Delete)
+            }
+        }
+        // Checking for "yi(" or "yiw" etc.
+        Some('y') => {
+            let _ = input.next();
+            if let Some('i') = input.peek() {
+                let _ = input.next();
+                input.next().and_then(|c| {
+                    bracket_pair_for(*c)
+                        .map(|(left, right)| Command::YankInsidePair { left, right })
+                        .or_else(|| {
+                            char_to_text_object(*c, TextObjectScope::Inner)
+                                .map(|text_object| Command::YankTextObject { text_object })
+                        })
+                })
+            } else if let Some('a') = input.peek() {
+                let _ = input.next();
+                input.next().and_then(|c| {
+                    bracket_pair_for(*c)
+                        .map(|(left, right)| Command::YankAroundPair { left, right })
+                        .or_else(|| {
+                            char_to_text_object(*c, TextObjectScope::Around)
+                                .map(|text_object| Command::YankTextObject { text_object })
+                        })
+                })
+            } else {
+                Some(Command::Yank)
+            }
         }
         Some('p') => {
             let _ = input.next();
@@ -27,24 +78,47 @@ where
             let _ = input.next();
             Some(Command::EnterViAppend)
         }
-        Some('u') => {
+        Some('u') if mode == ViMode::Normal => {
             let _ = input.next();
             Some(Command::Undo)
         }
+        // Checking for "ci(" or "ciw" etc.
         Some('c') => {
             let _ = input.next();
-            Some(Command::Change)
+            if let Some('i') = input.peek() {
+                let _ = input.next();
+                input.next().and_then(|c| {
+                    bracket_pair_for(*c)
+                        .map(|(left, right)| Command::ChangeInsidePair { left, right })
+                        .or_else(|| {
+                            char_to_text_object(*c, TextObjectScope::Inner)
+                                .map(|text_object| Command::ChangeTextObject { text_object })
+                        })
+                })
+            } else if let Some('a') = input.peek() {
+                let _ = input.next();
+                input.next().and_then(|c| {
+                    char_to_text_object(*c, TextObjectScope::Around)
+                        .map(|text_object| Command::ChangeTextObject { text_object })
+                })
+            } else {
+                Some(Command::Change)
+            }
         }
         Some('x') => {
             let _ = input.next();
             Some(Command::DeleteChar)
         }
+        Some('X') => {
+            let _ = input.next();
+            Some(Command::DeleteCharBackward)
+        }
         Some('r') => {
             let _ = input.next();
-            match input.next() {
-                Some(c) => Some(Command::ReplaceChar(*c)),
-                None => Some(Command::Incomplete),
-            }
+            input
+                .next()
+                .map(|c| Command::ReplaceChar(*c))
+                .or(Some(Command::Incomplete))
         }
         Some('s') => {
             let _ = input.next();
@@ -82,6 +156,30 @@ where
             let _ = input.next();
             Some(Command::RepeatLastAction)
         }
+        Some(&&o @ ('o' | 'O')) => match mode {
+            ViMode::Normal => {
+                let _ = input.next();
+                if o.is_ascii_lowercase() {
+                    Some(Command::NewlineBelow)
+                } else {
+                    Some(Command::NewlineAbove)
+                }
+            }
+            ViMode::Visual => {
+                let _ = input.next();
+                Some(Command::SwapCursorAndAnchor)
+            }
+            // This arm should be unreachable
+            ViMode::Insert => None,
+        },
+        Some(&&u @ ('u' | 'U')) if mode == ViMode::Visual => {
+            let _ = input.next();
+            if u.is_ascii_lowercase() {
+                Some(Command::Lowercase)
+            } else {
+                Some(Command::Uppercase)
+            }
+        }
         _ => None,
     }
 }
@@ -91,8 +189,11 @@ pub enum Command {
     Incomplete,
     Delete,
     DeleteChar,
+    DeleteCharBackward,
     ReplaceChar(char),
     SubstituteCharWithInsert,
+    NewlineAbove,
+    NewlineBelow,
     PasteAfter,
     PasteBefore,
     EnterViAppend,
@@ -105,8 +206,21 @@ pub enum Command {
     RewriteCurrentLine,
     Change,
     HistorySearch,
+    Lowercase,
+    Uppercase,
     Switchcase,
     RepeatLastAction,
+    Yank,
+    // These DoSthInsidePair commands are agnostic to whether user pressed the left char or right char
+    ChangeInsidePair { left: char, right: char },
+    DeleteInsidePair { left: char, right: char },
+    YankInsidePair { left: char, right: char },
+    DeleteAroundPair { left: char, right: char },
+    YankAroundPair { left: char, right: char },
+    ChangeTextObject { text_object: TextObject },
+    YankTextObject { text_object: TextObject },
+    DeleteTextObject { text_object: TextObject },
+    SwapCursorAndAnchor,
 }
 
 impl Command {
@@ -114,12 +228,13 @@ impl Command {
         match self {
             Command::Delete => Some('d'),
             Command::Change => Some('c'),
+            Command::Yank => Some('y'),
             _ => None,
         }
     }
 
     pub fn requires_motion(&self) -> bool {
-        matches!(self, Command::Delete | Command::Change)
+        matches!(self, Command::Delete | Command::Change | Command::Yank)
     }
 
     pub fn to_reedline(&self, vi_state: &mut Vi) -> Vec<ReedlineOption> {
@@ -128,6 +243,8 @@ impl Command {
             Self::EnterViAppend => vec![ReedlineOption::Edit(EditCommand::MoveRight {
                 select: false,
             })],
+            Self::NewlineAbove => vec![ReedlineOption::Edit(EditCommand::InsertNewlineAbove)],
+            Self::NewlineBelow => vec![ReedlineOption::Edit(EditCommand::InsertNewlineBelow)],
             Self::PasteAfter => vec![ReedlineOption::Edit(EditCommand::PasteCutBufferAfter)],
             Self::PasteBefore => vec![ReedlineOption::Edit(EditCommand::PasteCutBufferBefore)],
             Self::Undo => vec![ReedlineOption::Edit(EditCommand::Undo)],
@@ -139,20 +256,114 @@ impl Command {
             Self::PrependToStart => vec![ReedlineOption::Edit(EditCommand::MoveToLineStart {
                 select: false,
             })],
-            Self::RewriteCurrentLine => vec![ReedlineOption::Edit(EditCommand::CutCurrentLine)],
-            Self::DeleteChar => vec![ReedlineOption::Edit(EditCommand::CutChar)],
+            Self::DeleteCharBackward => {
+                if vi_state.mode == ViMode::Visual {
+                    vec![ReedlineOption::Edit(EditCommand::CutSelection {
+                        granularity: Granularity::LineWise,
+                    })]
+                } else {
+                    vec![ReedlineOption::Edit(EditCommand::CutCharLeft)]
+                }
+            }
+            // `S` ≡ `cc` (vim): change the whole line, keeping the blank line
+            // for insert mode and filling the register linewise.
+            Self::RewriteCurrentLine => vec![ReedlineOption::Edit(EditCommand::Change {
+                target: MotionTarget::LineEdge(Direction::Forward),
+                granularity: Granularity::LineWise,
+            })],
+            Self::DeleteChar => {
+                if vi_state.mode == ViMode::Visual {
+                    vec![ReedlineOption::Edit(EditCommand::CutSelection {
+                        granularity: Granularity::CharWise,
+                    })]
+                } else {
+                    vec![ReedlineOption::Edit(EditCommand::CutChar)]
+                }
+            }
             Self::ReplaceChar(c) => {
                 vec![ReedlineOption::Edit(EditCommand::ReplaceChar(*c))]
             }
-            Self::SubstituteCharWithInsert => vec![ReedlineOption::Edit(EditCommand::CutChar)],
+            Self::SubstituteCharWithInsert => {
+                if vi_state.mode == ViMode::Visual {
+                    vec![ReedlineOption::Edit(EditCommand::CutSelection {
+                        granularity: Granularity::CharWise,
+                    })]
+                } else {
+                    vec![ReedlineOption::Edit(EditCommand::CutChar)]
+                }
+            }
             Self::HistorySearch => vec![ReedlineOption::Event(ReedlineEvent::SearchHistory)],
-            Self::Switchcase => vec![ReedlineOption::Edit(EditCommand::SwitchcaseChar)],
-            // Mark a command as incomplete whenever a motion is required to finish the command
-            Self::Delete | Self::Change | Self::Incomplete => vec![ReedlineOption::Incomplete],
-            Command::RepeatLastAction => match &vi_state.previous {
+            Self::Lowercase => {
+                vec![ReedlineOption::Edit(EditCommand::LowercaseSelection)]
+            }
+            Self::Uppercase => {
+                vec![ReedlineOption::Edit(EditCommand::UppercaseSelection)]
+            }
+            Self::Switchcase => {
+                if vi_state.mode == ViMode::Visual {
+                    vec![ReedlineOption::Edit(EditCommand::SwitchcaseSelection)]
+                } else {
+                    vec![ReedlineOption::Edit(EditCommand::SwitchcaseChar)]
+                }
+            }
+            // Whenever a motion is required to finish the command we must be in visual mode
+            Self::Delete | Self::Change => vec![ReedlineOption::Edit(EditCommand::CutSelection {
+                granularity: Granularity::CharWise,
+            })],
+            Self::Yank => vec![ReedlineOption::Edit(EditCommand::CopySelection)],
+            Self::Incomplete => vec![ReedlineOption::Incomplete],
+            Self::RepeatLastAction => match &vi_state.previous {
                 Some(event) => vec![ReedlineOption::Event(event.clone())],
                 None => vec![],
             },
+            Self::ChangeInsidePair { left, right } => {
+                vec![ReedlineOption::Edit(EditCommand::CutInsidePair {
+                    left: *left,
+                    right: *right,
+                })]
+            }
+            Self::DeleteInsidePair { left, right } => {
+                vec![ReedlineOption::Edit(EditCommand::CutInsidePair {
+                    left: *left,
+                    right: *right,
+                })]
+            }
+            Self::YankInsidePair { left, right } => {
+                vec![ReedlineOption::Edit(EditCommand::CopyInsidePair {
+                    left: *left,
+                    right: *right,
+                })]
+            }
+            Self::DeleteAroundPair { left, right } => {
+                vec![ReedlineOption::Edit(EditCommand::CutAroundPair {
+                    left: *left,
+                    right: *right,
+                })]
+            }
+            Self::YankAroundPair { left, right } => {
+                vec![ReedlineOption::Edit(EditCommand::CopyAroundPair {
+                    left: *left,
+                    right: *right,
+                })]
+            }
+            Self::ChangeTextObject { text_object } => {
+                vec![ReedlineOption::Edit(EditCommand::CutTextObject {
+                    text_object: *text_object,
+                })]
+            }
+            Self::YankTextObject { text_object } => {
+                vec![ReedlineOption::Edit(EditCommand::CopyTextObject {
+                    text_object: *text_object,
+                })]
+            }
+            Self::DeleteTextObject { text_object } => {
+                vec![ReedlineOption::Edit(EditCommand::CutTextObject {
+                    text_object: *text_object,
+                })]
+            }
+            Self::SwapCursorAndAnchor => {
+                vec![ReedlineOption::Edit(EditCommand::SwapCursorAndAnchor)]
+            }
         }
     }
 
@@ -163,107 +374,136 @@ impl Command {
     ) -> Option<Vec<ReedlineOption>> {
         match self {
             Self::Delete => match motion {
-                Motion::End => Some(vec![ReedlineOption::Edit(EditCommand::CutToLineEnd)]),
-                Motion::Line => Some(vec![ReedlineOption::Edit(EditCommand::CutCurrentLine)]),
-                Motion::NextWord => {
-                    Some(vec![ReedlineOption::Edit(EditCommand::CutWordRightToNext)])
-                }
-                Motion::NextBigWord => Some(vec![ReedlineOption::Edit(
-                    EditCommand::CutBigWordRightToNext,
+                // `dd` — the whole current line, linewise.
+                Motion::Line => Some(vec![ReedlineOption::Edit(EditCommand::Cut {
+                    target: MotionTarget::LineEdge(Direction::Forward),
+                    granularity: Granularity::LineWise,
+                })]),
+                // Word and line-edge motions lower through one parameterized verb:
+                // cut to the motion's target (`operator_span` makes `e`/`E` inclusive).
+                Motion::NextWord
+                | Motion::NextBigWord
+                | Motion::NextWordEnd
+                | Motion::NextBigWordEnd
+                | Motion::PreviousWord
+                | Motion::PreviousBigWord
+                | Motion::Start
+                | Motion::End => motion.target().map(|target| {
+                    vec![ReedlineOption::Edit(EditCommand::Cut {
+                        target,
+                        granularity: Granularity::CharWise,
+                    })]
+                }),
+                Motion::RightUntil(_)
+                | Motion::RightBefore(_)
+                | Motion::LeftUntil(_)
+                | Motion::LeftBefore(_) => motion.target().map(|target| {
+                    vi_state.last_char_search = Some(target);
+                    vec![ReedlineOption::Edit(EditCommand::Cut {
+                        target,
+                        granularity: Granularity::CharWise,
+                    })]
+                }),
+                Motion::NonBlankStart => Some(vec![ReedlineOption::Edit(
+                    EditCommand::CutFromLineNonBlankStart,
                 )]),
-                Motion::NextWordEnd => Some(vec![ReedlineOption::Edit(EditCommand::CutWordRight)]),
-                Motion::NextBigWordEnd => {
-                    Some(vec![ReedlineOption::Edit(EditCommand::CutBigWordRight)])
-                }
-                Motion::PreviousWord => Some(vec![ReedlineOption::Edit(EditCommand::CutWordLeft)]),
-                Motion::PreviousBigWord => {
-                    Some(vec![ReedlineOption::Edit(EditCommand::CutBigWordLeft)])
-                }
-                Motion::RightUntil(c) => {
-                    vi_state.last_char_search = Some(ViCharSearch::ToRight(*c));
-                    Some(vec![ReedlineOption::Edit(EditCommand::CutRightUntil(*c))])
-                }
-                Motion::RightBefore(c) => {
-                    vi_state.last_char_search = Some(ViCharSearch::TillRight(*c));
-                    Some(vec![ReedlineOption::Edit(EditCommand::CutRightBefore(*c))])
-                }
-                Motion::LeftUntil(c) => {
-                    vi_state.last_char_search = Some(ViCharSearch::ToLeft(*c));
-                    Some(vec![ReedlineOption::Edit(EditCommand::CutLeftUntil(*c))])
-                }
-                Motion::LeftBefore(c) => {
-                    vi_state.last_char_search = Some(ViCharSearch::TillLeft(*c));
-                    Some(vec![ReedlineOption::Edit(EditCommand::CutLeftBefore(*c))])
-                }
-                Motion::Start => Some(vec![ReedlineOption::Edit(EditCommand::CutFromLineStart)]),
                 Motion::Left => Some(vec![ReedlineOption::Edit(EditCommand::Backspace)]),
                 Motion::Right => Some(vec![ReedlineOption::Edit(EditCommand::Delete)]),
-                Motion::Up => None,
-                Motion::Down => None,
-                Motion::ReplayCharSearch => vi_state
-                    .last_char_search
-                    .as_ref()
-                    .map(|char_search| vec![ReedlineOption::Edit(char_search.to_cut())]),
-                Motion::ReverseCharSearch => vi_state
-                    .last_char_search
-                    .as_ref()
-                    .map(|char_search| vec![ReedlineOption::Edit(char_search.reverse().to_cut())]),
+                // `dj`/`dk`/`dgg`/`dG` — whole lines to the adjacent line or the
+                // buffer edge, linewise. The targets + the LineWise snap (incl.
+                // the buffer-end `\n` fixup) reproduce the dedicated commands.
+                Motion::Down | Motion::Up | Motion::FirstLine | Motion::LastLine => {
+                    motion.target().map(|target| {
+                        vec![ReedlineOption::Edit(EditCommand::Cut {
+                            target,
+                            granularity: Granularity::LineWise,
+                        })]
+                    })
+                }
+                Motion::ReplayCharSearch => vi_state.last_char_search.map(|target| {
+                    vec![ReedlineOption::Edit(EditCommand::Cut {
+                        target,
+                        granularity: Granularity::CharWise,
+                    })]
+                }),
+                Motion::ReverseCharSearch => vi_state.last_char_search.map(|target| {
+                    vec![ReedlineOption::Edit(EditCommand::Cut {
+                        target: target.reversed(),
+                        granularity: Granularity::CharWise,
+                    })]
+                }),
             },
             Self::Change => {
                 let op = match motion {
-                    Motion::End => Some(vec![ReedlineOption::Edit(EditCommand::ClearToLineEnd)]),
-                    Motion::Line => Some(vec![
-                        ReedlineOption::Edit(EditCommand::MoveToStart { select: false }),
-                        ReedlineOption::Edit(EditCommand::ClearToLineEnd),
-                    ]),
-                    Motion::NextWord => Some(vec![ReedlineOption::Edit(EditCommand::CutWordRight)]),
-                    Motion::NextBigWord => {
-                        Some(vec![ReedlineOption::Edit(EditCommand::CutBigWordRight)])
-                    }
-                    Motion::NextWordEnd => {
-                        Some(vec![ReedlineOption::Edit(EditCommand::CutWordRight)])
-                    }
-                    Motion::NextBigWordEnd => {
-                        Some(vec![ReedlineOption::Edit(EditCommand::CutBigWordRight)])
-                    }
-                    Motion::PreviousWord => {
-                        Some(vec![ReedlineOption::Edit(EditCommand::CutWordLeft)])
-                    }
-                    Motion::PreviousBigWord => {
-                        Some(vec![ReedlineOption::Edit(EditCommand::CutBigWordLeft)])
-                    }
-                    Motion::RightUntil(c) => {
-                        vi_state.last_char_search = Some(ViCharSearch::ToRight(*c));
-                        Some(vec![ReedlineOption::Edit(EditCommand::CutRightUntil(*c))])
-                    }
-                    Motion::RightBefore(c) => {
-                        vi_state.last_char_search = Some(ViCharSearch::TillRight(*c));
-                        Some(vec![ReedlineOption::Edit(EditCommand::CutRightBefore(*c))])
-                    }
-                    Motion::LeftUntil(c) => {
-                        vi_state.last_char_search = Some(ViCharSearch::ToLeft(*c));
-                        Some(vec![ReedlineOption::Edit(EditCommand::CutLeftUntil(*c))])
-                    }
-                    Motion::LeftBefore(c) => {
-                        vi_state.last_char_search = Some(ViCharSearch::TillLeft(*c));
-                        Some(vec![ReedlineOption::Edit(EditCommand::CutLeftBefore(*c))])
-                    }
-                    Motion::Start => {
-                        Some(vec![ReedlineOption::Edit(EditCommand::CutFromLineStart)])
-                    }
-                    Motion::Left => Some(vec![ReedlineOption::Edit(EditCommand::Backspace)]),
-                    Motion::Right => Some(vec![ReedlineOption::Edit(EditCommand::Delete)]),
-                    Motion::Up => None,
-                    Motion::Down => None,
-                    Motion::ReplayCharSearch => vi_state
-                        .last_char_search
-                        .as_ref()
-                        .map(|char_search| vec![ReedlineOption::Edit(char_search.to_cut())]),
-                    Motion::ReverseCharSearch => {
-                        vi_state.last_char_search.as_ref().map(|char_search| {
-                            vec![ReedlineOption::Edit(char_search.reverse().to_cut())]
+                    // `cc` — change the whole line: its content is cut (the
+                    // blank line remains for insert mode) and the register is
+                    // filled linewise, so `p` after `cc` pastes as a line.
+                    Motion::Line => Some(vec![ReedlineOption::Edit(EditCommand::Change {
+                        target: MotionTarget::LineEdge(Direction::Forward),
+                        granularity: Granularity::LineWise,
+                    })]),
+                    // `cw`/`cW` act like `ce`/`cE`: change to the word *end*, not the
+                    // next word's start. Other word and line-edge motions (`c$`/`c0`)
+                    // use their own target.
+                    Motion::NextWord
+                    | Motion::NextBigWord
+                    | Motion::NextWordEnd
+                    | Motion::NextBigWordEnd
+                    | Motion::PreviousWord
+                    | Motion::PreviousBigWord
+                    | Motion::Start
+                    | Motion::End => {
+                        let target = match motion {
+                            Motion::NextWord => Motion::NextWordEnd.target(),
+                            Motion::NextBigWord => Motion::NextBigWordEnd.target(),
+                            other => other.target(),
+                        };
+                        target.map(|target| {
+                            vec![ReedlineOption::Edit(EditCommand::Cut {
+                                target,
+                                granularity: Granularity::CharWise,
+                            })]
                         })
                     }
+                    Motion::RightUntil(_)
+                    | Motion::RightBefore(_)
+                    | Motion::LeftUntil(_)
+                    | Motion::LeftBefore(_) => motion.target().map(|target| {
+                        vi_state.last_char_search = Some(target);
+                        vec![ReedlineOption::Edit(EditCommand::Cut {
+                            target,
+                            granularity: Granularity::CharWise,
+                        })]
+                    }),
+                    Motion::NonBlankStart => Some(vec![ReedlineOption::Edit(
+                        EditCommand::CutFromLineNonBlankStart,
+                    )]),
+                    Motion::Left => Some(vec![ReedlineOption::Edit(EditCommand::Backspace)]),
+                    Motion::Right => Some(vec![ReedlineOption::Edit(EditCommand::Delete)]),
+                    // `cj`/`ck`/`cgg`/`cG` — linewise change: the spanned lines'
+                    // content is cut, one blank line remains, and insert mode
+                    // re-enters on it (`Change`'s LineWise snap keeps the
+                    // terminators where `Cut`'s consumes them).
+                    Motion::Down | Motion::Up | Motion::FirstLine | Motion::LastLine => {
+                        motion.target().map(|target| {
+                            vec![ReedlineOption::Edit(EditCommand::Change {
+                                target,
+                                granularity: Granularity::LineWise,
+                            })]
+                        })
+                    }
+                    Motion::ReplayCharSearch => vi_state.last_char_search.map(|target| {
+                        vec![ReedlineOption::Edit(EditCommand::Cut {
+                            target,
+                            granularity: Granularity::CharWise,
+                        })]
+                    }),
+                    Motion::ReverseCharSearch => vi_state.last_char_search.map(|target| {
+                        vec![ReedlineOption::Edit(EditCommand::Cut {
+                            target: target.reversed(),
+                            granularity: Granularity::CharWise,
+                        })]
+                    }),
                 };
                 // Semihack: Append `Repaint` to ensure the mode change gets displayed
                 op.map(|mut vec| {
@@ -271,7 +511,100 @@ impl Command {
                     vec
                 })
             }
+            Self::Yank => match motion {
+                // `yy` — the whole current line, linewise.
+                Motion::Line => Some(vec![ReedlineOption::Edit(EditCommand::Copy {
+                    target: MotionTarget::LineEdge(Direction::Forward),
+                    granularity: Granularity::LineWise,
+                })]),
+                Motion::NextWord
+                | Motion::NextBigWord
+                | Motion::NextWordEnd
+                | Motion::NextBigWordEnd
+                | Motion::PreviousWord
+                | Motion::PreviousBigWord
+                | Motion::Start
+                | Motion::End => motion.target().map(|target| {
+                    vec![ReedlineOption::Edit(EditCommand::Copy {
+                        target,
+                        granularity: Granularity::CharWise,
+                    })]
+                }),
+                Motion::RightUntil(_)
+                | Motion::RightBefore(_)
+                | Motion::LeftUntil(_)
+                | Motion::LeftBefore(_) => motion.target().map(|target| {
+                    vi_state.last_char_search = Some(target);
+                    vec![ReedlineOption::Edit(EditCommand::Copy {
+                        target,
+                        granularity: Granularity::CharWise,
+                    })]
+                }),
+                Motion::NonBlankStart => Some(vec![ReedlineOption::Edit(
+                    EditCommand::CopyFromLineNonBlankStart,
+                )]),
+                Motion::Left => Some(vec![ReedlineOption::Edit(EditCommand::CopyLeft)]),
+                Motion::Right => Some(vec![ReedlineOption::Edit(EditCommand::CopyRight)]),
+                // `yj`/`yk`/`ygg`/`yG` — whole lines to the adjacent line or
+                // the buffer edge, linewise.
+                Motion::Down | Motion::Up | Motion::FirstLine | Motion::LastLine => {
+                    motion.target().map(|target| {
+                        vec![ReedlineOption::Edit(EditCommand::Copy {
+                            target,
+                            granularity: Granularity::LineWise,
+                        })]
+                    })
+                }
+                Motion::ReplayCharSearch => vi_state.last_char_search.map(|target| {
+                    vec![ReedlineOption::Edit(EditCommand::Copy {
+                        target,
+                        granularity: Granularity::CharWise,
+                    })]
+                }),
+                Motion::ReverseCharSearch => vi_state.last_char_search.map(|target| {
+                    vec![ReedlineOption::Edit(EditCommand::Copy {
+                        target: target.reversed(),
+                        granularity: Granularity::CharWise,
+                    })]
+                }),
+            },
             _ => None,
         }
+    }
+}
+
+fn char_to_text_object(c: char, scope: TextObjectScope) -> Option<TextObject> {
+    match c {
+        'w' => Some(TextObject {
+            scope,
+            object_type: TextObjectType::Word,
+        }),
+        'W' => Some(TextObject {
+            scope,
+            object_type: TextObjectType::BigWord,
+        }),
+        'b' => Some(TextObject {
+            scope,
+            object_type: TextObjectType::Brackets,
+        }),
+        'q' => Some(TextObject {
+            scope,
+            object_type: TextObjectType::Quote,
+        }),
+        _ => None,
+    }
+}
+
+fn bracket_pair_for(c: char) -> Option<(char, char)> {
+    match c {
+        '(' | ')' => Some(('(', ')')),
+        '[' | ']' => Some(('[', ']')),
+        '{' | '}' => Some(('{', '}')),
+        '<' | '>' => Some(('<', '>')),
+        '"' => Some(('"', '"')),
+        '$' => Some(('$', '$')),
+        '\'' => Some(('\'', '\'')),
+        '`' => Some(('`', '`')),
+        _ => None,
     }
 }

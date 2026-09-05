@@ -62,24 +62,19 @@ impl History for FileBackedHistory {
     fn save(&mut self, h: HistoryItem) -> Result<HistoryItem> {
         let entry = h.command_line;
         // Don't append if the preceding value is identical or the string empty
-        let entry_id = if self
-            .entries
-            .back()
-            .map_or(true, |previous| previous != &entry)
-            && !entry.is_empty()
-            && self.capacity > 0
-        {
-            if self.entries.len() == self.capacity {
-                // History is "full", so we delete the oldest entry first,
-                // before adding a new one.
-                self.entries.pop_front();
-                self.len_on_disk = self.len_on_disk.saturating_sub(1);
-            }
-            self.entries.push_back(entry.to_string());
-            Some(HistoryItemId::new((self.entries.len() - 1) as i64))
-        } else {
-            None
-        };
+        let entry_id =
+            if (self.entries.back() != Some(&entry)) && !entry.is_empty() && self.capacity > 0 {
+                if self.entries.len() == self.capacity {
+                    // History is "full", so we delete the oldest entry first,
+                    // before adding a new one.
+                    self.entries.pop_front();
+                    self.len_on_disk = self.len_on_disk.saturating_sub(1);
+                }
+                self.entries.push_back(entry.to_string());
+                Some(HistoryItemId::new((self.entries.len() - 1) as i64))
+            } else {
+                None
+            };
         Ok(FileBackedHistory::construct_entry(entry_id, entry))
     }
 

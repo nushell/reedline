@@ -12,18 +12,18 @@ use {
 
 fn main() {
     let printer = ExternalPrinter::default();
-    // make a clone to use it in a different thread
-    let p_clone = printer.clone();
-    // get the Sender<String> to have full sending control
-    let p_sender = printer.sender();
+
+    // grab a sender per producer thread; only the engine holds the receiving end
+    let p_sender_slow = printer.sender();
+    let p_sender_fast = printer.sender();
 
     // external printer that prints a message every second
     thread::spawn(move || {
         let mut i = 1;
         loop {
             sleep(Duration::from_secs(1));
-            assert!(p_clone
-                .print(format!("Message {i} delivered.\nWith two lines!"))
+            assert!(p_sender_slow
+                .send(format!("Message {i} delivered.\nWith two lines!"))
                 .is_ok());
             i += 1;
         }
@@ -34,7 +34,7 @@ fn main() {
         sleep(Duration::from_secs(3));
         for _ in 0..10 {
             sleep(Duration::from_millis(1));
-            assert!(p_sender.send("Fast Hello !".to_string()).is_ok());
+            assert!(p_sender_fast.send("Fast Hello !".to_string()).is_ok());
         }
     });
 
@@ -51,6 +51,7 @@ fn main() {
                     println!("\nAborted!");
                     break;
                 }
+                _ => {}
             }
             continue;
         }

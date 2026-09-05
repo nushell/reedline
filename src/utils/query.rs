@@ -1,10 +1,9 @@
 use crate::{
     default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
-    EditCommand, Keybindings, PromptEditMode, ReedlineEvent,
+    Keybindings,
 };
 use crossterm::event::KeyCode;
 use std::fmt::{Display, Formatter};
-use strum::IntoEnumIterator;
 
 struct ReedLineCrossTermKeyCode(crossterm::event::KeyCode);
 impl ReedLineCrossTermKeyCode {
@@ -89,11 +88,6 @@ pub fn get_reedline_keybinding_modifiers() -> Vec<String> {
     ]
 }
 
-/// Return a `Vec<String>` of the Reedline [`PromptEditMode`]s
-pub fn get_reedline_prompt_edit_modes() -> Vec<String> {
-    PromptEditMode::iter().map(|em| em.to_string()).collect()
-}
-
 /// Return a `Vec<String>` of the Reedline `KeyCode`s
 pub fn get_reedline_keycodes() -> Vec<String> {
     ReedLineCrossTermKeyCode::iterator()
@@ -101,25 +95,23 @@ pub fn get_reedline_keycodes() -> Vec<String> {
         .collect()
 }
 
-/// Return a `Vec<String>` of the Reedline [`ReedlineEvent`]s
-pub fn get_reedline_reedline_events() -> Vec<String> {
-    ReedlineEvent::iter().map(|rle| rle.to_string()).collect()
-}
-
-/// Return a `Vec<String>` of the Reedline [`EditCommand`]s
-pub fn get_reedline_edit_commands() -> Vec<String> {
-    EditCommand::iter().map(|edit| edit.to_string()).collect()
-}
-
 /// Get the default keybindings and return a `Vec<(String, String, String, String)>`
 /// where String 1 is `mode`, String 2 is `key_modifiers`, String 3 is `key_code`, and
 /// Sting 4 is `event`
 pub fn get_reedline_default_keybindings() -> Vec<(String, String, String, String)> {
-    let options = vec![
+    #[allow(unused_mut)]
+    let mut options = vec![
         ("emacs", default_emacs_keybindings()),
         ("vi_normal", default_vi_normal_keybindings()),
         ("vi_insert", default_vi_insert_keybindings()),
     ];
+
+    // Only the table layer; the bulk of the helix bindings live in its state
+    // machine, which `Keybindings` iteration cannot see.
+    options.extend([
+        ("helix_normal", crate::default_helix_normal_keybindings()),
+        ("helix_insert", crate::default_helix_insert_keybindings()),
+    ]);
 
     options
         .into_iter()

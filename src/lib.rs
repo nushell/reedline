@@ -175,17 +175,45 @@
 //! )));
 //! ```
 //!
+//! ## Enable mouse click-to-cursor
+//!
+//! ```rust,no_run
+//! use reedline::{MouseClickMode, Reedline};
+//!
+//! let mut line_editor =
+//!     Reedline::create().with_mouse_click(MouseClickMode::EnabledWithOsc133);
+//! ```
+//!
+//! ## Use `Helix` edit mode
+//!
+//! Selection-first editing: motions carry the selection, verbs act on it.
+//!
+//! ```rust
+//! use reedline::{default_helix_normal_keybindings, Helix, Reedline};
+//!
+//! let mut normal_keybindings = default_helix_normal_keybindings();
+//! // normal_keybindings.add_binding(..);
+//!
+//! let line_editor = Reedline::create().with_edit_mode(Box::new(
+//!     Helix::default().with_normal_keybindings(normal_keybindings),
+//! ));
+//! ```
+//!
+//! Run `cargo run --example helix` for the mode on its own, or
+//! `cargo run --example demo -- --helix` to exercise it against the demo's
+//! history and menus.
+//!
 //! ## Crate features
 //!
 //! - `clipboard`: Enable support to use the `SystemClipboard`. Enabling this feature will return a `SystemClipboard` instead of a local clipboard when calling `get_default_clipboard()`.
 //! - `bashisms`: Enable support for special text sequences that recall components from the history. e.g. `!!` and `!$`. For use in shells like `bash` or [`nushell`](https://nushell.sh).
 //! - `sqlite`: Provides the `SqliteBackedHistory` to store richer information in the history. Statically links the required sqlite version.
 //! - `sqlite-dynlib`: Alternative to the feature `sqlite`. Will not statically link. Requires `sqlite >= 3.38` to link dynamically!
-//! - `external_printer`: **Experimental:** Thread-safe `ExternalPrinter` handle to print lines from concurrently running threads.
+//! - `external_printer`: **Experimental:** `ExternalPrinter` to print lines from concurrently running threads; each thread gets its own thread-safe sender via `ExternalPrinter::sender()`.
 //!
 //! ## Are we prompt yet? (Development status)
 //!
-//! Nushell has now all the basic features to become the primary line editor for [nushell](https://github.com/nushell/nushell
+//! Reedline has now all the basic features to become the primary line editor for [nushell](https://github.com/nushell/nushell
 //! )
 //!
 //! - General editing functionality, that should feel familiar coming from other shells (e.g. bash, fish, zsh).
@@ -193,7 +221,7 @@
 //! - Configurable prompt
 //! - Content-aware syntax highlighting.
 //! - Autocompletion (With graphical selection menu or simple cycling inline).
-//! - History with interactive search options (optionally persists to file, can support multilple sessions accessing the same file)
+//! - History with interactive search options (optionally persists to file, can support multiple sessions accessing the same file)
 //! - Fish-style history autosuggestion hints
 //! - Undo support.
 //! - Clipboard integration
@@ -210,12 +238,6 @@
 //!
 //! For more ideas check out the [feature discussion](https://github.com/nushell/reedline/issues/63) or hop on the `#reedline` channel of the [nushell discord](https://discordapp.com/invite/NtAbbGn).
 //!
-//! ### Development history
-//!
-//! If you want to follow along with the history how reedline got started, you can watch the [recordings](https://youtube.com/playlist?list=PLP2yfE2-FXdQw0I6O4YdIX_mzBeF5TDdv) of [JT](https://github.com/jntrnr)'s [live-coding streams](https://www.twitch.tv/jntrnr).
-//!
-//! [Playlist: Creating a line editor in Rust](https://youtube.com/playlist?list=PLP2yfE2-FXdQw0I6O4YdIX_mzBeF5TDdv)
-//!
 //! ### Alternatives
 //!
 //! For currently more mature Rust line editing check out:
@@ -226,34 +248,44 @@
 #![warn(missing_docs)]
 // #![deny(warnings)]
 mod core_editor;
-pub use core_editor::Editor;
-pub use core_editor::LineBuffer;
+pub use core_editor::{Editor, LineBuffer};
+
+mod auto_pairs;
+pub use auto_pairs::{AutoPairAction, AutoPairContext, AutoPairs};
 
 mod enums;
-pub use enums::{EditCommand, ReedlineEvent, ReedlineRawEvent, Signal, UndoBehavior};
+pub use enums::{
+    Direction, EditCommand, EditCommandDiscriminants, FindStop, Granularity, MotionTarget,
+    MouseButton, ReedlineEvent, ReedlineEventDiscriminants, ReedlineRawEvent, Signal, TextObject,
+    TextObjectScope, TextObjectType, UndoBehavior, WordEdge, WordKind,
+};
 
 mod painting;
 pub use painting::{Painter, StyledText};
 
 mod engine;
-pub use engine::Reedline;
+pub use engine::{MouseClickMode, Reedline};
 
 mod result;
 pub use result::{ReedlineError, ReedlineErrorVariants, Result};
 
 mod history;
-#[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+#[cfg(feature = "_sqlite")]
 pub use history::SqliteBackedHistory;
 pub use history::{
-    CommandLineSearch, FileBackedHistory, History, HistoryItem, HistoryItemId,
-    HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchFilter, SearchQuery,
-    HISTORY_SIZE,
+    CommandLineSearch, FileBackedHistory, History, HistoryItem, HistoryItemExtraInfo,
+    HistoryItemId, HistoryNavigationQuery, HistorySessionId, IgnoreAllExtraInfo, JsonFilterValue,
+    SearchDirection, SearchFilter, SearchQuery, HISTORY_SIZE,
 };
 
 mod prompt;
+pub use prompt::PromptHelixMode;
 pub use prompt::{
-    DefaultPrompt, DefaultPromptSegment, Prompt, PromptEditMode, PromptHistorySearch,
-    PromptHistorySearchStatus, PromptViMode,
+    DefaultPrompt, DefaultPromptSegment, Prompt, PromptEditMode, PromptEditModeDiscriminants,
+    PromptHistorySearch, PromptHistorySearchStatus, PromptViMode, DEFAULT_INDICATOR_COLOR,
+    DEFAULT_INSERT_PROMPT_INDICATOR, DEFAULT_MULTILINE_INDICATOR, DEFAULT_NORMAL_PROMPT_INDICATOR,
+    DEFAULT_PROMPT_COLOR, DEFAULT_PROMPT_INDICATOR, DEFAULT_PROMPT_MULTILINE_COLOR,
+    DEFAULT_PROMPT_RIGHT_COLOR, DEFAULT_SELECT_PROMPT_INDICATOR,
 };
 
 mod edit_mode;
@@ -261,12 +293,19 @@ pub use edit_mode::{
     default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
     CursorConfig, EditMode, Emacs, Keybindings, Vi,
 };
+pub use edit_mode::{
+    default_helix_insert_keybindings, default_helix_normal_keybindings,
+    default_helix_select_keybindings, Helix,
+};
 
 mod highlighter;
-pub use highlighter::{ExampleHighlighter, Highlighter, SimpleMatchHighlighter};
+pub use highlighter::{AbbrExpandContext, ExampleHighlighter, Highlighter, SimpleMatchHighlighter};
 
 mod completion;
-pub use completion::{Completer, DefaultCompleter, Span, Suggestion};
+pub use completion::{
+    Completer, CompletionOrigin, CompletionResult, CompletionStatus, DefaultCompleter, Partial,
+    Span, Suggestion, Suggestions,
+};
 
 mod hinter;
 pub use hinter::CwdAwareHinter;
@@ -277,26 +316,26 @@ pub use validator::{DefaultValidator, ValidationResult, Validator};
 
 mod menu;
 pub use menu::{
-    menu_functions, ColumnarMenu, DescriptionMenu, DescriptionMode, IdeMenu, ListMenu, Menu,
-    MenuBuilder, MenuEvent, MenuTextStyle, ReedlineMenu,
+    menu_functions, ColumnarMenu, DescriptionMenu, DescriptionMode, DescriptionPosition, IdeMenu,
+    InputMode, ListMenu, Menu, MenuBuilder, MenuEvent, MenuTextStyle, OutputMode, ReedlineMenu,
+    TraversalDirection,
 };
 
 mod terminal_extensions;
 pub use terminal_extensions::kitty_protocol_available;
+pub use terminal_extensions::semantic_prompt::{
+    Osc133ClickEventsMarkers, Osc133Markers, Osc633Markers, PromptKind, SemanticPromptMarkers,
+};
 
 mod utils;
 
 mod external_printer;
 pub use utils::{
-    get_reedline_default_keybindings, get_reedline_edit_commands,
-    get_reedline_keybinding_modifiers, get_reedline_keycodes, get_reedline_prompt_edit_modes,
-    get_reedline_reedline_events,
+    get_reedline_default_keybindings, get_reedline_keybinding_modifiers, get_reedline_keycodes,
 };
 
 // Reexport the key types to be independent from an explicit crossterm dependency.
-pub use crossterm::{
-    event::{KeyCode, KeyModifiers},
-    style::Color,
-};
+pub use crossterm::event::{KeyCode, KeyModifiers};
 #[cfg(feature = "external_printer")]
 pub use external_printer::ExternalPrinter;
+pub use nu_ansi_term::Color;

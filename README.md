@@ -121,7 +121,7 @@ Reedline::create().with_highlighter(Box::new(ExampleHighlighter::new(commands)))
 ```rust
 // Create a reedline object with tab completions support
 
-use reedline::{default_emacs_keybindings, ColumnarMenu, DefaultCompleter, Emacs, KeyCode, KeyModifiers, Reedline, ReedlineEvent, ReedlineMenu};
+use reedline::{default_emacs_keybindings, ColumnarMenu, DefaultCompleter, Emacs, KeyCode, KeyModifiers, Reedline, ReedlineEvent, ReedlineMenu, MenuBuilder};
 
 let commands = vec![
   "test".into(),
@@ -199,6 +199,24 @@ let mut line_editor = Reedline::create().with_edit_mode(Box::new(Vi::new(
 )));
 ```
 
+### Use `Helix` edit mode
+
+```rust
+// Selection-first editing: motions carry the selection, verbs act on it.
+
+use reedline::{default_helix_normal_keybindings, Helix, Reedline};
+
+let mut normal_keybindings = default_helix_normal_keybindings();
+// normal_keybindings.add_binding(..);
+
+let mut line_editor = Reedline::create()
+    .with_edit_mode(Box::new(Helix::default().with_normal_keybindings(normal_keybindings)));
+```
+
+Run `cargo run --example helix` for the mode on its own, or
+`cargo run --example demo -- --helix` to exercise it against the demo's
+history and menus.
+
 ## Crate features
 
 - `clipboard`: Enable support to use the `SystemClipboard`. Enabling this feature will return a `SystemClipboard` instead of a local clipboard when calling `get_default_clipboard()`.
@@ -222,23 +240,17 @@ Reedline has now all the basic features to become the primary line editor for [n
 - Undo support.
 - Clipboard integration
 - Line completeness validation for seamless entry of multiline command sequences.
+- Visual selection
 
 ### Areas for future improvements
 
 - [ ] Support for Unicode beyond simple left-to-right scripts
 - [ ] Easier keybinding configuration
 - [ ] Support for more advanced vi commands
-- [ ] Visual selection
 - [ ] Smooth experience if completion or prompt content takes long to compute
 - [ ] Support for a concurrent output stream from background tasks to be displayed, while the input prompt is active. ("Full duplex" mode)
 
 For more ideas check out the [feature discussion](https://github.com/nushell/reedline/issues/63) or hop on the `#reedline` channel of the [nushell discord](https://discordapp.com/invite/NtAbbGn).
-
-### Development history
-
-If you want to follow along with the history of how reedline got started, you can watch the [recordings](https://youtube.com/playlist?list=PLP2yfE2-FXdQw0I6O4YdIX_mzBeF5TDdv) of [JT](https://github.com/jntrnr)'s [live-coding streams](https://www.twitch.tv/jntrnr).
-
-[Playlist: Creating a line editor in Rust](https://youtube.com/playlist?list=PLP2yfE2-FXdQw0I6O4YdIX_mzBeF5TDdv)
 
 ### Alternatives
 

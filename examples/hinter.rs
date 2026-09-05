@@ -26,6 +26,7 @@ fn main() -> io::Result<()> {
                 println!("\nAborted!");
                 break Ok(());
             }
+            _ => {}
         }
     }
 }

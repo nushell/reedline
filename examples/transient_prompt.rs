@@ -4,7 +4,7 @@
 // Prompts for previous lines will be replaced with a shorter prompt
 
 use nu_ansi_term::{Color, Style};
-#[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+#[cfg(feature = "_sqlite")]
 use reedline::SqliteBackedHistory;
 use reedline::{
     default_emacs_keybindings, ColumnarMenu, DefaultCompleter, DefaultHinter, DefaultPrompt, Emacs,
@@ -24,26 +24,26 @@ pub static TRANSIENT_PROMPT: &str = "! ";
 pub static TRANSIENT_MULTILINE_INDICATOR: &str = ": ";
 
 impl Prompt for TransientPrompt {
-    fn render_prompt_left(&self) -> Cow<str> {
+    fn render_prompt_left(&self) -> Cow<'_, str> {
         Cow::Owned(String::new())
     }
 
-    fn render_prompt_right(&self) -> Cow<str> {
+    fn render_prompt_right(&self) -> Cow<'_, str> {
         Cow::Owned(String::new())
     }
 
-    fn render_prompt_indicator(&self, _prompt_mode: PromptEditMode) -> Cow<str> {
+    fn render_prompt_indicator(&self, _prompt_mode: PromptEditMode) -> Cow<'_, str> {
         Cow::Borrowed(TRANSIENT_PROMPT)
     }
 
-    fn render_prompt_multiline_indicator(&self) -> Cow<str> {
+    fn render_prompt_multiline_indicator(&self) -> Cow<'_, str> {
         Cow::Borrowed(TRANSIENT_MULTILINE_INDICATOR)
     }
 
     fn render_prompt_history_search_indicator(
         &self,
         history_search: PromptHistorySearch,
-    ) -> Cow<str> {
+    ) -> Cow<'_, str> {
         let prefix = match history_search.status {
             PromptHistorySearchStatus::Passing => "",
             PromptHistorySearchStatus::Failing => "failing ",
@@ -110,7 +110,7 @@ fn main() -> io::Result<()> {
         .with_ansi_colors(true)
         .with_history_exclusion_prefix(Some(String::from(" ")))
         .with_transient_prompt(Box::new(TransientPrompt {}));
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[cfg(feature = "_sqlite")]
     {
         line_editor = line_editor.with_history(Box::new(SqliteBackedHistory::in_memory().unwrap()));
     }
@@ -127,6 +127,7 @@ fn main() -> io::Result<()> {
                 println!("\nAborted!");
                 break Ok(());
             }
+            _ => {}
         }
     }
 }
