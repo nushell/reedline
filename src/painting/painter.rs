@@ -72,9 +72,10 @@ pub enum W {
     // Constructed only in non-test builds; under `cfg(test)` we always use `Sink`.
     #[cfg_attr(test, allow(dead_code))]
     Terminal(std::io::BufWriter<std::io::Stderr>),
-    /// Discards all output, used in tests.
+    /// Discards all output, used in tests. The second field is the answer to
+    /// give a cursor query, or `None` to refuse one.
     #[cfg(test)]
-    Sink(std::io::Sink),
+    Sink(std::io::Sink, Option<(u16, u16)>),
     /// Captures all output into a buffer so tests can assert on the exact
     /// escape-byte stream the painter emits (not tmux-specific — any
     /// output-level invariant).
@@ -93,7 +94,15 @@ impl W {
     /// without printing to the terminal.
     #[cfg(test)]
     pub(crate) fn sink() -> Self {
-        W::Sink(std::io::sink())
+        W::Sink(std::io::sink(), None)
+    }
+
+    /// Like [`W::sink`], but answers a cursor query with `position` rather than
+    /// refusing, so a test can drive the paths that measure the cursor instead
+    /// of only their "no answer" branch.
+    #[cfg(test)]
+    pub(crate) fn sink_with_cursor_at(position: (u16, u16)) -> Self {
+        W::Sink(std::io::sink(), Some(position))
     }
 
     /// Writer that buffers everything written to it, so a test can inspect the
@@ -118,7 +127,7 @@ impl Write for W {
         match self {
             W::Terminal(w) => w.write(buf),
             #[cfg(test)]
-            W::Sink(w) => w.write(buf),
+            W::Sink(w, _) => w.write(buf),
             #[cfg(test)]
             W::Capture(w) => w.write(buf),
         }
@@ -128,7 +137,7 @@ impl Write for W {
         match self {
             W::Terminal(w) => w.flush(),
             #[cfg(test)]
-            W::Sink(w) => w.flush(),
+            W::Sink(w, _) => w.flush(),
             #[cfg(test)]
             W::Capture(w) => w.flush(),
         }
@@ -138,14 +147,19 @@ impl Write for W {
 impl W {
     /// Where the terminal's cursor is, as `(column, row)`.
     ///
-    /// Only the real terminal can answer, but test writers return an error so
+    /// Only the real terminal can answer. A test writer answers with whatever
+    /// [`W::sink_with_cursor_at`] gave it, and otherwise returns an error so
     /// paint paths take their "no answer" branch instead of waiting on a tty
     /// that will never reply.
     pub(crate) fn cursor_position(&self) -> Result<(u16, u16)> {
         match self {
             W::Terminal(_) => cursor::position(),
             #[cfg(test)]
-            W::Sink(_) | W::Capture(_) => Err(std::io::Error::other("no terminal attached")),
+            W::Sink(_, position) => {
+                position.ok_or_else(|| std::io::Error::other("no terminal attached"))
+            }
+            #[cfg(test)]
+            W::Capture(_) => Err(std::io::Error::other("no terminal attached")),
         }
     }
 }
@@ -377,7 +391,10 @@ impl Painter {
         }
     }
 
-    /// Height of the current terminal window
+    /// Height of the current terminal window.
+    ///
+    /// A lower bound on the real height, not a reading: the reported size,
+    /// raised to fit rows measured by [`Painter::measure_cursor_position`].
     pub fn screen_height(&self) -> u16 {
         self.terminal_size.1
     }
@@ -396,6 +413,36 @@ impl Painter {
     pub fn semantic_markers(&self) -> Option<&dyn SemanticPromptMarkers> {
         self.semantic_markers.as_deref()
     }
+
+    /// Asks the terminal where the cursor is, taking the answer as a floor on
+    /// the screen height.
+    ///
+    /// A terminal only reports rows it has, so a measured row proves the screen
+    /// holds at least `row + 1` — outranking a `terminal::size()` shorter than
+    /// the window really attached (a serial console reporting `0x0`, a pty left
+    /// at 24x80, a missed `SIGWINCH`). Otherwise an anchor at or below the
+    /// believed last row saturates [`Painter::remaining_lines`] to `0` and every
+    /// repaint walks the prompt up a row. See nushell/reedline#1205.
+    ///
+    /// No-op when the reported size is right. Only a freshly reported size (a
+    /// new `read_line`, or a resize event) lowers the height again, so read it
+    /// *after* calling this, not before.
+    ///
+    /// `Ok(None)` is [`cursor_position_for_term`]'s: no query was made, so
+    /// there is no row to grow to.
+    fn measure_cursor_position(&mut self) -> Result<Option<(u16, u16)>> {
+        let position = cursor_position_for_term(&self.stdout, self.term_is_dumb)?;
+        if let Some((_, row)) = position {
+            self.grow_screen_height_to_fit_row(row);
+        }
+        Ok(position)
+    }
+
+    /// Raises the believed screen height so that `row` is on screen.
+    fn grow_screen_height_to_fit_row(&mut self, row: u16) {
+        self.terminal_size.1 = self.terminal_size.1.max(row.saturating_add(1));
+    }
+
     /// Returns the empty lines from the prompt down.
     pub fn remaining_lines_real(&self) -> u16 {
         self.screen_height()
@@ -556,15 +603,24 @@ impl Painter {
         &mut self,
         suspended_state: Option<&PainterSuspendedState>,
     ) -> Result<()> {
+        self.initialize_prompt_position_with_size(terminal::size()?, suspended_state)
+    }
+
+    /// [`Painter::initialize_prompt_position`] with the size passed in, since
+    /// `terminal::size()` needs a tty and so cannot run under test.
+    fn initialize_prompt_position_with_size(
+        &mut self,
+        reported_size: (u16, u16),
+        suspended_state: Option<&PainterSuspendedState>,
+    ) -> Result<()> {
         // Update the terminal size
         self.terminal_size = {
-            let size = terminal::size()?;
             // if reported size is 0, 0 -
             // use a default size to avoid divide by 0 panics
-            if size == (0, 0) {
+            if reported_size == (0, 0) {
                 (80, 24)
             } else {
-                size
+                reported_size
             }
         };
         self.anchor_prompt(suspended_state)
@@ -591,7 +647,7 @@ impl Painter {
         // undershooting guess wipes the output above the prompt with no way
         // to recover. No row is greater than the bottom, so it is the only
         // guess that always lands on the repairable side.
-        let position = match cursor_position_for_term(&self.stdout, self.term_is_dumb) {
+        let position = match self.measure_cursor_position() {
             Ok(Some(position)) => position,
             Ok(None) => {
                 // No query was made: do not add a blank line for every prompt.
@@ -615,6 +671,11 @@ impl Painter {
                 // room for the prompt.
                 // Otherwise printing the prompt would scroll off the stored prompt
                 // origin, causing issues after repaints.
+                //
+                // Equality suffices: the height was grown to fit the measured
+                // row, so `new_row` is at most `screen_height()`. The other arm
+                // skips this guard but is bounded by `select_prompt_row` only
+                // re-using a range that contains that row.
                 if new_row == self.screen_height() {
                     self.print_crlf()?;
                     new_row.saturating_sub(1)
@@ -663,7 +724,6 @@ impl Painter {
         self.stdout.queue(cursor::Hide)?;
 
         let screen_width = self.screen_width();
-        let screen_height = self.screen_height();
 
         self.prompt_height = lines.prompt_height(screen_width);
         let lines_before_cursor = lines.required_lines(screen_width, true, None);
@@ -680,10 +740,15 @@ impl Painter {
             // homing to row 0, which would yank the prompt to the top. The `+1`
             // allows for output that left the cursor on the prompt row.
             // See nushell/reedline#1130.
-            let anchor = match cursor_position_for_term(&self.stdout, self.term_is_dumb) {
+            let anchor = match self.measure_cursor_position() {
                 Ok(Some((_, cursor_row))) if cursor_row + 1 < row => cursor_row,
                 _ => row,
             };
+            // The measure above grew the height to fit the row it read, but the
+            // anchor kept here can be further down than that. Grow to fit the
+            // one actually committed to, or `remaining_lines` reads 0 and this
+            // paint scrolls for no reason -- the bug this all exists to remove.
+            self.grow_screen_height_to_fit_row(anchor);
             self.prompt_start_row.mark_verified(anchor);
         }
 
@@ -696,7 +761,10 @@ impl Painter {
         );
 
         // Distance parameters, computed after reconciling so they reflect the
-        // re-anchored row.
+        // re-anchored row and the height the reconcile may have grown. Reading
+        // the height earlier splits the paint across two screens: `large_buffer`
+        // would judge against the old, short one and reset the anchor to row 0.
+        let screen_height = self.screen_height();
         let remaining_lines = self.remaining_lines();
         let required_lines = lines.required_lines(screen_width, false, menu);
 
@@ -1275,6 +1343,10 @@ impl Painter {
         // Known bug: on iterm2 and kitty, clearing the screen via CMD-K
         // doesn't reset the cursor position — possibly a `position()`
         // bug.
+        //
+        // Read directly rather than via `measure_cursor_position`: `height`
+        // came from the resize event, and this read can beat the terminal's own
+        // clamp into the new screen, so growing on it would undo a shrink.
         if let Ok(Some((_, cursor_row))) = cursor_position_for_term(&self.stdout, self.term_is_dumb)
         {
             self.prompt_start_row = PromptStartRow::Resized { cursor_row };
@@ -1408,7 +1480,7 @@ impl Painter {
         // batch of messages, not per message, so the flicker the comment above
         // guards against is unaffected.
         self.stdout.flush()?;
-        self.prompt_start_row = match cursor_position_for_term(&self.stdout, self.term_is_dumb) {
+        self.prompt_start_row = match self.measure_cursor_position() {
             // Measured, so later paints can skip the drift check.
             Ok(Some((_, actual))) => PromptStartRow::Verified(actual),
             // No answer, so all that is left is the count this function stopped
@@ -1848,6 +1920,183 @@ mod tests {
         .expect("repaint_buffer failed");
 
         assert_eq!(p.prompt_start_row, PromptStartRow::Verified(5));
+    }
+
+    // A measured row raises a `terminal::size()` that under-reports, and leaves
+    // one that is already right alone. See nushell/reedline#1205.
+    #[rstest]
+    #[case::serial_console_assumed_24_rows(24, 40, 41)]
+    #[case::stale_winsize(10, 35, 36)]
+    #[case::accurate_size_is_untouched(50, 35, 50)]
+    #[case::cursor_on_the_real_last_row(50, 49, 50)]
+    // `handle_resize(0, 0)` has no fallback, so a height of 0 is reachable.
+    #[case::height_never_initialized(0, 0, 1)]
+    // Degenerate, but the saturation must not wrap back to 0.
+    #[case::last_representable_row(24, u16::MAX, u16::MAX)]
+    fn test_measured_cursor_row_raises_believed_screen_height(
+        #[case] reported_height: u16,
+        #[case] cursor_row: u16,
+        #[case] expected_height: u16,
+    ) {
+        let mut painter = Painter::new(W::sink());
+        painter.terminal_size = (80, reported_height);
+
+        painter.grow_screen_height_to_fit_row(cursor_row);
+
+        assert_eq!(painter.screen_height(), expected_height);
+    }
+
+    /// Paint `buffer` against a screen believed to be `believed_height` tall,
+    /// from a stale anchor at `cursor_row` — the state a resize leaves, and the
+    /// one path where a paint measures the cursor itself.
+    ///
+    /// Returns the anchor after each paint, the final believed height, and
+    /// whether it took the large-buffer branch.
+    fn repaint_from_stale_anchor(
+        believed_height: u16,
+        cursor_row: u16,
+        buffer: &str,
+        paints: usize,
+    ) -> (Vec<u16>, u16, bool) {
+        repaint_from_stale_anchor_at(believed_height, cursor_row, cursor_row, buffer, paints)
+    }
+
+    /// As [`repaint_from_stale_anchor`], but with the cached anchor row and the
+    /// row the terminal reports set independently.
+    fn repaint_from_stale_anchor_at(
+        believed_height: u16,
+        cursor_row: u16,
+        anchor_row: u16,
+        buffer: &str,
+        paints: usize,
+    ) -> (Vec<u16>, u16, bool) {
+        let mut painter = Painter::new(W::sink_with_cursor_at((0, cursor_row)));
+        painter.terminal_size = (80, believed_height);
+
+        let anchors = (0..paints)
+            .map(|_| {
+                // Every paint re-enters through the reconcile, as a resize does.
+                painter.prompt_start_row = PromptStartRow::Stale(anchor_row);
+                let lines = make_lines(TEST_PROMPT, "", "", buffer, "");
+                painter
+                    .repaint_buffer(
+                        &TestPrompt,
+                        &lines,
+                        PromptEditMode::Default,
+                        None,
+                        false,
+                        &None,
+                    )
+                    .expect("repaint_buffer failed");
+                painter.prompt_start_row.last_known_row()
+            })
+            .collect();
+
+        (anchors, painter.screen_height(), painter.large_buffer)
+    }
+
+    // Regression test for nushell/reedline#1205. The winsize is shorter than the
+    // attached window, so the cursor sits below the believed last row; the
+    // anchor then fell outside the screen and each repaint walked it up one row.
+    //
+    // Goes through the real measuring path, so unwiring the fix fails this.
+    #[test]
+    fn test_prompt_does_not_climb_when_winsize_under_reports() {
+        // The kernel says 10 rows; the window has 50. Each paint re-enters
+        // through the reconcile, so a climb would show as a descending series.
+        let (anchors, height, large_buffer) = repaint_from_stale_anchor(10, 35, "show", 4);
+
+        assert_eq!(anchors, vec![35; 4], "prompt walked up the screen");
+        assert_eq!(height, 36, "measured row 35 did not raise the height");
+        assert!(!large_buffer);
+    }
+
+    // An accurately reported screen is untouched: the cursor is already inside
+    // it, so there is nothing to raise.
+    #[test]
+    fn test_accurate_winsize_paints_unchanged() {
+        let (anchors, height, large_buffer) = repaint_from_stale_anchor(50, 35, "show", 4);
+
+        assert_eq!(anchors, vec![35; 4]);
+        assert_eq!(height, 50, "an accurate height must not be inflated");
+        assert!(!large_buffer);
+    }
+
+    // The growth lands mid-paint, so the rest of that paint must see it. Reading
+    // the height first leaves `large_buffer` judging a 13-row buffer against the
+    // stale 10 rows, calling it taller than the screen and homing the anchor to 0.
+    #[test]
+    fn test_growth_is_visible_to_the_rest_of_the_same_paint() {
+        let buffer = "line\n".repeat(12);
+        let (anchors, height, large_buffer) = repaint_from_stale_anchor(10, 35, &buffer, 1);
+
+        assert_eq!(height, 36);
+        assert!(
+            !large_buffer,
+            "a 13-row buffer is not larger than the 36-row screen just measured"
+        );
+        // 36 - 35 = 1 row left below the anchor, 13 required, so 12 rows scroll.
+        assert_eq!(anchors, vec![23]);
+    }
+
+    // Covers the `initialize_prompt_position` call site. Row 60000 exceeds any
+    // real terminal, so the assertion holds whatever size is passed in.
+    #[rstest]
+    #[case::under_reported(80, 10)]
+    // `(0, 0)` is substituted with 80x24 before the cursor is measured.
+    #[case::unreported(0, 0)]
+    fn test_initialize_prompt_position_grows_to_fit_the_cursor(
+        #[case] reported_width: u16,
+        #[case] reported_height: u16,
+    ) {
+        let mut painter = Painter::new(W::sink_with_cursor_at((0, 60000)));
+
+        painter
+            .initialize_prompt_position_with_size((reported_width, reported_height), None)
+            .expect("initialize_prompt_position failed");
+
+        assert_eq!(painter.screen_height(), 60001);
+        assert_eq!(painter.prompt_start_row, PromptStartRow::Verified(60000));
+    }
+
+    // Covers the `print_external_message` call site: messages printed mid-line
+    // leave the cursor below a short screen just as the prompt does.
+    #[cfg(feature = "external_printer")]
+    #[test]
+    fn test_print_external_message_grows_to_fit_the_cursor() {
+        let mut painter = Painter::new(W::sink_with_cursor_at((0, 40)));
+        painter.terminal_size = (80, 10);
+
+        painter
+            .print_external_message(vec!["msg".to_string()], &LineBuffer::new(), &TestPrompt)
+            .expect("print_external_message failed");
+
+        assert_eq!(painter.screen_height(), 41);
+        assert_eq!(painter.prompt_start_row, PromptStartRow::Verified(40));
+    }
+
+    // Output printed while the tty was yielded can leave the cursor well below
+    // the cached anchor. The anchor stays put -- being below it is not evidence
+    // of scrolling -- but the row measured is still proof of a taller screen,
+    // so the height has to follow the measurement, not just the anchor.
+    #[test]
+    fn test_growth_follows_a_cursor_below_the_cached_anchor() {
+        let (anchors, height, _) = repaint_from_stale_anchor_at(10, 35, 10, "show", 1);
+
+        assert_eq!(anchors, vec![10], "cached anchor should be kept");
+        assert_eq!(height, 36, "measured row 35 did not raise the height");
+    }
+
+    // The reconcile keeps the cached row when the cursor is only one row above
+    // it, so the row measured is not always the row anchored. Growing to fit the
+    // measured row alone leaves the anchor level with the believed bottom, where
+    // `remaining_lines()` is 0 and the paint scrolls anyway.
+    #[test]
+    fn test_growth_fits_the_anchor_not_just_the_measured_row() {
+        let (anchors, height, _) = repaint_from_stale_anchor_at(10, 34, 35, "show", 4);
+
+        assert_eq!(anchors, vec![35; 4], "anchor was dragged up a row");
+        assert_eq!(height, 36);
     }
 
     fn base_snapshot() -> RenderSnapshot {
