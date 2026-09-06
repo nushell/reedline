@@ -163,10 +163,8 @@ pub struct Reedline {
 
     // Edit Mode: Vi, Emacs
     edit_mode: Box<dyn EditMode>,
-    /// Machines a [`ReedlineEvent::SwitchMode`] can activate in place of
-    /// `edit_mode`. Registration order is the order they are offered a target.
-    /// A machine that steps down goes back in here with its tables and its
-    /// state intact, so it is swapped, never rebuilt.
+    /// Machines a [`ReedlineEvent::SwitchMode`] can swap into `edit_mode`,
+    /// offered a target in registration order.
     inactive_edit_modes: Vec<Box<dyn EditMode>>,
 
     // Provides the tab completions
@@ -792,12 +790,8 @@ impl Reedline {
     }
 
     /// A builder that registers another edit mode a
-    /// [`ReedlineEvent::SwitchMode`] can activate.
-    ///
-    /// The mode given to [`with_edit_mode`](Self::with_edit_mode) stays active
-    /// until a switch names this machine. Register every machine a keybinding
-    /// may target: a target no registered machine accepts is reported
-    /// inapplicable, never built on the fly.
+    /// [`ReedlineEvent::SwitchMode`] can activate. The mode given to
+    /// [`with_edit_mode`](Self::with_edit_mode) stays active until then.
     #[must_use]
     pub fn with_additional_edit_mode(mut self, edit_mode: Box<dyn EditMode>) -> Self {
         self.inactive_edit_modes.push(edit_mode);
@@ -1904,14 +1898,10 @@ impl Reedline {
     /// Route a `SwitchMode` event to the machine that accepts it, make that
     /// machine the active one, then repair the cursor the flip left behind.
     ///
-    /// Routing: the active machine is offered the target first, so a switch
-    /// within one machine (vi normal to vi insert) never touches the standby
-    /// list. Otherwise the machines in `inactive_edit_modes` are offered the
-    /// target in registration order, and the first to report `Handled` is
-    /// swapped into `edit_mode`; the one it replaces takes its slot. When no
-    /// machine accepts, nothing changes and the event is `Inapplicable`, which
-    /// is what lets an enclosing `UntilFound` keep trying. The `switch_mode_*`
-    /// tests below pin this contract.
+    /// Routing: the active machine is offered the target first, then the
+    /// standbys in registration order; the first to accept is swapped in. When
+    /// none accepts nothing changes, and the `Inapplicable` lets an enclosing
+    /// `UntilFound` keep trying.
     ///
     /// Repair: a machine's own transitions emit their repairs as events, the way `i`
     /// collapses the selection on the way into helix insert. An event-driven
@@ -4379,6 +4369,111 @@ mod tests {
             rl.prompt_edit_mode(),
             PromptEditMode::Vi(PromptViMode::Normal)
         );
+    }
+
+    fn alt(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::ALT)
+    }
+
+    /// Switching into emacs from any state leaves the cursor where it was: a
+    /// bar caret stays put, a block caret collapses onto its left edge.
+    /// `setup` walks the caret from the end of `abcd` back to between `b` and
+    /// `c` (or onto `c` for a block) before Alt-e fires from that table.
+    #[rstest]
+    #[case::vi_insert(&[key(KeyCode::Left), key(KeyCode::Left)], false)]
+    #[case::vi_normal(&[key(KeyCode::Esc), ch('h')], false)]
+    #[case::vi_visual(&[key(KeyCode::Esc), ch('h'), ch('v')], false)]
+    #[case::helix_insert(&[key(KeyCode::Left), key(KeyCode::Left)], true)]
+    #[case::helix_normal(&[key(KeyCode::Esc), ch('h')], true)]
+    #[case::helix_select(&[key(KeyCode::Esc), ch('h'), ch('v')], true)]
+    fn switch_mode_into_emacs_keeps_the_cursor_in_place(
+        #[case] setup: &[KeyEvent],
+        #[case] helix: bool,
+    ) {
+        fn bind(mut table: crate::Keybindings) -> crate::Keybindings {
+            table.add_binding(
+                KeyModifiers::ALT,
+                KeyCode::Char('e'),
+                ReedlineEvent::SwitchMode(PromptEditMode::Emacs),
+            );
+            table
+        }
+        let machine: Box<dyn EditMode> = if helix {
+            Box::new(
+                crate::Helix::default()
+                    .with_insert_keybindings(bind(crate::default_helix_insert_keybindings()))
+                    .with_normal_keybindings(bind(crate::default_helix_normal_keybindings()))
+                    .with_select_keybindings(bind(crate::default_helix_select_keybindings())),
+            )
+        } else {
+            Box::new(crate::Vi::new(
+                bind(crate::default_vi_insert_keybindings()),
+                bind(crate::default_vi_normal_keybindings()),
+                bind(crate::default_vi_visual_keybindings()),
+            ))
+        };
+        let mut rl = Reedline::create()
+            .with_edit_mode(machine)
+            .with_additional_edit_mode(Box::<crate::Emacs>::default())
+            .with_validator(Box::new(crate::DefaultValidator));
+        rl.painter.force_prompt_anchored_for_test(0);
+
+        drive_until_signal(&mut rl, &[ch('a'), ch('b'), ch('c'), ch('d')]);
+        drive_until_signal(&mut rl, setup);
+        drive_until_signal(&mut rl, &[alt('e')]);
+        assert_eq!(rl.prompt_edit_mode(), PromptEditMode::Emacs);
+        assert_eq!(rl.editor.insertion_point(), 2);
+        drive_until_signal(&mut rl, &[ch('X')]);
+        assert_eq!(rl.editor.get_buffer(), "abXcd");
+    }
+
+    /// A switch while the history menu is open neither moves the cursor nor
+    /// touches the buffer the menu is querying with.
+    #[test]
+    fn switch_mode_under_an_open_history_menu_keeps_the_cursor() {
+        let mut normal = crate::default_helix_normal_keybindings();
+        normal.add_binding(
+            KeyModifiers::ALT,
+            KeyCode::Char('e'),
+            ReedlineEvent::SwitchMode(PromptEditMode::Emacs),
+        );
+        let mut rl = Reedline::create()
+            .with_edit_mode(Box::new(
+                crate::Helix::default().with_normal_keybindings(normal),
+            ))
+            .with_additional_edit_mode(Box::<crate::Emacs>::default())
+            .with_menu(ReedlineMenu::HistoryMenu(Box::new(
+                crate::ListMenu::default().with_name("history_menu"),
+            )));
+        rl.history
+            .save(HistoryItem::from_command_line("abcd x"))
+            .expect("history ok");
+        rl.painter.force_prompt_anchored_for_test(0);
+        let prompt = DefaultPrompt::default();
+
+        // Caret on `c`, then open the menu over that buffer.
+        drive_until_signal(
+            &mut rl,
+            &[
+                ch('a'),
+                ch('b'),
+                ch('c'),
+                ch('d'),
+                key(KeyCode::Esc),
+                ch('h'),
+            ],
+        );
+        rl.handle_event(&prompt, ReedlineEvent::Menu("history_menu".into()))
+            .expect("menu opens");
+        assert!(
+            rl.menus.iter().any(|menu| menu.is_active()),
+            "setup: history menu is open"
+        );
+
+        drive_until_signal(&mut rl, &[alt('e')]);
+        assert_eq!(rl.prompt_edit_mode(), PromptEditMode::Emacs);
+        assert_eq!(rl.editor.get_buffer(), "abcd");
+        assert_eq!(rl.editor.insertion_point(), 2);
     }
 
     /// No registered machine accepts the target: nothing changes, and the

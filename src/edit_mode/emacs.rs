@@ -173,8 +173,7 @@ impl EditMode for Emacs {
     }
 
     fn handle_mode_specific_event(&mut self, event: ReedlineEvent) -> EventStatus {
-        // Emacs has a single state, so the only switch it accepts is into
-        // itself; accepting is what makes it the engine's active machine.
+        // One state, so the only switch emacs accepts is into itself.
         match event {
             ReedlineEvent::SwitchMode(PromptEditMode::Emacs) => EventStatus::Handled,
             _ => EventStatus::Inapplicable,
