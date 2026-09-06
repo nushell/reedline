@@ -60,3 +60,10 @@ fn is_text_char(modifiers: KeyModifiers) -> bool {
         || modifiers == KeyModifiers::CONTROL | KeyModifiers::ALT
         || modifiers == KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT
 }
+
+/// A keypress carrying Alt alone or with Shift: the meta chord of the readline
+/// tradition, where `Alt-x` stands for `Esc` followed by `x`. Deliberately
+/// excludes the Ctrl-Alt pairs [`is_text_char`] accepts for AltGr.
+fn is_meta_char(modifiers: KeyModifiers) -> bool {
+    modifiers == KeyModifiers::ALT || modifiers == KeyModifiers::ALT | KeyModifiers::SHIFT
+}
