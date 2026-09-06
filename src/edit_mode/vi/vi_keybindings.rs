@@ -29,6 +29,15 @@ pub fn default_vi_normal_keybindings() -> Keybindings {
     kb
 }
 
+/// Default Vi visual keybindings
+///
+/// Starts as a copy of the normal table: the same chords apply, acting on the
+/// live selection instead of the resting block caret. A binding that should
+/// differ between the two modes now has a table of its own to go in.
+pub fn default_vi_visual_keybindings() -> Keybindings {
+    default_vi_normal_keybindings()
+}
+
 /// Default Vi insert keybindings
 pub fn default_vi_insert_keybindings() -> Keybindings {
     let mut kb = Keybindings::new();

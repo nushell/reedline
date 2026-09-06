@@ -162,6 +162,11 @@ pub struct Reedline {
 
     // Edit Mode: Vi, Emacs
     edit_mode: Box<dyn EditMode>,
+    /// Machines a [`ReedlineEvent::SwitchMode`] can activate in place of
+    /// `edit_mode`. Registration order is the order they are offered a target.
+    /// A machine that steps down goes back in here with its tables and its
+    /// state intact, so it is swapped, never rebuilt.
+    inactive_edit_modes: Vec<Box<dyn EditMode>>,
 
     // Provides the tab completions
     completer: Box<dyn Completer + Send>,
@@ -368,6 +373,7 @@ impl Reedline {
             painter,
             transient_prompt: None,
             edit_mode,
+            inactive_edit_modes: Vec::new(),
             completer,
             quick_completions: false,
             partial_completions: false,
@@ -791,6 +797,19 @@ impl Reedline {
     #[must_use]
     pub fn with_edit_mode(mut self, edit_mode: Box<dyn EditMode>) -> Self {
         self.edit_mode = edit_mode;
+        self
+    }
+
+    /// A builder that registers another edit mode a
+    /// [`ReedlineEvent::SwitchMode`] can activate.
+    ///
+    /// The mode given to [`with_edit_mode`](Self::with_edit_mode) stays active
+    /// until a switch names this machine. Register every machine a keybinding
+    /// may target: a target no registered machine accepts is reported
+    /// inapplicable, never built on the fly.
+    #[must_use]
+    pub fn with_additional_edit_mode(mut self, edit_mode: Box<dyn EditMode>) -> Self {
+        self.inactive_edit_modes.push(edit_mode);
         self
     }
 
@@ -1465,8 +1484,7 @@ impl Reedline {
             | ReedlineEvent::MenuRight
             | ReedlineEvent::MenuPageNext
             | ReedlineEvent::MenuPagePrevious
-            | ReedlineEvent::ViChangeMode(_) => Ok(EventStatus::Inapplicable),
-            ReedlineEvent::HelixChangeMode(_) => Ok(EventStatus::Inapplicable),
+            | ReedlineEvent::SwitchMode(_) => Ok(EventStatus::Inapplicable),
         }
     }
 
@@ -1872,8 +1890,7 @@ impl Reedline {
                 // also lets an enclosing `UntilFound` keep trying.
                 Ok(EventStatus::Inapplicable)
             }
-            ReedlineEvent::ViChangeMode(_) => Ok(self.change_edit_mode(event)),
-            ReedlineEvent::HelixChangeMode(_) => Ok(self.change_edit_mode(event)),
+            ReedlineEvent::SwitchMode(_) => Ok(self.change_edit_mode(event)),
             ReedlineEvent::Mouse {
                 column,
                 row,
@@ -1888,10 +1905,19 @@ impl Reedline {
         }
     }
 
-    /// Route a mode-switch event to the active edit mode, then repair the cursor
-    /// the flip left behind.
+    /// Route a `SwitchMode` event to the machine that accepts it, make that
+    /// machine the active one, then repair the cursor the flip left behind.
     ///
-    /// A machine's own transitions emit their repairs as events, the way `i`
+    /// Routing: the active machine is offered the target first, so a switch
+    /// within one machine (vi normal to vi insert) never touches the standby
+    /// list. Otherwise the machines in `inactive_edit_modes` are offered the
+    /// target in registration order, and the first to report `Handled` is
+    /// swapped into `edit_mode`; the one it replaces takes its slot. When no
+    /// machine accepts, nothing changes and the event is `Inapplicable`, which
+    /// is what lets an enclosing `UntilFound` keep trying. The `switch_mode_*`
+    /// tests below pin this contract.
+    ///
+    /// Repair: a machine's own transitions emit their repairs as events, the way `i`
     /// collapses the selection on the way into helix insert. An event-driven
     /// flip never reaches that path, so the repair has to happen here. The one
     /// that bites is leaving a block caret for a bar caret: a block policy rests
@@ -1904,7 +1930,19 @@ impl Reedline {
     /// future machine inherits it.
     fn change_edit_mode(&mut self, event: ReedlineEvent) -> EventStatus {
         let before = self.edit_mode.edit_mode().rest_policy();
-        let status = self.edit_mode.handle_mode_specific_event(event);
+        let mut status = self.edit_mode.handle_mode_specific_event(event.clone());
+        if matches!(status, EventStatus::Inapplicable) {
+            if let Some(i) = self.inactive_edit_modes.iter_mut().position(|m| {
+                matches!(
+                    m.handle_mode_specific_event(event.clone()),
+                    EventStatus::Handled
+                )
+            }) {
+                std::mem::swap(&mut self.edit_mode, &mut self.inactive_edit_modes[i]);
+                status = EventStatus::Handled;
+            }
+        };
+
         let after = self.edit_mode.edit_mode().rest_policy();
         if before.is_block() && !after.is_block() {
             // `run_edit_commands` re-syncs the policy from the mode the machine
@@ -2958,7 +2996,7 @@ mod tests {
     use crate::terminal_extensions::semantic_prompt::PromptKind;
     use crate::{
         ColumnarMenu, CompletionOrigin, CompletionResult, DefaultPrompt, FindStop, ListMenu,
-        MenuBuilder, MotionTarget, PromptViMode, Span, Suggestion,
+        MenuBuilder, MotionTarget, PromptHelixMode, PromptViMode, Span, Suggestion,
     };
     use rstest::rstest;
 
@@ -4351,12 +4389,12 @@ mod tests {
     /// selection, and `insert_char` deletes the selection before inserting, so
     /// without the collapse the first keystroke replaces the covered grapheme.
     #[test]
-    fn helix_change_mode_into_insert_keeps_the_covered_grapheme() {
+    fn switch_mode_into_insert_keeps_the_covered_grapheme() {
         let mut bindings = crate::default_helix_normal_keybindings();
         bindings.add_binding(
             KeyModifiers::NONE,
             KeyCode::Char('z'),
-            ReedlineEvent::HelixChangeMode("insert".into()),
+            ReedlineEvent::SwitchMode(PromptEditMode::Helix(PromptHelixMode::Insert)),
         );
         let mut rl = Reedline::create()
             .with_edit_mode(Box::new(
@@ -4387,20 +4425,22 @@ mod tests {
     }
 
     /// Vi visual rests min-width-1 under `RestPolicy::Block` just as helix does,
-    /// so the same rule has to cover a `ViChangeMode` flip out of it. Without the
+    /// so the same rule has to cover a `SwitchMode` flip out of it. Without the
     /// collapse the visual selection is still live and the first keystroke
-    /// replaces it.
+    /// replaces it. The binding sits in the visual table, the one consulted
+    /// once `v` has been pressed.
     #[test]
-    fn vi_change_mode_out_of_visual_keeps_the_covered_grapheme() {
-        let mut bindings = crate::default_vi_normal_keybindings();
+    fn switch_mode_out_of_vi_visual_keeps_the_covered_grapheme() {
+        let mut bindings = crate::default_vi_visual_keybindings();
         bindings.add_binding(
             KeyModifiers::NONE,
             KeyCode::Char('z'),
-            ReedlineEvent::ViChangeMode("insert".into()),
+            ReedlineEvent::SwitchMode(PromptEditMode::Vi(PromptViMode::Insert)),
         );
         let mut rl = Reedline::create()
             .with_edit_mode(Box::new(crate::Vi::new(
                 crate::default_vi_insert_keybindings(),
+                crate::default_vi_normal_keybindings(),
                 bindings,
             )))
             .with_validator(Box::new(crate::DefaultValidator));
@@ -4423,6 +4463,200 @@ mod tests {
         );
         assert!(signal.is_none(), "incomplete input must not submit");
         assert_eq!(rl.editor.get_buffer(), "\"Xabc");
+    }
+
+    fn ctrl(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+
+    /// Registering a standby machine does not activate it.
+    #[test]
+    fn additional_edit_mode_stays_inactive_until_switched() {
+        let rl = Reedline::create()
+            .with_edit_mode(Box::<crate::Vi>::default())
+            .with_additional_edit_mode(Box::<crate::Helix>::default());
+        assert_eq!(
+            rl.prompt_edit_mode(),
+            PromptEditMode::Vi(PromptViMode::Insert)
+        );
+    }
+
+    /// A `SwitchMode` whose target names a standby machine activates it: the
+    /// emacs binding fires, and the following keys are read by helix normal,
+    /// where `h` is a motion rather than text.
+    #[test]
+    fn switch_mode_activates_a_standby_machine() {
+        let mut emacs = crate::default_emacs_keybindings();
+        emacs.add_binding(
+            KeyModifiers::CONTROL,
+            KeyCode::Char('h'),
+            ReedlineEvent::SwitchMode(PromptEditMode::Helix(PromptHelixMode::Normal)),
+        );
+        let mut rl = Reedline::create()
+            .with_edit_mode(Box::new(crate::Emacs::new(emacs)))
+            .with_additional_edit_mode(Box::<crate::Helix>::default())
+            .with_validator(Box::new(crate::DefaultValidator));
+        rl.painter.force_prompt_anchored_for_test(0);
+
+        drive_until_signal(&mut rl, &[ch('a'), ch('b'), ch('c'), ctrl('h')]);
+        assert_eq!(
+            rl.prompt_edit_mode(),
+            PromptEditMode::Helix(PromptHelixMode::Normal)
+        );
+        // The block caret has nothing to the right at the buffer end, so the
+        // commit covers the last grapheme `c`. `h` steps onto `b`, `i`
+        // collapses in front of it, and `X` lands there.
+        drive_until_signal(&mut rl, &[ch('h'), ch('i'), ch('X')]);
+        assert_eq!(rl.editor.get_buffer(), "aXbc");
+    }
+
+    /// The block-caret repair is stated over the rest policy, so it covers a
+    /// switch *between* machines too: leaving helix normal for emacs must not
+    /// hand emacs a live one-grapheme selection to overwrite.
+    #[test]
+    fn switch_mode_between_machines_keeps_the_covered_grapheme() {
+        let mut normal = crate::default_helix_normal_keybindings();
+        normal.add_binding(
+            KeyModifiers::NONE,
+            KeyCode::Char('z'),
+            ReedlineEvent::SwitchMode(PromptEditMode::Emacs),
+        );
+        let mut rl = Reedline::create()
+            .with_edit_mode(Box::new(
+                crate::Helix::default().with_normal_keybindings(normal),
+            ))
+            .with_additional_edit_mode(Box::<crate::Emacs>::default())
+            .with_validator(Box::new(crate::DefaultValidator));
+        rl.painter.force_prompt_anchored_for_test(0);
+
+        let signal = drive_until_signal(
+            &mut rl,
+            &[
+                ch('"'),
+                ch('a'),
+                ch('b'),
+                ch('c'),
+                key(KeyCode::Esc),
+                ch('h'),
+                ch('h'),
+                ch('z'),
+                ch('X'),
+            ],
+        );
+        assert!(signal.is_none(), "incomplete input must not submit");
+        assert_eq!(rl.prompt_edit_mode(), PromptEditMode::Emacs);
+        assert_eq!(rl.editor.get_buffer(), "\"Xabc");
+    }
+
+    /// The target names the state, not just the machine: coming back to vi
+    /// lands in the state the binding asked for, not where vi was left.
+    #[test]
+    fn switch_mode_lands_in_the_named_state() {
+        let mut vi_insert = crate::default_vi_insert_keybindings();
+        vi_insert.add_binding(
+            KeyModifiers::CONTROL,
+            KeyCode::Char('h'),
+            ReedlineEvent::SwitchMode(PromptEditMode::Helix(PromptHelixMode::Normal)),
+        );
+        let mut helix_normal = crate::default_helix_normal_keybindings();
+        helix_normal.add_binding(
+            KeyModifiers::CONTROL,
+            KeyCode::Char('v'),
+            ReedlineEvent::SwitchMode(PromptEditMode::Vi(PromptViMode::Normal)),
+        );
+        let mut rl = Reedline::create()
+            .with_edit_mode(Box::new(crate::Vi::new(
+                vi_insert,
+                crate::default_vi_normal_keybindings(),
+                crate::default_vi_visual_keybindings(),
+            )))
+            .with_additional_edit_mode(Box::new(
+                crate::Helix::default().with_normal_keybindings(helix_normal),
+            ));
+        rl.painter.force_prompt_anchored_for_test(0);
+
+        drive_until_signal(&mut rl, &[ch('a'), ctrl('h')]);
+        assert_eq!(
+            rl.prompt_edit_mode(),
+            PromptEditMode::Helix(PromptHelixMode::Normal)
+        );
+        drive_until_signal(&mut rl, &[ctrl('v')]);
+        assert_eq!(
+            rl.prompt_edit_mode(),
+            PromptEditMode::Vi(PromptViMode::Normal)
+        );
+    }
+
+    /// No registered machine accepts the target: nothing changes, and the
+    /// `Inapplicable` lets `UntilFound` fall through to the next candidate.
+    #[test]
+    fn switch_mode_to_an_unregistered_machine_falls_through() {
+        let mut emacs = crate::default_emacs_keybindings();
+        emacs.add_binding(
+            KeyModifiers::CONTROL,
+            KeyCode::Char('h'),
+            ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::SwitchMode(PromptEditMode::Helix(PromptHelixMode::Normal)),
+                ReedlineEvent::Edit(vec![EditCommand::InsertString("!".into())]),
+            ]),
+        );
+        let mut rl = Reedline::create().with_edit_mode(Box::new(crate::Emacs::new(emacs)));
+        rl.painter.force_prompt_anchored_for_test(0);
+
+        drive_until_signal(&mut rl, &[ctrl('h')]);
+        assert_eq!(rl.prompt_edit_mode(), PromptEditMode::Emacs);
+        assert_eq!(rl.editor.get_buffer(), "!");
+    }
+
+    /// A host-defined machine is reached through the name it reports, so two
+    /// custom machines are told apart by `PromptEditMode::Custom`.
+    #[test]
+    fn switch_mode_reaches_a_custom_machine_by_name() {
+        struct Named(&'static str);
+        impl EditMode for Named {
+            fn parse_event(&mut self, _e: ReedlineRawEvent) -> ReedlineEvent {
+                ReedlineEvent::None
+            }
+            fn edit_mode(&self) -> PromptEditMode {
+                PromptEditMode::Custom(self.0.into())
+            }
+            fn handle_mode_specific_event(&mut self, event: ReedlineEvent) -> EventStatus {
+                match event {
+                    ReedlineEvent::SwitchMode(PromptEditMode::Custom(name)) if name == self.0 => {
+                        EventStatus::Handled
+                    }
+                    _ => EventStatus::Inapplicable,
+                }
+            }
+        }
+        let prompt = DefaultPrompt::default();
+        let mut rl = Reedline::create()
+            .with_edit_mode(Box::new(Named("fish")))
+            .with_additional_edit_mode(Box::new(Named("shark")));
+
+        let status = rl
+            .handle_event(
+                &prompt,
+                ReedlineEvent::SwitchMode(PromptEditMode::Custom("shark".into())),
+            )
+            .expect("switching does not touch the terminal");
+        assert!(matches!(status, EventStatus::Handled));
+        assert_eq!(
+            rl.prompt_edit_mode(),
+            PromptEditMode::Custom("shark".into())
+        );
+
+        let status = rl
+            .handle_event(
+                &prompt,
+                ReedlineEvent::SwitchMode(PromptEditMode::Custom("eel".into())),
+            )
+            .expect("switching does not touch the terminal");
+        assert!(matches!(status, EventStatus::Inapplicable));
+        assert_eq!(
+            rl.prompt_edit_mode(),
+            PromptEditMode::Custom("shark".into())
+        );
     }
 
     /// The submitted path cannot assert on the buffer (`submit_buffer` clears

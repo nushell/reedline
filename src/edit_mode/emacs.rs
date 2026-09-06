@@ -6,7 +6,7 @@ use crate::{
         },
         parse_non_key_event, EditMode,
     },
-    enums::{EditCommand, ReedlineEvent, ReedlineRawEvent},
+    enums::{EditCommand, EventStatus, ReedlineEvent, ReedlineRawEvent},
     PromptEditMode,
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
@@ -171,6 +171,15 @@ impl EditMode for Emacs {
     fn edit_mode(&self) -> PromptEditMode {
         PromptEditMode::Emacs
     }
+
+    fn handle_mode_specific_event(&mut self, event: ReedlineEvent) -> EventStatus {
+        // Emacs has a single state, so the only switch it accepts is into
+        // itself; accepting is what makes it the engine's active machine.
+        match event {
+            ReedlineEvent::SwitchMode(PromptEditMode::Emacs) => EventStatus::Handled,
+            _ => EventStatus::Inapplicable,
+        }
+    }
 }
 
 impl Emacs {
@@ -184,6 +193,21 @@ impl Emacs {
 mod test {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn switch_mode_event_accepts_only_emacs() {
+        let mut emacs = Emacs::default();
+        assert!(matches!(
+            emacs.handle_mode_specific_event(ReedlineEvent::SwitchMode(PromptEditMode::Emacs)),
+            EventStatus::Handled
+        ));
+        assert!(matches!(
+            emacs.handle_mode_specific_event(ReedlineEvent::SwitchMode(PromptEditMode::Vi(
+                crate::PromptViMode::Normal
+            ))),
+            EventStatus::Inapplicable
+        ));
+    }
 
     #[test]
     fn ctrl_l_leads_to_clear_screen_event() {
