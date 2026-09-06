@@ -8,9 +8,9 @@ use {
     nu_ansi_term::{Color, Style},
     reedline::{
         default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
-        ColumnarMenu, DefaultCompleter, DefaultHinter, DefaultPrompt, DefaultValidator,
-        EditCommand, EditMode, Emacs, ExampleHighlighter, Keybindings, ListMenu, Reedline,
-        ReedlineEvent, ReedlineMenu, Signal, Vi,
+        default_vi_visual_keybindings, ColumnarMenu, DefaultCompleter, DefaultHinter,
+        DefaultPrompt, DefaultValidator, EditCommand, EditMode, Emacs, ExampleHighlighter,
+        Keybindings, ListMenu, Reedline, ReedlineEvent, ReedlineMenu, Signal, Vi,
     },
 };
 
@@ -229,13 +229,19 @@ fn emacs_edit_mode() -> Box<dyn EditMode> {
 fn vi_edit_mode() -> Box<dyn EditMode> {
     let mut normal_keybindings = default_vi_normal_keybindings();
     let mut insert_keybindings = default_vi_insert_keybindings();
+    let mut visual_keybindings = default_vi_visual_keybindings();
 
     add_menu_keybindings(&mut normal_keybindings);
     add_menu_keybindings(&mut insert_keybindings);
+    add_menu_keybindings(&mut visual_keybindings);
 
     add_newline_keybinding(&mut insert_keybindings);
 
-    Box::new(Vi::new(insert_keybindings, normal_keybindings))
+    Box::new(Vi::new(
+        insert_keybindings,
+        normal_keybindings,
+        visual_keybindings,
+    ))
 }
 
 fn helix_edit_mode() -> Box<dyn EditMode> {

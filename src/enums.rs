@@ -1,3 +1,4 @@
+use crate::PromptEditMode;
 use crossterm::event::{Event, KeyEvent, KeyEventKind};
 use serde::{Deserialize, Serialize};
 use strum::{EnumDiscriminants, EnumIter, EnumString, VariantArray};
@@ -1152,23 +1153,22 @@ pub enum ReedlineEvent {
     /// Open text editor
     OpenEditor,
 
-    /// Switch the vi state machine to a named mode (vi mode only).
+    /// Switch the line editor to the named edit mode.
     ///
-    /// Accepts `normal`, `insert` or `visual`, matched case-insensitively. Any
-    /// other name leaves the mode alone and reports the event inapplicable. On
-    /// its own that is a keybinding that does nothing; inside an
-    /// [`UntilFound`](ReedlineEvent::UntilFound) it hands the key to the next
-    /// event in the list instead.
-    ViChangeMode(String),
-
-    /// Switch the helix state machine to a named mode (helix mode only).
+    /// The target names both the machine and the state to land in, so
+    /// `SwitchMode(PromptEditMode::Helix(PromptHelixMode::Normal))` reaches
+    /// helix normal from anywhere: from another helix state, from vi, or from
+    /// emacs. The engine offers the target to the active machine first and
+    /// then to every machine registered with
+    /// [`Reedline::with_additional_edit_mode`](crate::Reedline::with_additional_edit_mode);
+    /// the first to accept it becomes active. A host-defined machine is reached
+    /// through the name it reports as [`PromptEditMode::Custom`].
     ///
-    /// Accepts `normal`, `insert` or `select`, matched case-insensitively. Any
-    /// other name leaves the mode alone and reports the event inapplicable. On
-    /// its own that is a keybinding that does nothing; inside an
-    /// [`UntilFound`](ReedlineEvent::UntilFound) it hands the key to the next
-    /// event in the list instead.
-    HelixChangeMode(String),
+    /// A target no machine accepts leaves everything alone and reports the
+    /// event inapplicable. On its own that is a keybinding that does nothing;
+    /// inside an [`UntilFound`](ReedlineEvent::UntilFound) it hands the key to
+    /// the next event in the list instead.
+    SwitchMode(PromptEditMode),
 }
 
 pub enum EventStatus {
