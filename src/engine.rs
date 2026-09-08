@@ -792,9 +792,21 @@ impl Reedline {
     /// A builder that registers another edit mode a
     /// [`ReedlineEvent::SwitchMode`] can activate. The mode given to
     /// [`with_edit_mode`](Self::with_edit_mode) stays active until then.
+    ///
+    /// Registering appends, so a host that rebuilds its modes on every prompt
+    /// clears them with [`clear_edit_modes`](Self::clear_edit_modes) first.
     #[must_use]
     pub fn with_additional_edit_mode(mut self, edit_mode: Box<dyn EditMode>) -> Self {
         self.inactive_edit_modes.push(edit_mode);
+        self
+    }
+
+    /// A builder that clears the edit modes registered with
+    /// [`with_additional_edit_mode`](Self::with_additional_edit_mode), leaving
+    /// the active one alone.
+    #[must_use]
+    pub fn clear_edit_modes(mut self) -> Self {
+        self.inactive_edit_modes = Vec::new();
         self
     }
 
@@ -4495,6 +4507,27 @@ mod tests {
         drive_until_signal(&mut rl, &[ctrl('h')]);
         assert_eq!(rl.prompt_edit_mode(), PromptEditMode::Emacs);
         assert_eq!(rl.editor.get_buffer(), "!");
+    }
+
+    /// `clear_edit_modes` drops the standbys and leaves the active machine, so
+    /// a host that rebuilds its set every prompt does not accumulate one.
+    #[test]
+    fn clear_edit_modes_drops_the_standbys_and_keeps_the_active_machine() {
+        let mut emacs = crate::default_emacs_keybindings();
+        emacs.add_binding(
+            KeyModifiers::CONTROL,
+            KeyCode::Char('h'),
+            ReedlineEvent::SwitchMode(PromptEditMode::Helix(PromptHelixMode::Normal)),
+        );
+        let mut rl = Reedline::create()
+            .with_edit_mode(Box::new(crate::Emacs::new(emacs)))
+            .with_additional_edit_mode(Box::<crate::Helix>::default())
+            .clear_edit_modes();
+        rl.painter.force_prompt_anchored_for_test(0);
+
+        assert!(rl.inactive_edit_modes.is_empty());
+        drive_until_signal(&mut rl, &[ctrl('h')]);
+        assert_eq!(rl.prompt_edit_mode(), PromptEditMode::Emacs);
     }
 
     /// A host-defined machine is reached through the name it reports, so two
