@@ -1706,49 +1706,54 @@ impl Reedline {
             }
             ReedlineEvent::Edit(commands) => {
                 let status = self.run_edit_commands_with_status(&commands);
-                if status == EditCommandStatus::Inapplicable {
-                    return Ok(EventStatus::Inapplicable);
-                }
 
                 // Check if a space was just inserted and try to expand abbreviations
-                if let Some(EditCommand::InsertChar(' ')) = commands.first() {
+                if status == EditCommandStatus::Applied
+                    && matches!(commands.first(), Some(EditCommand::InsertChar(' ')))
+                {
                     if let Some(event) = self.try_expand_abbreviation_at_cursor(false) {
                         return self.handle_editor_event(prompt, event);
                     }
                 }
-                if let Some(menu) = self.menus.iter_mut().find(|men| men.is_active()) {
-                    if self.quick_completions && menu.can_quick_complete() {
-                        match commands.first() {
-                            Some(&EditCommand::Backspace)
-                            | Some(&EditCommand::BackspaceWord)
-                            | Some(&EditCommand::MoveToLineStart { select: false })
-                                if !self.persistent_menus =>
-                            {
-                                menu.menu_event(MenuEvent::Deactivate)
-                            }
-                            _ => {
-                                menu.menu_event(MenuEvent::Edit(self.quick_completions));
-                                invalidate_anchor_if_host_completer_runs(menu, &mut self.painter);
-                                menu.update_values(
+
+                if let Some(menu) = self.menus.iter_mut().find(|menu| menu.is_active()) {
+                    let quick_complete = self.quick_completions && menu.can_quick_complete();
+                    // Dismissing a menu handles the event even when the cursor didn't move.
+                    if quick_complete
+                        && !self.persistent_menus
+                        && matches!(
+                            commands.first(),
+                            Some(EditCommand::Backspace)
+                                | Some(EditCommand::BackspaceWord)
+                                | Some(EditCommand::MoveToLineStart { select: false })
+                        )
+                    {
+                        menu.menu_event(MenuEvent::Deactivate);
+                        return Ok(EventStatus::Handled);
+                    }
+                    if status == EditCommandStatus::Inapplicable {
+                        return Ok(EventStatus::Inapplicable);
+                    }
+                    if quick_complete {
+                        menu.menu_event(MenuEvent::Edit(self.quick_completions));
+                        invalidate_anchor_if_host_completer_runs(menu, &mut self.painter);
+                        menu.update_values(
+                            &mut self.editor,
+                            self.completer.as_mut(),
+                            self.history.as_ref(),
+                        );
+                        if let Some(&EditCommand::Complete) = commands.first() {
+                            if menu.get_values().len() == 1 {
+                                return self.handle_editor_event(prompt, ReedlineEvent::Enter);
+                            } else if self.partial_completions
+                                && menu.can_partially_complete(
+                                    self.quick_completions,
                                     &mut self.editor,
                                     self.completer.as_mut(),
                                     self.history.as_ref(),
-                                );
-                                if let Some(&EditCommand::Complete) = commands.first() {
-                                    if menu.get_values().len() == 1 {
-                                        return self
-                                            .handle_editor_event(prompt, ReedlineEvent::Enter);
-                                    } else if self.partial_completions
-                                        && menu.can_partially_complete(
-                                            self.quick_completions,
-                                            &mut self.editor,
-                                            self.completer.as_mut(),
-                                            self.history.as_ref(),
-                                        )
-                                    {
-                                        return Ok(EventStatus::Handled);
-                                    }
-                                }
+                                )
+                            {
+                                return Ok(EventStatus::Handled);
                             }
                         }
                     }
@@ -1759,7 +1764,10 @@ impl Reedline {
                         invalidate_anchor_if_host_completer_runs(menu, &mut self.painter);
                     }
                 }
-                Ok(EventStatus::Handled)
+                Ok(match status {
+                    EditCommandStatus::Applied => EventStatus::Handled,
+                    EditCommandStatus::Inapplicable => EventStatus::Inapplicable,
+                })
             }
             ReedlineEvent::OpenEditor => self.open_editor().map(|_| EventStatus::Handled),
             ReedlineEvent::Resize(width, height) => {
@@ -1787,25 +1795,34 @@ impl Reedline {
                 self.down_command()?;
                 Ok(EventStatus::Handled)
             }
-            ReedlineEvent::Left => {
-                self.run_edit_commands(&[EditCommand::MoveLeft { select: false }]);
-                Ok(EventStatus::Handled)
+            ReedlineEvent::Left | ReedlineEvent::Right => {
+                let command = if event == ReedlineEvent::Left {
+                    EditCommand::MoveLeft { select: false }
+                } else {
+                    EditCommand::MoveRight { select: false }
+                };
+                Ok(match self.run_edit_commands_with_status(&[command]) {
+                    EditCommandStatus::Applied => EventStatus::Handled,
+                    EditCommandStatus::Inapplicable => EventStatus::Inapplicable,
+                })
             }
-            ReedlineEvent::Right => {
-                self.run_edit_commands(&[EditCommand::MoveRight { select: false }]);
-                Ok(EventStatus::Handled)
-            }
-            ReedlineEvent::ToStart => {
-                self.editor.move_to_start(false);
+            ReedlineEvent::ToStart | ReedlineEvent::ToEnd => {
+                let initial_cursor = self.editor.line_buffer().cursor();
+                // Keep these aliases outside the edit-command path: they do not
+                // create undo points or end history traversal.
+                if event == ReedlineEvent::ToStart {
+                    self.editor.move_to_start(false);
+                } else {
+                    self.editor.move_to_end(false);
+                }
+                // Compare after settling under the rest policy, including vi's
+                // block caret resting on the last grapheme rather than past it.
                 self.editor.commit_cursor();
-                Ok(EventStatus::Handled)
-            }
-            ReedlineEvent::ToEnd => {
-                self.editor.move_to_end(false);
-                // Settle under the rest policy: `Alt+>` is bound in vi normal too,
-                // where the block caret must not rest past the last grapheme.
-                self.editor.commit_cursor();
-                Ok(EventStatus::Handled)
+                Ok(if self.editor.line_buffer().cursor() == initial_cursor {
+                    EventStatus::Inapplicable
+                } else {
+                    EventStatus::Handled
+                })
             }
             ReedlineEvent::SearchHistory => {
                 self.enter_history_search();
@@ -2101,10 +2118,11 @@ impl Reedline {
     }
 
     fn run_edit_commands_with_status(&mut self, commands: &[EditCommand]) -> EditCommandStatus {
-        if self.input_mode == InputMode::HistoryTraversal {
+        let status = self.apply_edit_commands(commands);
+        if status == EditCommandStatus::Applied && self.input_mode == InputMode::HistoryTraversal {
             self.input_mode = InputMode::Regular;
         }
-        self.apply_edit_commands(commands)
+        status
     }
 
     /// [`run_edit_commands`](Self::run_edit_commands) without ending history
@@ -2859,8 +2877,8 @@ mod tests {
     use super::*;
     use crate::terminal_extensions::semantic_prompt::PromptKind;
     use crate::{
-        ColumnarMenu, CompletionOrigin, CompletionResult, DefaultPrompt, MenuBuilder, PromptViMode,
-        Span, Suggestion,
+        ColumnarMenu, CompletionOrigin, CompletionResult, DefaultPrompt, FindStop, MenuBuilder,
+        MotionTarget, PromptViMode, Span, Suggestion,
     };
     use rstest::rstest;
 
@@ -5509,6 +5527,271 @@ mod tests {
     }
 
     #[rstest]
+    #[case::up_at_first_line(
+        EditCommand::MoveLineUp { select: false },
+        0,
+        "!a\nb",
+        1
+    )]
+    #[case::up_from_second_line(
+        EditCommand::MoveLineUp { select: false },
+        3,
+        "a\nb",
+        1
+    )]
+    #[case::down_at_last_line(
+        EditCommand::MoveLineDown { select: false },
+        3,
+        "a\nb!",
+        4
+    )]
+    #[case::down_from_first_line(
+        EditCommand::MoveLineDown { select: false },
+        0,
+        "a\nb",
+        2
+    )]
+    #[case::left_at_buffer_start(EditCommand::MoveLeft { select: false }, 0, "!a\nb", 1)]
+    #[case::right_from_buffer_start(EditCommand::MoveRight { select: false }, 0, "a\nb", 1)]
+    #[case::line_start_at_line_start(
+        EditCommand::MoveToLineStart { select: false },
+        2,
+        "a\n!b",
+        3
+    )]
+    #[case::line_end_from_line_start(
+        EditCommand::MoveToLineEnd { select: false },
+        0,
+        "a\nb",
+        1
+    )]
+    #[case::extend_missing_find(
+        EditCommand::Extend(MotionTarget::Find {
+            ch: 'z',
+            direction: Direction::Forward,
+            stop: FindStop::On,
+        }),
+        0,
+        "!a\nb",
+        1
+    )]
+    fn until_found_move_status(
+        #[case] command: EditCommand,
+        #[case] start: usize,
+        #[case] expected_buffer: &str,
+        #[case] expected_cursor: usize,
+    ) {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[
+            EditCommand::InsertString("a\nb".into()),
+            EditCommand::MoveToPosition {
+                position: start,
+                select: false,
+            },
+        ]);
+
+        let status = send(
+            &mut reedline,
+            ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::Edit(vec![command]),
+                ReedlineEvent::Edit(vec![EditCommand::InsertChar('!')]),
+            ]),
+        );
+
+        assert!(matches!(status, EventStatus::Handled));
+        assert_eq!(reedline.current_buffer_contents(), expected_buffer);
+        assert_eq!(reedline.editor.insertion_point(), expected_cursor);
+    }
+
+    #[rstest]
+    #[case(ReedlineEvent::Left, 0, "!a", 1)]
+    #[case(ReedlineEvent::Left, 1, "a", 0)]
+    #[case(ReedlineEvent::Right, 0, "a", 1)]
+    #[case(ReedlineEvent::Right, 1, "a!", 2)]
+    #[case(ReedlineEvent::ToStart, 0, "!a", 1)]
+    #[case(ReedlineEvent::ToStart, 1, "a", 0)]
+    #[case(ReedlineEvent::ToEnd, 0, "a", 1)]
+    #[case(ReedlineEvent::ToEnd, 1, "a!", 2)]
+    fn until_found_horizontal_alias_status(
+        #[case] event: ReedlineEvent,
+        #[case] start: usize,
+        #[case] expected: &str,
+        #[case] expected_cursor: usize,
+    ) {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[
+            EditCommand::InsertChar('a'),
+            EditCommand::MoveToPosition {
+                position: start,
+                select: false,
+            },
+        ]);
+        let status = send(
+            &mut reedline,
+            ReedlineEvent::UntilFound(vec![
+                event,
+                ReedlineEvent::Edit(vec![EditCommand::InsertChar('!')]),
+            ]),
+        );
+        assert!(matches!(status, EventStatus::Handled));
+        assert_eq!(reedline.current_buffer_contents(), expected);
+        assert_eq!(reedline.editor.insertion_point(), expected_cursor);
+    }
+
+    #[rstest]
+    #[case(ReedlineEvent::ToStart, 0)]
+    #[case(ReedlineEvent::ToEnd, 3)]
+    fn buffer_edge_alias_preserves_history_traversal(
+        #[case] event: ReedlineEvent,
+        #[case] destination: usize,
+        #[values(0, 3)] start: usize,
+    ) {
+        let mut reedline = Reedline::create();
+        reedline
+            .history
+            .save(HistoryItem::from_command_line("abc"))
+            .unwrap();
+        reedline.previous_history().unwrap();
+        reedline.editor.line_buffer_mut().set_insertion_point(start);
+
+        let status = send(&mut reedline, event);
+
+        assert_eq!(matches!(status, EventStatus::Handled), start != destination);
+        assert_eq!(reedline.editor.insertion_point(), destination);
+        assert_eq!(reedline.input_mode, InputMode::HistoryTraversal);
+    }
+
+    #[rstest]
+    #[case(ReedlineEvent::ToStart)]
+    #[case(ReedlineEvent::ToEnd)]
+    fn buffer_edge_alias_preserves_redo(
+        #[case] event: ReedlineEvent,
+        #[values(0, 3)] start: usize,
+    ) {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[
+            EditCommand::InsertString("abc".into()),
+            EditCommand::InsertString("x".into()),
+            EditCommand::Undo,
+        ]);
+        assert_eq!(reedline.current_buffer_contents(), "abc");
+        reedline.editor.line_buffer_mut().set_insertion_point(start);
+
+        send(&mut reedline, event);
+        reedline.run_edit_commands(&[EditCommand::Redo]);
+
+        assert_eq!(reedline.current_buffer_contents(), "abcx");
+    }
+
+    #[rstest]
+    #[case(ReedlineEvent::ToStart, 1, 0)]
+    #[case(ReedlineEvent::ToEnd, 0, 1)]
+    fn buffer_edge_alias_clearing_selection_is_handled(
+        #[case] event: ReedlineEvent,
+        #[case] anchor: usize,
+        #[case] head: usize,
+    ) {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[
+            EditCommand::InsertChar('a'),
+            EditCommand::MoveToPosition {
+                position: anchor,
+                select: false,
+            },
+            EditCommand::MoveToPosition {
+                position: head,
+                select: true,
+            },
+        ]);
+
+        assert!(matches!(send(&mut reedline, event), EventStatus::Handled));
+        assert_eq!(reedline.editor.insertion_point(), head);
+        assert_eq!(reedline.editor.get_selection(), None);
+    }
+
+    #[rstest]
+    #[case(EditCommand::MoveLeft { select: false })]
+    #[case(EditCommand::MoveLineUp { select: false })]
+    #[case(EditCommand::MoveLineDown { select: false })]
+    fn until_found_noop_move_preserves_redo(#[case] command: EditCommand) {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[EditCommand::InsertString("abc".into()), EditCommand::Undo]);
+        assert_eq!(reedline.current_buffer_contents(), "");
+
+        let status = send(
+            &mut reedline,
+            ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::Edit(vec![command]),
+                ReedlineEvent::Edit(vec![EditCommand::Redo]),
+            ]),
+        );
+
+        assert!(matches!(status, EventStatus::Handled));
+        assert_eq!(reedline.current_buffer_contents(), "abc");
+    }
+
+    #[test]
+    fn until_found_noop_move_preserves_history_traversal() {
+        let mut reedline = Reedline::create();
+        for entry in ["first", "second"] {
+            reedline
+                .history
+                .save(HistoryItem::from_command_line(entry))
+                .unwrap();
+        }
+
+        for (command, fallback, expected) in [
+            (
+                EditCommand::MoveLineUp { select: false },
+                ReedlineEvent::PreviousHistory,
+                ["second", "first"],
+            ),
+            (
+                EditCommand::MoveLineDown { select: false },
+                ReedlineEvent::NextHistory,
+                ["second", ""],
+            ),
+        ] {
+            for buffer in expected {
+                let status = send(
+                    &mut reedline,
+                    ReedlineEvent::UntilFound(vec![
+                        ReedlineEvent::Edit(vec![command.clone()]),
+                        fallback.clone(),
+                    ]),
+                );
+                assert!(matches!(status, EventStatus::Handled));
+                assert_eq!(reedline.current_buffer_contents(), buffer);
+            }
+        }
+    }
+
+    #[test]
+    fn until_found_noop_move_that_clears_selection_is_applied() {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[
+            EditCommand::InsertString("a\nb".into()),
+            EditCommand::MoveToPosition {
+                position: 1,
+                select: false,
+            },
+            EditCommand::MoveToStart { select: true },
+        ]);
+
+        send(
+            &mut reedline,
+            ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::Edit(vec![EditCommand::MoveLineUp { select: false }]),
+                ReedlineEvent::Edit(vec![EditCommand::InsertChar('!')]),
+            ]),
+        );
+
+        assert_eq!(reedline.current_buffer_contents(), "a\nb");
+        assert_eq!(reedline.editor.insertion_point(), 0);
+        assert_eq!(reedline.editor.get_selection(), None);
+    }
+
+    #[rstest]
     #[case::local_without_selection(EditCommand::CopySelection, false)]
     #[case::local_with_selection(EditCommand::CopySelection, true)]
     #[cfg_attr(
@@ -5535,15 +5818,13 @@ mod tests {
 
         reedline.run_edit_commands(&setup);
 
-        let status = reedline
-            .handle_event(
-                &DefaultPrompt::default(),
-                ReedlineEvent::UntilFound(vec![
-                    ReedlineEvent::Edit(vec![command]),
-                    ReedlineEvent::CtrlC,
-                ]),
-            )
-            .unwrap();
+        let status = send(
+            &mut reedline,
+            ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::Edit(vec![command]),
+                ReedlineEvent::CtrlC,
+            ]),
+        );
 
         if with_selection {
             assert!(matches!(status, EventStatus::Handled));
@@ -5556,18 +5837,16 @@ mod tests {
     fn edit_status_is_applied_when_any_command_applies() {
         let mut reedline = Reedline::create();
 
-        let status = reedline
-            .handle_event(
-                &DefaultPrompt::default(),
-                ReedlineEvent::UntilFound(vec![
-                    ReedlineEvent::Edit(vec![
-                        EditCommand::InsertString("abc".into()),
-                        EditCommand::CopySelection,
-                    ]),
-                    ReedlineEvent::CtrlC,
+        let status = send(
+            &mut reedline,
+            ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::Edit(vec![
+                    EditCommand::InsertString("abc".into()),
+                    EditCommand::CopySelection,
                 ]),
-            )
-            .unwrap();
+                ReedlineEvent::CtrlC,
+            ]),
+        );
 
         assert!(matches!(status, EventStatus::Handled));
         assert_eq!(reedline.current_buffer_contents(), "abc");
@@ -5601,6 +5880,30 @@ mod tests {
             send_edit(&mut reedline, command.clone());
             assert_eq!(menu_is_active(&reedline), persistent);
         }
+    }
+
+    #[rstest]
+    #[case(EditCommand::MoveToLineStart { select: false }, true)]
+    #[case(EditCommand::MoveLeft { select: false }, false)]
+    #[case(EditCommand::MoveLineUp { select: false }, false)]
+    #[case(EditCommand::MoveLineDown { select: false }, false)]
+    fn noop_moves_only_dismiss_eligible_quick_menus(
+        #[case] command: EditCommand,
+        #[case] can_dismiss: bool,
+        #[values(false, true)] quick: bool,
+        #[values(false, true)] persistent: bool,
+    ) {
+        let mut reedline = engine_with_active_menu(quick, persistent);
+        reedline.run_edit_commands(&[EditCommand::MoveToLineStart { select: false }]);
+        assert!(menu_is_active(&reedline));
+
+        let status = send(&mut reedline, ReedlineEvent::Edit(vec![command]));
+
+        let dismissed = can_dismiss && quick && !persistent;
+        assert_eq!(menu_is_active(&reedline), !dismissed);
+        assert_eq!(matches!(status, EventStatus::Handled), dismissed);
+        assert_eq!(reedline.current_buffer_contents(), "th");
+        assert_eq!(reedline.editor.insertion_point(), 0);
     }
 
     fn send(reedline: &mut Reedline, event: ReedlineEvent) -> EventStatus {
@@ -5900,6 +6203,10 @@ mod tests {
             &[KeyEvent::new(KeyCode::Char('>'), KeyModifiers::ALT)],
         );
         assert_eq!(rl.editor.insertion_point(), 2); // 'c', not 3 (past it)
+        assert!(matches!(
+            send(&mut rl, ReedlineEvent::ToEnd),
+            EventStatus::Inapplicable
+        ));
     }
 
     #[test]

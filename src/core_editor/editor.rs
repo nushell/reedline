@@ -102,6 +102,7 @@ impl Editor {
     }
 
     pub(crate) fn run_edit_command(&mut self, command: &EditCommand) -> EditCommandStatus {
+        let initial_cursor = self.line_buffer.cursor();
         let mut status = EditCommandStatus::Applied;
 
         match command {
@@ -419,6 +420,12 @@ impl Editor {
         }
 
         self.commit_cursor();
+
+        if matches!(command.edit_type(), EditType::MoveCursor { .. })
+            && self.line_buffer.cursor() == initial_cursor
+        {
+            return EditCommandStatus::Inapplicable;
+        }
 
         let new_undo_behavior = match (command, command.edit_type()) {
             (_, EditType::MoveCursor { .. }) => UndoBehavior::MoveCursor,
@@ -754,14 +761,12 @@ impl Editor {
         if let Some(target) = self.line_buffer.line_up_target() {
             self.move_head_to(target, select);
         }
-        self.update_undo_state(UndoBehavior::MoveCursor);
     }
 
     pub(crate) fn move_line_down(&mut self, select: bool) {
         if let Some(target) = self.line_buffer.line_down_target() {
             self.move_head_to(target, select);
         }
-        self.update_undo_state(UndoBehavior::MoveCursor);
     }
 
     /// Get the text of the current [`LineBuffer`]
