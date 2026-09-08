@@ -5586,6 +5586,34 @@ mod tests {
         assert_eq!(reedline.current_buffer_contents(), "th ");
     }
 
+    /// The same pair under `UntilFound` is "accept, or else type a space": the
+    /// chain stops at the first event that applies, so an accepted completion is
+    /// not followed by the space, and a menu with nothing to accept is skipped
+    /// over like no menu at all.
+    #[test]
+    fn menu_accept_under_until_found_yields_to_the_next_event_only_when_inapplicable() {
+        let space_binding = || {
+            ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::MenuAccept,
+                ReedlineEvent::Edit(vec![EditCommand::InsertChar(' ')]),
+            ])
+        };
+
+        let mut reedline = engine_with_active_menu(true, false);
+        send(&mut reedline, space_binding());
+        assert_eq!(reedline.current_buffer_contents(), "that");
+        assert!(!menu_is_active(&reedline));
+
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("th"))]);
+        send(&mut reedline, space_binding());
+        assert_eq!(reedline.current_buffer_contents(), "th ");
+
+        let mut reedline = engine_with_empty_menu();
+        send(&mut reedline, space_binding());
+        assert_eq!(reedline.current_buffer_contents(), "th ");
+    }
+
     /// A hinter that always offers a fixed suggestion, so the completion flow can
     /// be driven without the paint cycle that normally refreshes the hint.
     struct FixedHinter(&'static str);
