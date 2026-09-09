@@ -1718,6 +1718,13 @@ impl Reedline {
             ReedlineEvent::Edit(commands) => {
                 let status = self.run_edit_commands_with_status(&commands);
 
+                // Ahead of everything below, which would otherwise ask a
+                // completer about a word the user has already left, or return
+                // through the abbreviation expansion without ever looking.
+                if status == EditCommandStatus::Applied {
+                    self.close_a_menu_past_its_word(&commands);
+                }
+
                 // Check if a space was just inserted and try to expand abbreviations
                 if status == EditCommandStatus::Applied
                     && matches!(commands.first(), Some(EditCommand::InsertChar(' ')))
@@ -2831,6 +2838,28 @@ impl Reedline {
         Ok(messages)
     }
 
+    /// Close an active menu when a typed character ends the word it was opened
+    /// for. Menus without word characters, and persistent menus, live on as
+    /// they always have.
+    ///
+    /// Every character in the batch is read, not just the first: a burst of
+    /// typing arrives as one `Edit` with several `InsertChar`s, and the word
+    /// can end anywhere in it.
+    fn close_a_menu_past_its_word(&mut self, commands: &[EditCommand]) {
+        if self.persistent_menus {
+            return;
+        }
+        let Some(menu) = self.menus.iter_mut().find(|menu| menu.is_active()) else {
+            return;
+        };
+        let word_ended = commands.iter().any(|command| {
+            matches!(command, EditCommand::InsertChar(c) if menu.settings().word_ends_at(*c))
+        });
+        if word_ended {
+            menu.menu_event(MenuEvent::Deactivate);
+        }
+    }
+
     fn submit_buffer(&mut self, prompt: &dyn Prompt) -> io::Result<EventStatus> {
         // A menu that let the submit through (no suggestions to accept) must
         // not stay active into the next line's editing.
@@ -2891,8 +2920,8 @@ mod tests {
     use super::*;
     use crate::terminal_extensions::semantic_prompt::PromptKind;
     use crate::{
-        ColumnarMenu, CompletionOrigin, CompletionResult, DefaultPrompt, FindStop, MenuBuilder,
-        MotionTarget, PromptViMode, Span, Suggestion,
+        ColumnarMenu, CompletionOrigin, CompletionResult, DefaultPrompt, FindStop, ListMenu,
+        MenuBuilder, MotionTarget, PromptViMode, Span, Suggestion,
     };
     use rstest::rstest;
 
@@ -5553,6 +5582,278 @@ mod tests {
         assert!(
             matches!(status, EventStatus::Exits(Signal::Success(ref s)) if s == "th more words"),
             "the line was not submitted intact"
+        );
+    }
+
+    /// A completion menu open over "th", closing at the end of the word for
+    /// the given word characters.
+    fn engine_with_word_bounded_menu(word_chars: &str, persistent: bool) -> Reedline {
+        let completer = Box::new(DefaultCompleter::new_with_wordlen(
+            vec![
+                String::from("test"),
+                String::from("this"),
+                String::from("that"),
+            ],
+            1,
+        ));
+        let completion_menu = ReedlineMenu::EngineCompleter(Box::new(
+            ColumnarMenu::default()
+                .with_name("completion_menu")
+                .with_word_chars(Some(String::from(word_chars))),
+        ));
+        let mut reedline = Reedline::create()
+            .with_completer(completer)
+            .with_menu(completion_menu)
+            .with_persistent_menus(persistent);
+
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("th"))]);
+        reedline
+            .handle_event(
+                &DefaultPrompt::default(),
+                ReedlineEvent::Menu(String::from("completion_menu")),
+            )
+            .unwrap();
+        assert!(menu_is_active(&reedline));
+        reedline
+    }
+
+    fn insert(reedline: &mut Reedline, c: char) {
+        reedline
+            .handle_event(
+                &DefaultPrompt::default(),
+                ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)]),
+            )
+            .unwrap();
+    }
+
+    /// A character that cannot extend the word ends the menu opened for it;
+    /// one that can leaves the menu to refilter.
+    #[rstest]
+    #[case::space(' ', true)]
+    #[case::statement_end(';', true)]
+    #[case::close_paren(')', true)]
+    #[case::letter('e', false)]
+    #[case::underscore('_', false)]
+    #[case::qualifier('.', false)]
+    fn a_word_boundary_closes_the_menu(#[case] typed: char, #[case] closes: bool) {
+        let mut reedline = engine_with_word_bounded_menu("_.", false);
+        insert(&mut reedline, typed);
+        assert_eq!(!menu_is_active(&reedline), closes, "inserting {typed:?}");
+    }
+
+    /// The word characters are the caller's to choose: a path completer keeps
+    /// its menu across the separators an identifier completer ends on.
+    #[rstest]
+    #[case::path_separator('/', false)]
+    #[case::dash('-', false)]
+    #[case::space(' ', true)]
+    fn word_chars_decide_where_the_word_ends(#[case] typed: char, #[case] closes: bool) {
+        let mut reedline = engine_with_word_bounded_menu("_-./", false);
+        insert(&mut reedline, typed);
+        assert_eq!(!menu_is_active(&reedline), closes, "inserting {typed:?}");
+    }
+
+    /// Left unset, a menu still lives for the rest of the line.
+    #[rstest]
+    #[case::space(' ')]
+    #[case::statement_end(';')]
+    fn a_menu_without_word_chars_outlives_the_word(#[case] typed: char) {
+        let mut reedline = engine_with_active_menu(false, false);
+        insert(&mut reedline, typed);
+        assert!(menu_is_active(&reedline), "inserting {typed:?}");
+    }
+
+    /// A persistent menu is persistent: the word ending does not close it.
+    #[test]
+    fn a_persistent_menu_survives_the_end_of_the_word() {
+        let mut reedline = engine_with_word_bounded_menu("_.", true);
+        insert(&mut reedline, ';');
+        assert!(menu_is_active(&reedline));
+    }
+
+    /// Only typing ends a word. Text arriving whole — a paste, a macro — is
+    /// not the user walking off the end of the completion.
+    #[test]
+    fn inserted_text_does_not_end_the_word() {
+        let mut reedline = engine_with_word_bounded_menu("_.", false);
+        reedline
+            .handle_event(
+                &DefaultPrompt::default(),
+                ReedlineEvent::Edit(vec![EditCommand::InsertString(String::from("is; "))]),
+            )
+            .unwrap();
+        assert!(menu_is_active(&reedline));
+    }
+
+    /// A menu that filters on whole command lines rather than a word — the
+    /// history menu `examples/demo.rs` pairs with the completion menu — has no
+    /// word to end, and is left alone while its neighbour closes.
+    #[test]
+    fn a_menu_without_word_chars_is_left_alone() {
+        let mut reedline = Reedline::create()
+            .with_menu(ReedlineMenu::EngineCompleter(Box::new(
+                ColumnarMenu::default()
+                    .with_name("completion_menu")
+                    .with_word_chars(Some(String::from("_."))),
+            )))
+            .with_menu(ReedlineMenu::HistoryMenu(Box::new(
+                ListMenu::default().with_name("history_menu"),
+            )));
+        let prompt = DefaultPrompt::default();
+
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("git"))]);
+        reedline
+            .handle_event(&prompt, ReedlineEvent::Menu(String::from("history_menu")))
+            .unwrap();
+        assert!(menu_is_active(&reedline));
+
+        insert(&mut reedline, ' ');
+
+        assert!(
+            menu_is_active(&reedline),
+            "a history search is a line, not a word"
+        );
+    }
+
+    /// The space that ends a word also triggers abbreviation expansion, which
+    /// returns out of the edit before the menu is looked at again. The word
+    /// ends first, so the menu does not outlive the expansion.
+    #[test]
+    fn an_abbreviation_expanded_on_the_space_still_ends_the_word() {
+        let mut reedline = engine_with_word_bounded_menu("_.", false)
+            .with_abbreviations(HashMap::from([(String::from("th"), String::from("there"))]));
+
+        insert(&mut reedline, ' ');
+
+        assert_eq!(reedline.editor.get_buffer(), "there ");
+        assert!(!menu_is_active(&reedline), "the space ended the word");
+    }
+
+    /// A completer that counts how often it is asked.
+    struct CountingCompleter {
+        calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl Completer for CountingCompleter {
+        fn complete(&mut self, _line: &str, _pos: usize) -> CompletionResult {
+            self.calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            CompletionResult::fresh(Vec::new())
+        }
+    }
+
+    /// The character that ends the word closes the menu before anything asks
+    /// the completer to refilter it: the answer would be thrown away.
+    #[test]
+    fn the_completer_is_not_asked_about_a_word_that_has_ended() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let completion_menu = ReedlineMenu::EngineCompleter(Box::new(
+            ColumnarMenu::default()
+                .with_name("completion_menu")
+                .with_word_chars(Some(String::from("_."))),
+        ));
+        let mut reedline = Reedline::create()
+            .with_completer(Box::new(CountingCompleter {
+                calls: Arc::clone(&calls),
+            }))
+            .with_menu(completion_menu)
+            .with_quick_completions(true);
+        let prompt = DefaultPrompt::default();
+
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("th"))]);
+        reedline
+            .handle_event(
+                &prompt,
+                ReedlineEvent::Menu(String::from("completion_menu")),
+            )
+            .unwrap();
+        calls.store(0, Ordering::Relaxed);
+
+        insert(&mut reedline, ' ');
+
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+        assert!(!menu_is_active(&reedline));
+    }
+
+    /// Typed fast enough, the rest of a statement arrives as one `Edit` of
+    /// several `InsertChar`s. The word still ends inside it.
+    #[test]
+    fn a_word_ends_inside_a_burst_of_typing() {
+        let mut reedline = engine_with_word_bounded_menu("_.", false);
+
+        reedline
+            .handle_event(
+                &DefaultPrompt::default(),
+                ReedlineEvent::Edit(vec![
+                    EditCommand::InsertChar('i'),
+                    EditCommand::InsertChar('s'),
+                    EditCommand::InsertChar(';'),
+                    EditCommand::InsertChar(' '),
+                ]),
+            )
+            .unwrap();
+
+        assert!(!menu_is_active(&reedline), "the ';' ended the word");
+    }
+
+    /// A completer that always has something to offer, the way a grammar-driven
+    /// SQL completer suggests next-statement keywords after a ';'. A menu fed by
+    /// one of these is never empty, so nothing but the end of the word takes its
+    /// claim on `Enter` away.
+    struct AlwaysSuggests;
+
+    impl Completer for AlwaysSuggests {
+        fn complete(&mut self, _line: &str, pos: usize) -> CompletionResult {
+            CompletionResult::fresh(vec![Suggestion {
+                value: String::from("table"),
+                span: Span {
+                    start: pos,
+                    end: pos,
+                },
+                ..Default::default()
+            }])
+        }
+    }
+
+    /// The report this comes from, byte for byte: `show tab`, Tab to open the
+    /// menu, then `les;` and Enter. The ';' ends the word, so Enter runs the
+    /// statement instead of appending the highlighted "table" to it.
+    #[test]
+    fn the_end_of_a_word_returns_enter_to_the_line() {
+        let completion_menu = ReedlineMenu::EngineCompleter(Box::new(
+            ColumnarMenu::default()
+                .with_name("completion_menu")
+                .with_word_chars(Some(String::from("_."))),
+        ));
+        let mut reedline = Reedline::create()
+            .with_completer(Box::new(AlwaysSuggests))
+            .with_menu(completion_menu);
+        reedline.painter.force_prompt_anchored_for_test(0);
+        let prompt = DefaultPrompt::default();
+
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("show tab"))]);
+        reedline
+            .handle_event(
+                &prompt,
+                ReedlineEvent::Menu(String::from("completion_menu")),
+            )
+            .unwrap();
+        assert!(menu_is_active(&reedline));
+
+        for c in "les;".chars() {
+            insert(&mut reedline, c);
+        }
+        assert!(!menu_is_active(&reedline), "';' ends the word");
+
+        let status = reedline
+            .handle_event(&prompt, ReedlineEvent::Enter)
+            .unwrap();
+        assert!(
+            matches!(status, EventStatus::Exits(Signal::Success(ref s)) if s == "show tables;"),
+            "the statement runs with no stray word appended"
         );
     }
 
