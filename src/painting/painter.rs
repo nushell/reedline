@@ -323,6 +323,11 @@ pub struct Painter {
     large_buffer: bool,
     just_resized: bool,
     after_cursor_lines: Option<String>,
+    /// The right prompt as last rendered, with the bounds it was drawn at and
+    /// its color already applied: the exit erase clears the cursor's row to the
+    /// right, and `move_cursor_to_end` has no `prompt` to re-derive the color
+    /// from, so both have to be captured during the paint.
+    exit_right_prompt: Option<(String, RightPromptBounds)>,
     /// Optional semantic prompt markers for terminal integration (OSC 133/633)
     semantic_markers: Option<Box<dyn SemanticPromptMarkers>>,
     /// Layout computed during the last paint cycle.
@@ -340,6 +345,7 @@ impl Painter {
             large_buffer: false,
             just_resized: false,
             after_cursor_lines: None,
+            exit_right_prompt: None,
             semantic_markers: None,
             last_layout: None,
         }
@@ -649,6 +655,16 @@ impl Painter {
         } else {
             self.print_small_buffer(prompt, lines, menu, use_ansi_coloring, &layout)?
         };
+
+        self.exit_right_prompt = layout.right_prompt.map(|rp| {
+            let text = coerce_crlf(&lines.prompt_str_right);
+            let text = if use_ansi_coloring {
+                format!("{}{}", prompt.get_prompt_right_color().prefix(), text)
+            } else {
+                text.into_owned()
+            };
+            (text, rp)
+        });
 
         self.last_layout = Some(layout);
 
@@ -1234,6 +1250,15 @@ impl Painter {
         if let Some(after_cursor) = &self.after_cursor_lines {
             self.stdout.queue(Print(after_cursor))?;
         }
+        if let Some((text, rp)) = &self.exit_right_prompt {
+            self.stdout
+                .queue(SavePosition)?
+                .queue(cursor::MoveTo(rp.start_col, rp.row))?
+                .queue(Print(text))?
+                .queue(SetAttribute(Attribute::Reset))?
+                .queue(ResetColor)?
+                .queue(RestorePosition)?;
+        }
         self.print_crlf()
     }
 
@@ -1769,6 +1794,83 @@ mod tests {
             p.last_required_lines,
             p.large_buffer,
         )
+    }
+
+    // #1145 made the exit erase unconditional, and `ClearType::FromCursorDown`
+    // takes the cursor's own row to the right with it, which is where the right
+    // prompt sits. A host that keeps a right prompt on the submitted line
+    // (nushell's `TRANSIENT_PROMPT_COMMAND_RIGHT = null`) lost it from the
+    // scrollback. See nushell/nushell#19001.
+    #[test]
+    fn test_the_exit_erase_keeps_the_right_prompt() {
+        let mut painter = Painter::new(W::capture());
+        painter.terminal_size = (20, 10);
+        painter.prompt_start_row.mark_verified(0);
+        painter.prompt_height = 1;
+
+        let lines = make_lines("> ", "", "RP", "hi", "");
+        painter
+            .repaint_buffer(
+                &TestPrompt,
+                &lines,
+                PromptEditMode::Default,
+                None,
+                true,
+                &None,
+            )
+            .expect("repaint_buffer failed");
+
+        // Only the exit's own output is under test.
+        painter.stdout = W::capture();
+        painter.move_cursor_to_end().unwrap();
+
+        let out = String::from_utf8_lossy(painter.stdout.captured()).into_owned();
+        assert!(
+            out.contains("RP"),
+            "the exit erase dropped the right prompt: {out:?}"
+        );
+        let expected = TestPrompt.get_prompt_right_color().prefix().to_string();
+        assert!(
+            out.contains(&expected),
+            "right prompt lost its color: {out:?}"
+        );
+    }
+
+    // The stored right prompt is what the exit reprints, so a paint that stops
+    // rendering one has to clear it. Otherwise the exit paints a right prompt
+    // that is no longer on screen.
+    #[test]
+    fn test_a_paint_without_a_right_prompt_clears_the_stored_one() {
+        let mut painter = Painter::new(W::capture());
+        painter.terminal_size = (20, 10);
+        painter.prompt_start_row.mark_verified(0);
+        painter.prompt_height = 1;
+
+        let with_right = make_lines("> ", "", "RP", "hi", "");
+        painter
+            .repaint_buffer(
+                &TestPrompt,
+                &with_right,
+                PromptEditMode::Default,
+                None,
+                false,
+                &None,
+            )
+            .expect("repaint_buffer failed");
+        assert!(painter.exit_right_prompt.is_some());
+
+        let without_right = make_lines("> ", "", "", "hi", "");
+        painter
+            .repaint_buffer(
+                &TestPrompt,
+                &without_right,
+                PromptEditMode::Default,
+                None,
+                false,
+                &None,
+            )
+            .expect("repaint_buffer failed");
+        assert!(painter.exit_right_prompt.is_none());
     }
 
     /// What a terminal ends up in after a byte stream.
