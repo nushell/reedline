@@ -37,15 +37,8 @@ impl Default for FileBackedHistory {
     /// Creates an in-memory [`History`] with a maximal capacity of [`HISTORY_SIZE`].
     ///
     /// To create a [`History`] that is synchronized with a file use [`FileBackedHistory::with_file()`]
-    ///
-    /// # Panics
-    ///
-    /// If `HISTORY_SIZE == usize::MAX`
     fn default() -> Self {
-        match Self::new(HISTORY_SIZE) {
-            Ok(history) => history,
-            Err(e) => panic!("{}", e),
-        }
+        Self::new(HISTORY_SIZE).expect("HISTORY_SIZE is a valid capacity")
     }
 }
 
