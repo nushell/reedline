@@ -122,8 +122,9 @@ impl<'prompt> PromptLines<'prompt> {
         resolve_wrap(end, terminal_columns)
     }
 
-    /// Total lines that the prompt uses considering that it may wrap the screen
-    pub(crate) fn prompt_lines_with_wrap(&self, screen_width: u16) -> u16 {
+    /// Rows the prompt occupies after its first one, wrapping included, so its
+    /// height minus one. Zero for a prompt that fits on a single row.
+    pub(crate) fn prompt_rows_after_first(&self, screen_width: u16) -> u16 {
         let complete_prompt = self.prompt_str_left.to_string() + &self.prompt_indicator;
         let lines = estimate_required_lines(&complete_prompt, screen_width);
         lines.saturating_sub(1) as u16
