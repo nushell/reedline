@@ -296,6 +296,12 @@ pub(crate) enum PromptStartRow {
     /// content the painter doesn't model since. The next `repaint_buffer`
     /// must re-query before trusting it.
     Stale(u16),
+    /// A resize happened and the terminal reported the *cursor* on
+    /// `cursor_row`. Where the prompt starts relative to it depends on how many
+    /// rows the prompt and the text before the cursor take at the new width,
+    /// which only the next `repaint_buffer` knows; it resolves this with
+    /// [`PromptStartRow::resolve_resize`].
+    Resized { cursor_row: u16 },
     /// Row matches the terminal as of the last successful query or paint.
     Verified(u16),
 }
@@ -308,7 +314,28 @@ impl PromptStartRow {
     pub(crate) fn last_known_row(self) -> u16 {
         match self {
             PromptStartRow::Verified(r) | PromptStartRow::Stale(r) => r,
+            // Between a resize and the next paint only the cursor row is known.
+            // The prompt starts on it or above it.
+            PromptStartRow::Resized { cursor_row } => cursor_row,
             PromptStartRow::Unverified => 0,
+        }
+    }
+
+    /// Turn a [`PromptStartRow::Resized`] cursor row into the row the prompt
+    /// starts on. `lines_before_cursor` is the number of rows from the prompt
+    /// start through the cursor's row at the current width, so at least 1.
+    /// Every other state is left alone.
+    pub(crate) fn resolve_resize(&mut self, lines_before_cursor: u16) {
+        if let PromptStartRow::Resized { cursor_row } = self {
+            debug_assert!(
+                lines_before_cursor >= 1,
+                "lines_before_cursor counts the cursor's own row"
+            );
+            let r = cursor_row.saturating_sub(lines_before_cursor - 1);
+            // The row is derived from the cursor position the terminal just
+            // reported, and the drift check only repairs a row that sits
+            // below the cursor, so there is nothing left to verify.
+            *self = PromptStartRow::Verified(r);
         }
     }
 
@@ -337,7 +364,6 @@ pub struct Painter {
     term_is_dumb: bool,
     last_required_lines: u16,
     large_buffer: bool,
-    just_resized: bool,
     after_cursor_lines: Option<String>,
     /// The right prompt as last rendered, with the bounds it was drawn at and
     /// its color already applied: the exit erase clears the cursor's row to the
@@ -362,7 +388,6 @@ impl Painter {
             term_is_dumb,
             last_required_lines: 0,
             large_buffer: false,
-            just_resized: false,
             after_cursor_lines: None,
             exit_right_prompt: None,
             semantic_markers: None,
@@ -657,18 +682,7 @@ impl Painter {
         let lines_before_cursor = lines.required_lines(screen_width, true, None);
 
         // Calibrate prompt start position for multi-line prompt/content before cursor. Check issue #841/#848/#930
-        if self.just_resized {
-            let resized_row = self
-                .prompt_start_row
-                .last_known_row()
-                .saturating_sub(lines_before_cursor - 1);
-            // Leave as `Stale` so the drift check below still runs this
-            // paint and self-heals if the arithmetic landed wrong.
-            // Resize is infrequent; one extra call to cursor::position()
-            // per resize is fine.
-            self.prompt_start_row = PromptStartRow::Stale(resized_row);
-            self.just_resized = false;
-        }
+        self.prompt_start_row.resolve_resize(lines_before_cursor);
 
         // Reconcile a stale anchor: something yielded the tty since the last paint
         // (a resize, an external completer, `$EDITOR`) and may have scrolled our
@@ -1268,16 +1282,15 @@ impl Painter {
 
         // `cursor::position()` is blocking and can time out, but a
         // resize happens infrequently enough that we accept the cost.
-        // The row stored below is the *cursor* row, not the prompt's
-        // screen origin; `just_resized` in `repaint_buffer` re-anchors
-        // it on the next paint.
+        // The terminal only reports the cursor, so that is what gets
+        // recorded; the next `repaint_buffer` works out the prompt row.
         //
         // Known bug: on iterm2 and kitty, clearing the screen via CMD-K
         // doesn't reset the cursor position — possibly a `position()`
         // bug.
-        if let Ok(Some(position)) = cursor_position_for_term(&self.stdout, self.term_is_dumb) {
-            self.prompt_start_row = PromptStartRow::Stale(position.1);
-            self.just_resized = true;
+        if let Ok(Some((_, cursor_row))) = cursor_position_for_term(&self.stdout, self.term_is_dumb)
+        {
+            self.prompt_start_row = PromptStartRow::Resized { cursor_row };
         }
     }
 
@@ -1786,6 +1799,68 @@ mod tests {
 
         assert_eq!(painter.prompt_start_row, PromptStartRow::Stale(9));
         assert_eq!(painter.stdout.captured(), b"");
+    }
+
+    #[rstest]
+    #[case::cursor_on_the_prompt_row(4, 1, 4)]
+    #[case::cursor_two_rows_below(7, 3, 5)]
+    #[case::prompt_taller_than_the_rows_above(1, 3, 0)]
+    fn test_resolve_resize_moves_up_to_the_prompt_start(
+        #[case] cursor_row: u16,
+        #[case] lines_before_cursor: u16,
+        #[case] prompt_row: u16,
+    ) {
+        let mut row = PromptStartRow::Resized { cursor_row };
+
+        row.resolve_resize(lines_before_cursor);
+
+        assert!(!matches!(row, PromptStartRow::Resized { .. }));
+        assert_eq!(row.last_known_row(), prompt_row);
+    }
+
+    #[rstest]
+    #[case::unverified(PromptStartRow::Unverified)]
+    #[case::stale(PromptStartRow::Stale(4))]
+    #[case::verified(PromptStartRow::Verified(4))]
+    fn test_resolve_resize_leaves_a_prompt_row_alone(#[case] before: PromptStartRow) {
+        let mut row = before;
+
+        row.resolve_resize(3);
+
+        assert_eq!(row, before);
+    }
+
+    // Output painted between a resize and the next paint (an external message)
+    // invalidates the anchor. That must not forget the row is a cursor row.
+    #[test]
+    fn test_invalidate_keeps_a_resized_cursor_row() {
+        let mut row = PromptStartRow::Resized { cursor_row: 7 };
+
+        row.invalidate();
+
+        assert_eq!(row, PromptStartRow::Resized { cursor_row: 7 });
+    }
+
+    #[test]
+    fn test_repaint_after_resize_anchors_above_the_cursor() {
+        let mut p = Painter::new(W::capture());
+        p.terminal_size = (20, 10);
+        p.term_is_dumb = false;
+        p.prompt_start_row = PromptStartRow::Resized { cursor_row: 6 };
+        // Two rows through the cursor, so the prompt starts one row up.
+        let lines = make_lines("left", "> ", "", "one\ntwo", "");
+
+        p.repaint_buffer(
+            &TestPrompt,
+            &lines,
+            PromptEditMode::Default,
+            None,
+            false,
+            &None,
+        )
+        .expect("repaint_buffer failed");
+
+        assert_eq!(p.prompt_start_row, PromptStartRow::Verified(5));
     }
 
     fn base_snapshot() -> RenderSnapshot {
