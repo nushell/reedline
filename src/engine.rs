@@ -1497,12 +1497,18 @@ impl Reedline {
                 Ok(EventStatus::Inapplicable)
             }
             ReedlineEvent::MenuAccept => {
-                // Same accept as `Enter` over an open menu, minus the submit that
-                // `Enter` falls through to when no menu is open. An empty menu has
-                // nothing to splice, so that reports inapplicable too rather than
-                // spending the keypress on closing it.
+                // Where a menu's claim on a keypress is decided, for the submit
+                // events that offer it one as much as for a binding that wants
+                // the accept alone. A menu declines the keypress unless it can
+                // splice something: with no suggestions there is nothing to
+                // take, and a *stale* value is refused downstream because its
+                // span belongs to another line, so accepting one would close
+                // the menu over a completion that never happened. Declining
+                // leaves the key to reach the line instead of appearing dead.
                 match self.menus.iter_mut().find(|menu| menu.is_active()) {
-                    Some(menu) if !menu.get_values().is_empty() => {
+                    Some(menu)
+                        if !menu.get_values().is_empty() && !menu.results_are_provisional() =>
+                    {
                         menu.replace_in_buffer(&mut self.editor);
                         menu.menu_event(MenuEvent::Deactivate);
                         Ok(EventStatus::Handled)
@@ -1634,29 +1640,10 @@ impl Reedline {
                 self.painter.clear_scrollback()?;
                 Ok(EventStatus::Handled)
             }
-            // A menu with no suggestions has nothing to accept: swallowing the
-            // keypress would make Enter appear dead, so the guard ignores it
-            // and the event falls through to submit as if no menu were open
-            // (submit_buffer closes any straggler menus).
-            ReedlineEvent::Enter | ReedlineEvent::Submit | ReedlineEvent::SubmitOrNewline
-                if self
-                    .menus
-                    .iter()
-                    .any(|menu| menu.is_active() && !menu.get_values().is_empty()) =>
-            {
-                if let Some(menu) = self
-                    .menus
-                    .iter_mut()
-                    .find(|menu| menu.is_active() && !menu.get_values().is_empty())
-                {
-                    menu.replace_in_buffer(&mut self.editor);
-                    menu.menu_event(MenuEvent::Deactivate);
-                    Ok(EventStatus::Handled)
-                } else {
-                    Ok(EventStatus::Inapplicable)
-                }
-            }
             ReedlineEvent::Enter => {
+                if self.menu_took_the_key(prompt)? {
+                    return Ok(EventStatus::Handled);
+                }
                 #[cfg(feature = "bashisms")]
                 if let Some(event) = self.parse_bang_command() {
                     return self.handle_editor_event(prompt, event);
@@ -1676,6 +1663,9 @@ impl Reedline {
                 }
             }
             ReedlineEvent::Submit => {
+                if self.menu_took_the_key(prompt)? {
+                    return Ok(EventStatus::Handled);
+                }
                 #[cfg(feature = "bashisms")]
                 if let Some(event) = self.parse_bang_command() {
                     return self.handle_editor_event(prompt, event);
@@ -1687,6 +1677,9 @@ impl Reedline {
                 Ok(self.submit_buffer(prompt)?)
             }
             ReedlineEvent::SubmitOrNewline => {
+                if self.menu_took_the_key(prompt)? {
+                    return Ok(EventStatus::Handled);
+                }
                 #[cfg(feature = "bashisms")]
                 if let Some(event) = self.parse_bang_command() {
                     return self.handle_editor_event(prompt, event);
@@ -2829,6 +2822,15 @@ impl Reedline {
             }
         }
         Ok(messages)
+    }
+
+    /// Offer an open menu first refusal on a keypress that would otherwise
+    /// submit, and report whether it took it.
+    fn menu_took_the_key(&mut self, prompt: &dyn Prompt) -> io::Result<bool> {
+        Ok(matches!(
+            self.handle_editor_event(prompt, ReedlineEvent::MenuAccept)?,
+            EventStatus::Handled
+        ))
     }
 
     fn submit_buffer(&mut self, prompt: &dyn Prompt) -> io::Result<EventStatus> {
@@ -5502,6 +5504,59 @@ mod tests {
     // turns Enter into a dead key (empty menu) or an insertion of whatever the
     // menu last highlighted (non-empty menu) at the end of a finished line.
 
+    /// `Enter`, `Submit` and `SubmitOrNewline` all reach the line through
+    /// `MenuAccept`, so an open menu takes all three the same way.
+    #[rstest]
+    #[case::enter(ReedlineEvent::Enter)]
+    #[case::submit(ReedlineEvent::Submit)]
+    #[case::submit_or_newline(ReedlineEvent::SubmitOrNewline)]
+    fn every_submit_event_accepts_an_open_menu(#[case] event: ReedlineEvent) {
+        let mut reedline = engine_with_active_menu(false, false);
+        reedline.painter.force_prompt_anchored_for_test(0);
+        apply_menu_maintenance(&mut reedline);
+        let prompt = DefaultPrompt::default();
+
+        let status = reedline.handle_event(&prompt, event).unwrap();
+
+        assert!(
+            matches!(status, EventStatus::Handled),
+            "the menu takes the keypress"
+        );
+        assert!(!menu_is_active(&reedline), "and closes behind the accept");
+        assert_ne!(
+            reedline.editor.get_buffer(),
+            "th",
+            "the selection reached the buffer"
+        );
+    }
+
+    /// And once the menu declines, all three mean what they always meant.
+    #[rstest]
+    #[case::enter(ReedlineEvent::Enter)]
+    #[case::submit(ReedlineEvent::Submit)]
+    #[case::submit_or_newline(ReedlineEvent::SubmitOrNewline)]
+    fn every_submit_event_passes_an_empty_menu(#[case] event: ReedlineEvent) {
+        let mut reedline = engine_with_active_menu(false, false);
+        reedline.painter.force_prompt_anchored_for_test(0);
+        let prompt = DefaultPrompt::default();
+        // "thz" matches nothing; the menu refilters to empty but stays active.
+        reedline
+            .handle_event(
+                &prompt,
+                ReedlineEvent::Edit(vec![EditCommand::InsertChar('z')]),
+            )
+            .unwrap();
+        apply_menu_maintenance(&mut reedline);
+        assert!(menu_is_active(&reedline));
+
+        let status = reedline.handle_event(&prompt, event).unwrap();
+
+        assert!(
+            matches!(status, EventStatus::Exits(Signal::Success(ref s)) if s == "thz"),
+            "the line ran"
+        );
+    }
+
     /// A menu whose filtered suggestions are empty has nothing to accept:
     /// Enter must close it and submit the line, not be swallowed.
     #[test]
@@ -6060,6 +6115,52 @@ mod tests {
         assert!(matches!(status, EventStatus::Inapplicable));
         assert!(menu_is_active(&reedline));
         assert_eq!(reedline.current_buffer_contents(), "th");
+    }
+
+    /// A *stale* answer is refused downstream — its span belongs to the line it
+    /// was answered from — so there is nothing to splice and the keypress is not
+    /// spent closing the menu over a completion that never happened.
+    #[test]
+    fn menu_accept_over_a_stale_menu_is_inapplicable_and_leaves_it_open() {
+        let (mut reedline, _) = activate_menu_over(
+            Box::new(DeferredCompleter::stale("console", "co", &["crates"])),
+            "cr",
+            true,
+            false,
+        );
+        assert!(menu_is_active(&reedline), "setup");
+        assert!(
+            reedline.menus[0].results_are_provisional(),
+            "setup: the answer is stale"
+        );
+
+        let status = send(&mut reedline, ReedlineEvent::MenuAccept);
+
+        assert!(matches!(status, EventStatus::Inapplicable));
+        assert!(menu_is_active(&reedline));
+        assert_eq!(reedline.current_buffer_contents(), "cr");
+    }
+
+    /// The same refusal seen from `Enter`: the line runs as typed rather than
+    /// the key dying against a menu that could not have accepted anything.
+    #[test]
+    fn enter_over_a_stale_menu_runs_the_line() {
+        let (mut reedline, _) = activate_menu_over(
+            Box::new(DeferredCompleter::stale("console", "co", &["crates"])),
+            "cr",
+            true,
+            false,
+        );
+        reedline.painter.force_prompt_anchored_for_test(0);
+
+        let status = reedline
+            .handle_event(&DefaultPrompt::default(), ReedlineEvent::Enter)
+            .unwrap();
+
+        assert!(
+            matches!(status, EventStatus::Exits(Signal::Success(ref line)) if line == "cr"),
+            "the line ran as typed, with no stale value spliced into it"
+        );
     }
 
     /// The binding this exists for: space accepts the highlighted completion and
