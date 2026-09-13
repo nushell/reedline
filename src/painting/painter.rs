@@ -413,7 +413,7 @@ impl Painter {
 
         // Large buffer extra rows computation
         let (extra_rows, extra_rows_after_prompt) = if self.large_buffer {
-            let prompt_rows_after_first = lines.prompt_rows_after_first(screen_width) as usize;
+            let prompt_rows_after_first = lines.prompt_height(screen_width) as usize - 1;
             let prompt_indicator_lines = lines.prompt_indicator.lines().count();
             let before_cursor_lines = lines.before_cursor.lines().count();
             let total_lines_before =
@@ -505,7 +505,7 @@ impl Painter {
 
         let mut row = self.prompt_start_row.last_known_row();
         if lines.right_prompt_on_last_line {
-            row += lines.prompt_rows_after_first(screen_width);
+            row += lines.prompt_height(screen_width) - 1;
         }
 
         Some(RightPromptBounds {
@@ -652,7 +652,7 @@ impl Painter {
         let screen_width = self.screen_width();
         let screen_height = self.screen_height();
 
-        self.prompt_height = lines.prompt_rows_after_first(screen_width) + 1;
+        self.prompt_height = lines.prompt_height(screen_width);
         let lines_before_cursor = lines.required_lines(screen_width, true, None);
 
         // Calibrate prompt start position for multi-line prompt/content before cursor. Check issue #841/#848/#930
@@ -2625,7 +2625,7 @@ mod tests {
     #[test]
     fn test_layout_large_buffer_extra_rows() {
         // Screen is 5 lines tall, buffer content exceeds it.
-        // prompt_rows_after_first(TEST_PROMPT) = 0
+        // prompt_height(TEST_PROMPT) - 1 = 0
         // prompt_indicator_lines("") = 0
         // before_cursor has 7 lines
         // total_lines_before = 0 + 0 + 7 - 1 = 6
