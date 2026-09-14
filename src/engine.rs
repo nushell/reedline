@@ -120,9 +120,22 @@ enum HistoryLastRun {
     Excluded {
         item: HistoryItem,
         current: bool,
+        recalled: bool,
     },
     #[default]
     Empty,
+}
+
+impl HistoryLastRun {
+    fn set_recalled(&mut self, recalled: bool) {
+        if let Self::Excluded { recalled: slot, .. } = self {
+            *slot = recalled;
+        }
+    }
+
+    fn is_recalled(&self) -> bool {
+        matches!(self, Self::Excluded { recalled: true, .. })
+    }
 }
 
 /// Line editor engine
@@ -153,7 +166,6 @@ pub struct Reedline {
     history_session_id: Option<HistorySessionId>,
     history_last_run: HistoryLastRun,
     history_exclusion_prefix: Option<String>,
-    history_cursor_on_excluded: bool,
     /// Last failed `history.save`, until [`Reedline::take_history_save_error`].
     history_save_error: Option<ReedlineError>,
     input_mode: InputMode,
@@ -453,7 +465,6 @@ impl Reedline {
             history_session_id: hist_session_id,
             history_last_run: HistoryLastRun::Empty,
             history_exclusion_prefix: None,
-            history_cursor_on_excluded: false,
             history_save_error: None,
             input_mode: InputMode::Regular,
             suspended_state: None,
@@ -1075,10 +1086,12 @@ impl Reedline {
             HistoryLastRun::Excluded {
                 item,
                 current: true,
+                recalled,
             } => {
                 self.history_last_run = HistoryLastRun::Excluded {
                     item: f(item),
                     current: true,
+                    recalled,
                 };
                 Ok(())
             }
@@ -2135,7 +2148,7 @@ impl Reedline {
     }
 
     fn previous_history(&mut self) -> io::Result<()> {
-        self.history_cursor_on_excluded = false;
+        self.history_last_run.set_recalled(false);
         if self.input_mode != InputMode::HistoryTraversal {
             self.input_mode = InputMode::HistoryTraversal;
             self.history_cursor = HistoryCursor::new(
@@ -2144,11 +2157,11 @@ impl Reedline {
             );
 
             if matches!(self.history_last_run, HistoryLastRun::Excluded { .. }) {
-                self.history_cursor_on_excluded = true;
+                self.history_last_run.set_recalled(true);
             }
         }
 
-        if !self.history_cursor_on_excluded {
+        if !self.history_last_run.is_recalled() {
             // On `Err` the next press retries on the fresh cursor; no rollback.
             self.history_cursor.back(self.history.as_ref())?;
         }
@@ -2172,8 +2185,8 @@ impl Reedline {
             );
         }
 
-        if self.history_cursor_on_excluded {
-            self.history_cursor_on_excluded = false;
+        if self.history_last_run.is_recalled() {
+            self.history_last_run.set_recalled(false);
         } else {
             let cursor_was_on_item = self.history_cursor.string_at_cursor().is_some();
             self.history_cursor.forward(self.history.as_ref())?;
@@ -2182,11 +2195,12 @@ impl Reedline {
                 && self.history_cursor.string_at_cursor().is_none()
                 && matches!(self.history_last_run, HistoryLastRun::Excluded { .. })
             {
-                self.history_cursor_on_excluded = true;
+                self.history_last_run.set_recalled(true);
             }
         }
 
-        if self.history_cursor.string_at_cursor().is_none() && !self.history_cursor_on_excluded {
+        if self.history_cursor.string_at_cursor().is_none() && !self.history_last_run.is_recalled()
+        {
             self.input_mode = InputMode::Regular;
         }
         self.update_buffer_from_history();
@@ -2278,7 +2292,7 @@ impl Reedline {
     /// When using the up/down traversal or fish/zsh style prefix search update the main line buffer accordingly.
     /// Not used for the separate modal reverse search!
     fn update_buffer_from_history(&mut self) {
-        if self.history_cursor_on_excluded {
+        if self.history_last_run.is_recalled() {
             if let HistoryLastRun::Excluded { item, .. } = &self.history_last_run {
                 self.editor
                     .set_buffer(item.command_line.clone(), UndoBehavior::HistoryNavigation);
@@ -3213,6 +3227,7 @@ impl Reedline {
                     self.history_last_run = HistoryLastRun::Excluded {
                         item: entry,
                         current: true,
+                        recalled: false,
                     }
                 }
             }
