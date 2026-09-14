@@ -77,8 +77,9 @@ pub enum MenuEvent {
 pub trait Menu: Send {
     /// Get MenuSettings
     ///
-    /// Every default method on this trait reads through here, so a menu has
-    /// to own a [`MenuSettings`] and hand it out.
+    /// The default `name` and `indicator` read through here, and the engine
+    /// looks a menu up by `name` on every menu event, so a menu has to own a
+    /// [`MenuSettings`] and hand it out.
     fn settings(&self) -> &MenuSettings;
 
     /// Menu name
