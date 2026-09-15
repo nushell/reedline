@@ -173,7 +173,9 @@ pub struct Reedline {
     deferred_menu_completion: Option<DeferredMenuCompletion>,
 
     // Optional host hook that intercepts a bare Ctrl+V `PasteSystem` paste
-    // (see `crate::PasteInterceptor`).
+    // (see `crate::PasteInterceptor`). `PasteSystem` only exists under
+    // `system_clipboard`, so the hook is gated on the same feature.
+    #[cfg(feature = "system_clipboard")]
     paste_interceptor: Option<Arc<dyn crate::PasteInterceptor>>,
 
     // Optional host hook that classifies a rapid key-event stream as a paste
@@ -383,6 +385,7 @@ impl Reedline {
             partial_completions: false,
             persistent_menus: false,
             deferred_menu_completion: None,
+            #[cfg(feature = "system_clipboard")]
             paste_interceptor: None,
             paste_burst: None,
             highlighter: buffer_highlighter,
@@ -525,7 +528,9 @@ impl Reedline {
     /// `EditCommand::PasteSystem` calls
     /// [`PasteInterceptor::on_paste`](crate::PasteInterceptor::on_paste)
     /// instead of the default clipboard-read-and-insert, and reedline inserts
-    /// whatever [`PasteAction`](crate::PasteAction) the hook returns.
+    /// whatever [`PasteAction`](crate::PasteAction) the hook returns. Requires
+    /// the `system_clipboard` feature, which is what defines `PasteSystem`.
+    #[cfg(feature = "system_clipboard")]
     #[must_use]
     pub fn with_paste_interceptor(mut self, interceptor: Arc<dyn crate::PasteInterceptor>) -> Self {
         self.paste_interceptor = Some(interceptor);
@@ -1431,6 +1436,10 @@ impl Reedline {
             .paste_burst
             .as_ref()
             .is_some_and(|h| h.is_burst_active());
+        // A resize is kept whichever arm parses the batch: the burst drain
+        // pushes every event it reads, so a resize arriving mid-paste lands in
+        // the burst batch too and must not be swallowed there.
+        let mut resize = None;
         if burst_batch {
             let mut coalesced = String::new();
             // Every Enter drained into this batch is coalesced as an embedded
@@ -1463,6 +1472,7 @@ impl Reedline {
                     }) => {
                         coalesced.push('\n');
                     }
+                    Event::Resize(x, y) => resize = Some((*x, *y)),
                     // Release events and any other keys are paste artifacts here.
                     _ => {}
                 }
@@ -1477,7 +1487,6 @@ impl Reedline {
             }
         } else {
             let mut edits = vec![];
-            let mut resize = None;
             for event in events {
                 // Reclassify a bare `Enter` that the oracle judges paste-embedded
                 // into a newline even when a full burst was NOT detected (a short
@@ -1519,12 +1528,17 @@ impl Reedline {
             if !edits.is_empty() {
                 reedline_events.push(ReedlineEvent::Edit(edits));
             }
-            if let Some((x, y)) = resize {
-                reedline_events.push(ReedlineEvent::Resize(x, y));
-            }
-            if self.immediately_accept {
-                reedline_events.push(ReedlineEvent::Submit);
-            }
+        }
+        if let Some((x, y)) = resize {
+            reedline_events.push(ReedlineEvent::Resize(x, y));
+        }
+        // The synthetic `Submit` of `immediately_accept` mode is pushed after
+        // both arms: nothing is read in that mode, so `events` is empty and the
+        // burst arm would insert nothing, but a hook that reports
+        // `is_burst_active()` before anything was fed to it must still not
+        // keep `read_line` spinning without a submit.
+        if self.immediately_accept {
+            reedline_events.push(ReedlineEvent::Submit);
         }
 
         // The mode machine has parsed this batch, so the rest policy it
@@ -1959,19 +1973,20 @@ impl Reedline {
                 // Only a lone `PasteSystem` command is intercepted; any other
                 // edit (or a compound batch) falls through to the normal path
                 // unchanged. `PasteSystem` only exists under `system_clipboard`,
-                // so gate the whole interception on that feature.
+                // so gate the whole interception on that feature. The text the
+                // hook returns is run as an ordinary `InsertString` through the
+                // rest of this arm, so an open menu sees the edit exactly as it
+                // would for a plain `PasteSystem`; a `Noop` changes nothing and
+                // is done here.
                 #[cfg(feature = "system_clipboard")]
-                if matches!(commands.as_slice(), [EditCommand::PasteSystem]) {
-                    if let Some(interceptor) = self.paste_interceptor.clone() {
-                        match interceptor.on_paste() {
-                            crate::PasteAction::InsertText(s) => {
-                                self.run_edit_commands(&[EditCommand::InsertString(s)]);
-                            }
-                            crate::PasteAction::Noop => {}
-                        }
-                        return Ok(EventStatus::Handled);
-                    }
-                }
+                let commands = match (commands.as_slice(), self.paste_interceptor.clone()) {
+                    ([EditCommand::PasteSystem], Some(interceptor)) => match interceptor.on_paste()
+                    {
+                        crate::PasteAction::InsertText(s) => vec![EditCommand::InsertString(s)],
+                        crate::PasteAction::Noop => return Ok(EventStatus::Handled),
+                    },
+                    _ => commands,
+                };
 
                 let status = self.run_edit_commands_with_status(&commands);
 
@@ -3101,19 +3116,23 @@ impl Reedline {
         // A menu that let the submit through (no suggestions to accept) must
         // not stay active into the next line's editing.
         self.deactivate_menus();
+        #[cfg_attr(not(feature = "system_clipboard"), allow(unused_mut))]
         let mut buffer = self.editor.get_buffer().to_string();
-        // Expand paste-reference text placeholders for the final transcript
-        // render — the compact placeholder is only for composing. Done before
-        // the repaint below so reedline itself paints the expanded (possibly
-        // multi-line) buffer with correct wrapping/continuation. A host may
-        // leave non-text placeholders (e.g. an image reference) intact, since a
-        // terminal cannot render them. The `and_then` yields an owned
-        // `Option<String>`, releasing the immutable borrow of
-        // `self.paste_interceptor` before the `&mut self` `run_edit_commands`.
+        // Let an installed paste interceptor replace the line at submit (e.g.
+        // expand paste-reference placeholders — the compact form is only for
+        // composing). Done before the repaint below so reedline itself paints
+        // the expanded (possibly multi-line) buffer with correct
+        // wrapping/continuation; the replacement is also what `Signal::Success`
+        // returns and what history records. A host may leave non-text
+        // placeholders (e.g. an image reference) intact, since a terminal
+        // cannot render them. The `and_then` yields an owned `Option<String>`,
+        // releasing the immutable borrow of `self.paste_interceptor` before the
+        // `&mut self` `run_edit_commands`.
+        #[cfg(feature = "system_clipboard")]
         if let Some(expanded) = self
             .paste_interceptor
             .as_ref()
-            .and_then(|i| i.expand_for_display(&buffer))
+            .and_then(|i| i.expand_on_submit(&buffer))
         {
             self.run_edit_commands(&[
                 EditCommand::Clear,
@@ -4047,18 +4066,20 @@ mod tests {
 
     // Stub paste interceptor: records whether `on_paste` fired and returns a
     // fixed action, so the opt-in interception path can be exercised headlessly.
+    #[cfg(feature = "system_clipboard")]
     struct StubInterceptor {
         paste_calls: std::sync::atomic::AtomicUsize,
         action: crate::PasteAction,
         expand: Option<String>,
     }
+    #[cfg(feature = "system_clipboard")]
     impl crate::PasteInterceptor for StubInterceptor {
         fn on_paste(&self) -> crate::PasteAction {
             self.paste_calls
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             self.action.clone()
         }
-        fn expand_for_display(&self, _buffer: &str) -> Option<String> {
+        fn expand_on_submit(&self, _buffer: &str) -> Option<String> {
             self.expand.clone()
         }
     }
@@ -4068,6 +4089,7 @@ mod tests {
         // The two hooks are strictly opt-in: a freshly built engine carries
         // neither, so the read loop and edit dispatch behave exactly as before.
         let rl = Reedline::create();
+        #[cfg(feature = "system_clipboard")]
         assert!(rl.paste_interceptor.is_none());
         assert!(rl.paste_burst.is_none());
     }
@@ -4122,10 +4144,12 @@ mod tests {
         assert_eq!(rl.editor.get_buffer(), "");
     }
 
+    #[cfg(feature = "system_clipboard")]
     #[test]
     fn paste_interceptor_expands_on_submit() {
-        // On submit, an installed interceptor may rewrite the buffer for the
-        // final transcript display (compact placeholder -> full text).
+        // On submit, an installed interceptor may replace the buffer (compact
+        // placeholder -> full text); the replacement is what `Signal::Success`
+        // returns.
         let interceptor = Arc::new(StubInterceptor {
             paste_calls: std::sync::atomic::AtomicUsize::new(0),
             action: crate::PasteAction::Noop,
@@ -4242,6 +4266,126 @@ mod tests {
             .expect("batch ok");
         assert!(matches!(result, ControlFlow::Continue(())));
         assert_eq!(rl.editor.get_buffer(), "hi\n");
+    }
+
+    #[test]
+    fn paste_burst_batch_keeps_a_resize() {
+        // The burst drain pushes every event it reads, so a resize arriving
+        // mid-paste lands in the burst batch. It must reach the painter like
+        // it does on the ordinary path, not be dropped as a paste artifact.
+        let mut rl =
+            seam_engine(Box::<crate::Emacs>::default()).with_paste_burst(Arc::new(StubBurst {
+                enter_newline: true,
+                active: true,
+            }));
+        let prompt = DefaultPrompt::default();
+        let result = rl
+            .process_input_batch(
+                &prompt,
+                vec![
+                    Event::Key(ch('a')),
+                    Event::Resize(120, 40),
+                    Event::Key(ch('b')),
+                ],
+            )
+            .expect("batch ok");
+        assert!(matches!(result, ControlFlow::Continue(())));
+        assert_eq!(rl.editor.get_buffer(), "ab");
+        assert_eq!(
+            (rl.painter.screen_width(), rl.painter.screen_height()),
+            (120, 40)
+        );
+    }
+
+    #[test]
+    fn immediately_accept_submits_with_a_burst_hook_reporting_active() {
+        // Nothing is read in `immediately_accept` mode, so the burst arm has
+        // nothing to insert; the synthetic `Submit` must still be pushed, or a
+        // hook that reports an active burst leaves `read_line` spinning.
+        let mut rl =
+            seam_engine(Box::<crate::Emacs>::default()).with_paste_burst(Arc::new(StubBurst {
+                enter_newline: true,
+                active: true,
+            }));
+        rl.immediately_accept = true;
+        rl.run_edit_commands(&[EditCommand::InsertString("hi".into())]);
+        let prompt = DefaultPrompt::default();
+        match rl.process_input_batch(&prompt, vec![]).expect("batch ok") {
+            ControlFlow::Break(Signal::Success(buf)) => assert_eq!(buf, "hi"),
+            other => panic!("expected immediate submit, got {other:?}"),
+        }
+    }
+
+    #[cfg(feature = "system_clipboard")]
+    #[test]
+    fn intercepted_paste_reaches_an_open_menu() {
+        // The text an interceptor returns is applied as an ordinary edit, so
+        // an open completion menu is sent `MenuEvent::Edit` for it the same
+        // way it is for a plain `PasteSystem`. The queued event is what the
+        // paint cycle reloads the values from (`update_working_details`), so
+        // that is where the difference shows: without the event the menu
+        // keeps the values it had before the paste.
+        fn apply_menu_paint_cycle(rl: &mut Reedline) {
+            let Reedline {
+                menus,
+                editor,
+                completer,
+                history,
+                painter,
+                ..
+            } = rl;
+            for menu in menus.iter_mut().filter(|menu| menu.is_active()) {
+                menu.update_working_details(editor, completer.as_mut(), history.as_ref(), painter);
+            }
+        }
+        fn active_menu_values(rl: &Reedline) -> usize {
+            rl.menus
+                .iter()
+                .find(|menu| menu.is_active())
+                .expect("menu open")
+                .get_values()
+                .len()
+        }
+
+        let interceptor = Arc::new(StubInterceptor {
+            paste_calls: std::sync::atomic::AtomicUsize::new(0),
+            action: crate::PasteAction::InsertText("r".into()),
+            expand: None,
+        });
+        let completer = Box::new(DefaultCompleter::new_with_wordlen(
+            vec![
+                String::from("carpet"),
+                String::from("cattle"),
+                String::from("dog"),
+            ],
+            1,
+        ));
+        let completion_menu = ReedlineMenu::EngineCompleter(Box::new(
+            ColumnarMenu::default().with_name("completion_menu"),
+        ));
+        let mut rl = Reedline::create()
+            .with_completer(completer)
+            .with_menu(completion_menu)
+            .with_paste_interceptor(interceptor);
+        let prompt = DefaultPrompt::default();
+        rl.run_edit_commands(&[EditCommand::InsertString(String::from("ca"))]);
+        rl.handle_event(
+            &prompt,
+            ReedlineEvent::Menu(String::from("completion_menu")),
+        )
+        .expect("menu opens");
+        apply_menu_paint_cycle(&mut rl);
+        assert_eq!(
+            active_menu_values(&rl),
+            2,
+            "\"ca\" matches both carpet and cattle"
+        );
+
+        rl.handle_event(&prompt, ReedlineEvent::Edit(vec![EditCommand::PasteSystem]))
+            .expect("edit ok");
+        assert_eq!(rl.editor.get_buffer(), "car");
+        apply_menu_paint_cycle(&mut rl);
+        assert_eq!(active_menu_values(&rl), 1, "narrowed to \"carpet\"");
     }
 
     #[test]

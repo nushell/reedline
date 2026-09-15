@@ -266,7 +266,9 @@ pub use painting::{Painter, StyledText};
 mod engine;
 pub use engine::{MouseClickMode, Reedline};
 
+#[cfg(feature = "system_clipboard")]
 mod paste_interceptor;
+#[cfg(feature = "system_clipboard")]
 pub use paste_interceptor::{PasteAction, PasteInterceptor};
 
 mod paste_burst_hook;

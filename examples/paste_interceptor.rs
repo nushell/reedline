@@ -6,8 +6,8 @@
 // clipboard and insert the text verbatim, which floods the composer when the
 // clipboard holds a whole file. A `PasteInterceptor` hands that decision to the
 // host: `on_paste` reads the clipboard itself and returns what (if anything)
-// reedline should insert, and `expand_for_display` may rewrite the buffer on
-// submit.
+// reedline should insert, and `expand_on_submit` may replace the buffer when
+// the line is submitted.
 //
 // Note the keybinding below. By default `PasteSystem` is only bound to
 // Ctrl+Shift+V, which is also the paste shortcut of most terminals: the
@@ -80,10 +80,11 @@ impl PasteInterceptor for PlaceholderInterceptor {
         PasteAction::InsertText(placeholder)
     }
 
-    fn expand_for_display(&self, buffer: &str) -> Option<String> {
-        // Called on submit, before the final repaint, so reedline paints and
-        // returns the expanded text. Read-only by contract: entries stay in the
-        // stash, so a placeholder still expands if the line is composed again.
+    fn expand_on_submit(&self, buffer: &str) -> Option<String> {
+        // Called on submit, before the final repaint: the expanded text is
+        // what reedline paints, returns in `Signal::Success`, and records in
+        // history. Read-only by contract: entries stay in the stash, so a
+        // placeholder still expands if the line is composed again.
         let stash = self.stash.lock().expect("paste stash poisoned");
         let mut expanded = buffer.to_string();
         for (placeholder, text) in stash.iter() {

@@ -41,13 +41,17 @@ pub trait PasteInterceptor: Send + Sync {
     /// decides what (if anything) to insert into the line buffer.
     fn on_paste(&self) -> PasteAction;
 
-    /// Optionally rewrite the just-submitted buffer for the final transcript
-    /// display — e.g. expand compact paste-reference placeholders to their full
-    /// text so the submitted line shows the real content (the compact form is
-    /// only for composing). Return `None` to leave the buffer unchanged (the
-    /// default). Must be cheap and side-effect-free w.r.t. any out-of-band store
-    /// (read-only): the host's own submit path still consumes the store.
-    fn expand_for_display(&self, _buffer: &str) -> Option<String> {
+    /// Optionally rewrite the buffer at submit — e.g. expand compact
+    /// paste-reference placeholders to their full text (the compact form is
+    /// only for composing).
+    ///
+    /// The returned string REPLACES the line: it is what the final repaint
+    /// shows, what [`Signal::Success`](crate::Signal::Success) hands back,
+    /// and what goes into history. Return `None` to leave the buffer unchanged
+    /// (the default). Must be cheap and side-effect-free w.r.t. any
+    /// out-of-band store (read-only): the host's own submit path still
+    /// consumes the store.
+    fn expand_on_submit(&self, _buffer: &str) -> Option<String> {
         None
     }
 }
