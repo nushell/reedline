@@ -10,6 +10,7 @@
 //! visual, helix's select) would otherwise have nowhere to sit.
 
 use crate::prompt::base::PromptHelixMode;
+use crate::utils::environment::var_os;
 use crate::{Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, PromptViMode};
 
 use {
@@ -148,8 +149,8 @@ fn get_working_dir() -> Result<String, std::io::Error> {
     let cwd = env::current_dir()?;
     // `USERPROFILE` on Windows, `HOME` elsewhere. Avoids `env::home_dir()`,
     // which is buggy on Windows before 1.85 (above our 1.63 MSRV).
-    let home = crate::utils::environment::var_os("USERPROFILE")
-        .or_else(|| crate::utils::environment::var_os("HOME"))
+    let home = var_os("USERPROFILE")
+        .or_else(|| var_os("HOME"))
         .map(std::path::PathBuf::from);
     Ok(format_working_dir(&cwd, home.as_deref()))
 }

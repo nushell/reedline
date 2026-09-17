@@ -14,29 +14,22 @@ pub(crate) fn term_is_dumb(term: Option<&OsStr>) -> bool {
     term == Some(OsStr::new("dumb"))
 }
 
-/// Whether ANSI coloring is appropriate for the declared terminal.
-///
-/// An unset or non-dumb `TERM` preserves the configured Reedline behavior.
-pub(crate) fn term_supports_ansi(term: Option<&OsStr>) -> bool {
-    !term_is_dumb(term)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn term_dumb_does_not_support_ansi() {
-        assert!(!term_supports_ansi(Some(OsStr::new("dumb"))));
+    fn term_dumb_is_dumb() {
+        assert!(term_is_dumb(Some(OsStr::new("dumb"))));
     }
 
     #[test]
-    fn regular_term_supports_ansi() {
-        assert!(term_supports_ansi(Some(OsStr::new("xterm-256color"))));
+    fn regular_term_is_not_dumb() {
+        assert!(!term_is_dumb(Some(OsStr::new("xterm-256color"))));
     }
 
     #[test]
-    fn unset_term_does_not_disable_ansi() {
-        assert!(term_supports_ansi(None));
+    fn unset_term_is_not_dumb() {
+        assert!(!term_is_dumb(None));
     }
 }

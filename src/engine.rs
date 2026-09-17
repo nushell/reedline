@@ -35,10 +35,7 @@ use {
             kitty::KittyProtocolGuard,
             semantic_prompt::{Osc133ClickEventsMarkers, SemanticPromptMarkers},
         },
-        utils::{
-            environment::{term_supports_ansi, var_os},
-            text_manipulation,
-        },
+        utils::text_manipulation,
         AbbrExpandContext, AutoPairAction, AutoPairContext, AutoPairs, Direction, EditCommand,
         ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, MouseButton, Prompt,
         PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult, Validator,
@@ -555,9 +552,10 @@ impl Reedline {
     ///
     /// ANSI coloring requires both the Reedline configuration to enable it and
     /// terminal support; `TERM=dumb` takes precedence over `with_ansi_colors(true)`.
+    /// The painter holds the terminal policy, so the colors and the escapes it
+    /// skips cannot disagree.
     fn effective_ansi_coloring(&self) -> bool {
-        let term = var_os("TERM");
-        self.use_ansi_coloring && term_supports_ansi(term.as_deref())
+        self.use_ansi_coloring && !self.painter.term_is_dumb()
     }
 
     /// A builder which enables or disables the use of ansi coloring in the prompt
