@@ -4652,6 +4652,36 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::SHIFT)
     }
 
+    /// `Esc` drops a selection without moving the caret. Under a bar caret the
+    /// caret is the head on either side of the anchor; reading a forward head
+    /// as a block's far edge would step it back a grapheme.
+    #[rstest]
+    #[case::selected_leftward(&[shift(KeyCode::Left), shift(KeyCode::Left)], 2)]
+    #[case::selected_rightward(
+        &[key(KeyCode::Home), key(KeyCode::Right), shift(KeyCode::Right), shift(KeyCode::Right)],
+        3
+    )]
+    fn esc_clears_a_bar_selection_without_moving_the_caret(
+        #[case] select: &[KeyEvent],
+        #[case] caret: usize,
+    ) {
+        let mut rl = Reedline::create().with_validator(Box::new(crate::DefaultValidator));
+        rl.painter.force_prompt_anchored_for_test(0);
+
+        drive_until_signal(&mut rl, &[ch('a'), ch('b'), ch('c'), ch('d'), ch('e')]);
+        drive_until_signal(&mut rl, &[key(KeyCode::Left)]);
+        drive_until_signal(&mut rl, select);
+        assert!(
+            rl.editor.get_selection().is_some(),
+            "setup: a live selection"
+        );
+        assert_eq!(rl.editor.insertion_point(), caret);
+
+        drive_until_signal(&mut rl, &[key(KeyCode::Esc)]);
+        assert_eq!(rl.editor.get_selection(), None);
+        assert_eq!(rl.editor.insertion_point(), caret);
+    }
+
     /// Vi normal has no notion of a selection, so one carried in from a bar
     /// caret must not survive the switch: every operator would read it as its
     /// range and the first keystroke would delete text. Both directions are

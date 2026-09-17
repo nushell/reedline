@@ -448,7 +448,15 @@ impl Editor {
     }
 
     pub(crate) fn clear_selection(&mut self) {
-        self.line_buffer.collapse_to_caret();
+        // Collapse to the caret (the visible position), not merely drop the
+        // anchor: under `Block` the stored head sits on the far edge, so dropping
+        // the anchor alone would strand the cursor one grapheme past where it
+        // shows. Collapsing to `point(caret)` keeps it put; the commit boundary
+        // re-widens it under the active policy. The caret is the editor's
+        // policy-aware one: `LineBuffer::collapse_to_caret` always reads block
+        // geometry, which under a bar steps a forward head back a grapheme.
+        let caret = self.insertion_point();
+        self.line_buffer.set_cursor(Cursor::point(caret));
     }
 
     /// Collapse the selection onto the end the user is steering, for a switch
