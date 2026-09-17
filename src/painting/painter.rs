@@ -1458,7 +1458,7 @@ impl Painter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::menu::MenuEvent;
+    use crate::menu::{MenuEvent, MenuSettings};
     use crate::{Color, Completer, Editor, PromptHistorySearch, Suggestion};
     use pretty_assertions::assert_eq;
     use rstest::rstest;
@@ -2414,11 +2414,26 @@ mod tests {
     /// `menu_required_lines` books them, and both derive from the same string so
     /// a test cannot describe a menu that draws more rows than it reserved.
     /// Everything else is unreachable in these tests.
-    struct TestMenu(String);
+    struct TestMenu {
+        contents: String,
+        settings: MenuSettings,
+    }
+
+    impl TestMenu {
+        fn new(contents: &str) -> Self {
+            Self {
+                contents: contents.to_string(),
+                settings: MenuSettings::default(),
+            }
+        }
+    }
 
     impl Menu for TestMenu {
+        fn settings(&self) -> &MenuSettings {
+            &self.settings
+        }
         fn menu_string(&self, _available_lines: u16, _use_ansi_coloring: bool) -> String {
-            self.0.clone()
+            self.contents.clone()
         }
         fn is_active(&self) -> bool {
             true
@@ -2457,7 +2472,7 @@ mod tests {
             unimplemented!()
         }
         fn menu_required_lines(&self, _terminal_columns: u16) -> u16 {
-            self.0.lines().count() as u16
+            self.contents.lines().count() as u16
         }
         fn min_rows(&self) -> u16 {
             unimplemented!()
@@ -2530,8 +2545,8 @@ mod tests {
         #[case] after: &str,
         #[case] hint: &str,
     ) {
-        let menu = menu_rows
-            .map(|rows| ReedlineMenu::EngineCompleter(Box::new(TestMenu(rows.to_string()))));
+        let menu =
+            menu_rows.map(|rows| ReedlineMenu::EngineCompleter(Box::new(TestMenu::new(rows))));
         let mut lines = make_lines(TEST_PROMPT, "", "", before, after);
         lines.hint = Cow::Borrowed(hint);
 
@@ -2555,7 +2570,7 @@ mod tests {
         // Same tmux trigger as the prompt path, latent in print_menu via
         // `menu_start_row.unwrap_or(0)`: a menu drawn at row 0 must not emit the
         // home-cell erase-below (#1062).
-        let menu = TestMenu("item1\nitem2".to_string());
+        let menu = TestMenu::new("item1\nitem2");
         let out = capture_print_menu(&menu, Some(0));
         assert!(
             !out.contains("\x1b[1;1H\x1b[J"),
@@ -2567,7 +2582,7 @@ mod tests {
     fn print_menu_none_start_row_treated_as_row_0() {
         // `unwrap_or(0)` makes a None start row clear from row 0, so it must
         // honour the same guard.
-        let menu = TestMenu("item1".to_string());
+        let menu = TestMenu::new("item1");
         let out = capture_print_menu(&menu, None);
         assert!(
             !out.contains("\x1b[1;1H\x1b[J"),
