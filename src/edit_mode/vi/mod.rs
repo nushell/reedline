@@ -65,7 +65,12 @@ impl Default for Vi {
 }
 
 impl Vi {
-    /// Creates Vi editor using defined keybindings, one table per mode.
+    /// Creates Vi editor using defined keybindings, one table per mode, in the
+    /// order insert, normal, visual.
+    ///
+    /// Visual no longer reads the normal table, so a binding meant for both
+    /// goes into both. [`default_vi_visual_keybindings`] starts out as a copy
+    /// of [`default_vi_normal_keybindings`].
     pub fn new(
         insert_keybindings: Keybindings,
         normal_keybindings: Keybindings,
