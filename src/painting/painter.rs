@@ -28,31 +28,13 @@ use {crate::LineBuffer, crossterm::cursor::MoveUp};
 // Returns a string that skips N number of lines with the next offset of lines
 // An offset of 0 would return only one line after skipping the required lines
 fn skip_buffer_lines(string: &str, skip: usize, offset: Option<usize>) -> &str {
-    let mut matches = string.match_indices('\n');
-    let index = if skip == 0 {
-        0
-    } else {
-        matches
-            .clone()
-            .nth(skip - 1)
-            .map(|(index, _)| index + 1)
-            .unwrap_or(string.len())
-    };
-
-    let limit = match offset {
-        Some(offset) => {
-            let offset = skip + offset;
-            matches
-                .nth(offset)
-                .map(|(index, _)| index)
-                .unwrap_or(string.len())
-        }
-        None => string.len(),
-    };
+    let (index, limit) = skip_buffer_lines_range(string, skip, offset);
 
     string[index..limit].trim_end_matches('\n')
 }
 
+// The byte range `skip_buffer_lines` slices, for callers that need to map a
+// position back into the unskipped string.
 fn skip_buffer_lines_range(string: &str, skip: usize, offset: Option<usize>) -> (usize, usize) {
     let mut matches = string.match_indices('\n');
     let index = if skip == 0 {
