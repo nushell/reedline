@@ -166,6 +166,11 @@ left without cutting it.
 
 ### Normal and visual mode
 
+Normal and visual each have a keybinding table of their own,
+`default_vi_normal_keybindings()` and `default_vi_visual_keybindings()`. The
+defaults are identical, which is why they share this section, but a binding
+added to one does not reach the other.
+
 The control, navigation and selection sets, but not editing. In its place:
 
 | Key | Action |
