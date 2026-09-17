@@ -9,6 +9,7 @@ use {
     crate::{
         menu::{Menu, ReedlineMenu},
         painting::PromptLines,
+        utils::environment::{term_is_dumb, var_os},
         Prompt,
     },
     crossterm::{
@@ -231,8 +232,21 @@ enum PromptRowSelector {
     MakeNewPrompt { new_row: u16 },
 }
 
-// Selects the row where the next prompt should start on, taking into account and whether it should re-use a previous
-// prompt.
+/// Query the cursor position unless the terminal explicitly declares itself dumb.
+///
+/// `TERM=dumb` does not provide cursor-position reporting, so avoid issuing a
+/// query that cannot be answered. Otherwise delegate to the painter's writer,
+/// which keeps terminal I/O testable.
+fn cursor_position_for_term(stdout: &W, is_term_dumb: bool) -> Result<Option<(u16, u16)>> {
+    if is_term_dumb {
+        Ok(None)
+    } else {
+        stdout.cursor_position().map(Some)
+    }
+}
+
+// Selects the row where the next prompt should start on, taking into account whether it should
+// re-use a previous prompt.
 fn select_prompt_row(
     suspended_state: Option<&PainterSuspendedState>,
     (column, row): (u16, u16), // NOTE: Positions are 0 based here
@@ -319,6 +333,8 @@ pub struct Painter {
     // The number of lines that the prompt takes up
     prompt_height: u16,
     terminal_size: (u16, u16),
+    /// Cached terminal policy, refreshed on resize.
+    term_is_dumb: bool,
     last_required_lines: u16,
     large_buffer: bool,
     just_resized: bool,
@@ -336,11 +352,14 @@ pub struct Painter {
 
 impl Painter {
     pub(crate) fn new(stdout: W) -> Self {
+        let term = var_os("TERM");
+        let term_is_dumb = term_is_dumb(term.as_deref());
         Painter {
             stdout,
             prompt_start_row: PromptStartRow::Unverified,
             prompt_height: 0,
             terminal_size: (0, 0),
+            term_is_dumb,
             last_required_lines: 0,
             large_buffer: false,
             just_resized: false,
@@ -425,29 +444,8 @@ impl Painter {
             None
         };
 
-        // Right prompt layout — only visible when the prompt itself hasn't scrolled off
-        let right_prompt =
-            if lines.prompt_str_right.is_empty() || self.large_buffer && extra_rows > 0 {
-                None
-            } else {
-                let prompt_length_right = line_width(&lines.prompt_str_right);
-                let start_position = screen_width.saturating_sub(prompt_length_right as u16);
-                let input_width = lines.estimate_right_prompt_line_width(screen_width);
-
-                if input_width <= start_position {
-                    let mut row = self.prompt_start_row.last_known_row();
-                    if lines.right_prompt_on_last_line {
-                        row += lines.prompt_lines_with_wrap(screen_width);
-                    }
-                    Some(RightPromptBounds {
-                        row,
-                        start_col: start_position,
-                        end_col: start_position.saturating_add(prompt_length_right as u16),
-                    })
-                } else {
-                    None
-                }
-            };
+        // Right prompt layout
+        let right_prompt = self.compute_right_prompt(lines, extra_rows);
 
         // Menu start row
         let menu_start_row = menu.map(|menu| {
@@ -483,6 +481,40 @@ impl Painter {
         }
     }
 
+    /// Computes the right prompt position when the terminal can position it.
+    fn compute_right_prompt(
+        &self,
+        lines: &PromptLines,
+        extra_rows: usize,
+    ) -> Option<RightPromptBounds> {
+        if self.term_is_dumb
+            || lines.prompt_str_right.is_empty()
+            || self.large_buffer && extra_rows > 0
+        {
+            return None;
+        }
+
+        let screen_width = self.screen_width();
+        let prompt_length_right = line_width(&lines.prompt_str_right);
+        let start_position = screen_width.saturating_sub(prompt_length_right as u16);
+        let input_width = lines.estimate_right_prompt_line_width(screen_width);
+
+        if input_width > start_position {
+            return None;
+        }
+
+        let mut row = self.prompt_start_row.last_known_row();
+        if lines.right_prompt_on_last_line {
+            row += lines.prompt_lines_with_wrap(screen_width);
+        }
+
+        Some(RightPromptBounds {
+            row,
+            start_col: start_position,
+            end_col: start_position.saturating_add(prompt_length_right as u16),
+        })
+    }
+
     /// Returns the state necessary before suspending the painter (to run a host command event).
     ///
     /// This state will be used to re-initialize the painter to re-use last prompt if possible.
@@ -496,7 +528,9 @@ impl Painter {
             was_flush_at_bottom: final_row >= self.screen_height().saturating_sub(1),
             // One DSR round-trip per suspension is cheap next to whatever the host
             // is about to run, and it turns "might have scrolled" into a fact.
-            cursor: self.stdout.cursor_position().ok(),
+            cursor: cursor_position_for_term(&self.stdout, self.term_is_dumb)
+                .ok()
+                .flatten(),
         }
     }
 
@@ -544,9 +578,16 @@ impl Painter {
         // undershooting guess wipes the output above the prompt with no way
         // to recover. No row is greater than the bottom, so it is the only
         // guess that always lands on the repairable side.
-        let position = match self.stdout.cursor_position() {
-            Ok(position) => position,
+        let position = match cursor_position_for_term(&self.stdout, self.term_is_dumb) {
+            Ok(Some(position)) => position,
+            Ok(None) => {
+                // No query was made: do not add a blank line for every prompt.
+                self.prompt_start_row =
+                    PromptStartRow::Stale(self.screen_height().saturating_sub(1));
+                return Ok(());
+            }
             Err(_) => {
+                // Preserve #1202's newline recovery for a real query failure.
                 self.print_crlf()?;
                 self.prompt_start_row =
                     PromptStartRow::Stale(self.screen_height().saturating_sub(1));
@@ -569,9 +610,8 @@ impl Painter {
                 }
             }
         };
-        // Matches the cursor row we just measured; mark verified so
-        // subsequent paints can skip the possibly-expensive
-        // drift-detection call to cursor::position().
+        // Reaching here means the cursor position was measured successfully;
+        // the no-measurement path returned above with a stale bottom-row fallback.
         self.prompt_start_row.mark_verified(new_row);
         Ok(())
     }
@@ -639,8 +679,8 @@ impl Painter {
             // homing to row 0, which would yank the prompt to the top. The `+1`
             // allows for output that left the cursor on the prompt row.
             // See nushell/reedline#1130.
-            let anchor = match self.stdout.cursor_position() {
-                Ok((_, cursor_row)) if cursor_row + 1 < row => cursor_row,
+            let anchor = match cursor_position_for_term(&self.stdout, self.term_is_dumb) {
+                Ok(Some((_, cursor_row))) if cursor_row + 1 < row => cursor_row,
                 _ => row,
             };
             self.prompt_start_row.mark_verified(anchor);
@@ -968,6 +1008,10 @@ impl Painter {
     /// Put the cursor back where the paint left it: absolutely on the margin,
     /// where the save is ambiguous, and by restoring it everywhere else.
     fn queue_cursor_placement(&mut self, margin_row: Option<u16>) -> Result<()> {
+        if self.term_is_dumb {
+            // Leave the cursor where the last Print put it, including at a margin.
+            return Ok(());
+        }
         match margin_row {
             Some(row) => self.stdout.queue(MoveTo(0, row))?,
             None => self.stdout.queue(RestorePosition)?,
@@ -1084,10 +1128,11 @@ impl Painter {
                 .queue(ResetColor)?;
         }
 
-        self.stdout
-            .queue(Print(&lines.before_cursor))?
-            .queue(SavePosition)?
-            .queue(Print(&lines.after_cursor))?;
+        self.stdout.queue(Print(&lines.before_cursor))?;
+        if !self.term_is_dumb {
+            self.stdout.queue(SavePosition)?;
+        }
+        self.stdout.queue(Print(&lines.after_cursor))?;
 
         let cursor_row = self.margin_cursor_row([
             &*lines.prompt_str_left,
@@ -1178,7 +1223,9 @@ impl Painter {
             layout.large_buffer_offset,
         );
         self.stdout.queue(Print(before_cursor_skipped))?;
-        self.stdout.queue(SavePosition)?;
+        if !self.term_is_dumb {
+            self.stdout.queue(SavePosition)?;
+        }
 
         // Computed from the *skipped* text, which is what reached the screen.
         let cursor_row =
@@ -1214,6 +1261,8 @@ impl Painter {
     /// Updates prompt origin and offset to handle a screen resize event
     pub(crate) fn handle_resize(&mut self, width: u16, height: u16) {
         self.terminal_size = (width, height);
+        let term = var_os("TERM");
+        self.term_is_dumb = term_is_dumb(term.as_deref());
 
         self.invalidate_prompt_start_row();
 
@@ -1226,7 +1275,7 @@ impl Painter {
         // Known bug: on iterm2 and kitty, clearing the screen via CMD-K
         // doesn't reset the cursor position — possibly a `position()`
         // bug.
-        if let Ok(position) = self.stdout.cursor_position() {
+        if let Ok(Some(position)) = cursor_position_for_term(&self.stdout, self.term_is_dumb) {
             self.prompt_start_row = PromptStartRow::Stale(position.1);
             self.just_resized = true;
         }
@@ -1359,14 +1408,14 @@ impl Painter {
         // batch of messages, not per message, so the flicker the comment above
         // guards against is unaffected.
         self.stdout.flush()?;
-        self.prompt_start_row = match self.stdout.cursor_position() {
+        self.prompt_start_row = match cursor_position_for_term(&self.stdout, self.term_is_dumb) {
             // Measured, so later paints can skip the drift check.
-            Ok((_, actual)) => PromptStartRow::Verified(actual),
+            Ok(Some((_, actual))) => PromptStartRow::Verified(actual),
             // No answer, so all that is left is the count this function stopped
             // trusting. `Stale` at least keeps the next paint checking it;
             // `Verified` would skip the check and paint against a row the
             // terminal may never have reached.
-            Err(_) => PromptStartRow::Stale(row),
+            Ok(None) | Err(_) => PromptStartRow::Stale(row),
         };
         Ok(())
     }
@@ -1477,6 +1526,22 @@ mod tests {
         ) -> Cow<'_, str> {
             "".into()
         }
+    }
+
+    #[test]
+    fn term_dumb_skips_cursor_position_query() {
+        let stdout = W::sink();
+        let position =
+            cursor_position_for_term(&stdout, true).expect("TERM=dumb detection should not fail");
+
+        assert_eq!(position, None);
+    }
+
+    #[test]
+    fn non_dumb_term_delegates_cursor_position_query() {
+        let stdout = W::sink();
+
+        assert!(cursor_position_for_term(&stdout, false).is_err());
     }
 
     #[test]
@@ -1689,6 +1754,7 @@ mod tests {
     #[test]
     fn test_anchor_prompt_without_answer_assumes_bottom_over_last_known_row() {
         let mut painter = Painter::new(W::capture());
+        painter.term_is_dumb = false;
         painter.terminal_size = (20, 10);
         painter.prompt_start_row.mark_verified(4);
 
@@ -1701,12 +1767,25 @@ mod tests {
     #[test]
     fn test_anchor_prompt_without_answer_and_no_row_assumes_bottom() {
         let mut painter = Painter::new(W::capture());
+        painter.term_is_dumb = false;
         painter.terminal_size = (20, 10);
 
         painter.anchor_prompt(None).unwrap();
 
         assert_eq!(painter.prompt_start_row, PromptStartRow::Stale(9));
         assert_eq!(painter.stdout.captured(), b"\r\n");
+    }
+
+    #[test]
+    fn test_anchor_prompt_term_dumb_assumes_bottom_without_blank_line() {
+        let mut painter = Painter::new(W::capture());
+        painter.terminal_size = (20, 10);
+        painter.term_is_dumb = true;
+
+        painter.anchor_prompt(None).unwrap();
+
+        assert_eq!(painter.prompt_start_row, PromptStartRow::Stale(9));
+        assert_eq!(painter.stdout.captured(), b"");
     }
 
     fn base_snapshot() -> RenderSnapshot {
@@ -1806,6 +1885,7 @@ mod tests {
     fn make_painter(width: u16, height: u16, large_buffer: bool) -> Painter {
         let mut p = Painter::new(W::sink());
         p.terminal_size = (width, height);
+        p.term_is_dumb = false;
         p.prompt_start_row.mark_verified(0);
         p.prompt_height = 1;
         p.large_buffer = large_buffer;
@@ -1840,6 +1920,7 @@ mod tests {
     fn capture_repaint(lines: &PromptLines, anchor_row: u16) -> (String, u16, bool) {
         let mut p = Painter::new(W::capture());
         p.terminal_size = (20, 10);
+        p.term_is_dumb = false;
         p.prompt_start_row.mark_verified(anchor_row);
         p.prompt_height = 1;
         p.repaint_buffer(
@@ -1867,6 +1948,7 @@ mod tests {
     fn test_the_exit_erase_keeps_the_right_prompt() {
         let mut painter = Painter::new(W::capture());
         painter.terminal_size = (20, 10);
+        painter.term_is_dumb = false;
         painter.prompt_start_row.mark_verified(0);
         painter.prompt_height = 1;
 
@@ -1905,6 +1987,7 @@ mod tests {
     fn test_a_paint_without_a_right_prompt_clears_the_stored_one() {
         let mut painter = Painter::new(W::capture());
         painter.terminal_size = (20, 10);
+        painter.term_is_dumb = false;
         painter.prompt_start_row.mark_verified(0);
         painter.prompt_height = 1;
 
@@ -2050,6 +2133,61 @@ mod tests {
             max_written,
             screen,
         }
+    }
+
+    #[test]
+    fn term_dumb_small_buffer_emits_no_save_or_restore_position() {
+        let mut painter = Painter::new(W::capture());
+        painter.terminal_size = (20, 10);
+        painter.term_is_dumb = true;
+        painter.prompt_start_row.mark_verified(0);
+        painter.prompt_height = 1;
+
+        let lines = make_lines(TEST_PROMPT, "", "", "abc", "xyz");
+        painter
+            .repaint_buffer(
+                &TestPrompt,
+                &lines,
+                PromptEditMode::Default,
+                None,
+                false,
+                &None,
+            )
+            .unwrap();
+
+        let out = String::from_utf8_lossy(painter.stdout.captured());
+        assert!(!out.contains("\x1b7"), "emitted ESC 7: {out:?}");
+        assert!(!out.contains("\x1b8"), "emitted ESC 8: {out:?}");
+    }
+
+    #[test]
+    fn term_dumb_large_buffer_emits_no_save_or_restore_position() {
+        let mut painter = Painter::new(W::capture());
+        painter.terminal_size = (20, 10);
+        painter.term_is_dumb = true;
+        painter.prompt_start_row.mark_verified(0);
+        painter.prompt_height = 1;
+
+        let after = "y".repeat(220);
+        let lines = make_lines(TEST_PROMPT, "", "", "abc", &after);
+        painter
+            .repaint_buffer(
+                &TestPrompt,
+                &lines,
+                PromptEditMode::Default,
+                None,
+                false,
+                &None,
+            )
+            .unwrap();
+
+        assert!(
+            painter.large_buffer,
+            "setup must exercise large-buffer paint"
+        );
+        let out = String::from_utf8_lossy(painter.stdout.captured());
+        assert!(!out.contains("\x1b7"), "emitted ESC 7: {out:?}");
+        assert!(!out.contains("\x1b8"), "emitted ESC 8: {out:?}");
     }
 
     /// The three assertions below must hold *together*: two earlier fixes for
@@ -2351,6 +2489,7 @@ mod tests {
     /// Same setup as `capture_repaint`, so the two stay comparable.
     fn capture_repaint_then_exit(lines: &PromptLines, menu: Option<&ReedlineMenu>) -> Replayed {
         let mut p = Painter::new(W::capture());
+        p.term_is_dumb = false;
         p.terminal_size = (20, 10);
         p.prompt_start_row.mark_verified(0);
         p.prompt_height = 1;
@@ -2464,6 +2603,16 @@ mod tests {
     }
 
     #[test]
+    fn test_layout_right_prompt_hidden_for_term_dumb() {
+        let mut painter = make_painter(40, 10, false);
+        painter.term_is_dumb = true;
+        let lines = make_lines(TEST_PROMPT, "", "RP", "hi", "");
+        let layout = painter.compute_layout(&lines, None);
+
+        assert!(layout.right_prompt.is_none());
+    }
+
+    #[test]
     fn test_layout_right_prompt_hidden_when_input_too_wide() {
         let painter = make_painter(10, 10, false);
         // Prompt TEST_PROMPT (2) + before "12345678" (8) = 10 which equals start_position (10-2=8)
@@ -2534,6 +2683,7 @@ mod tests {
         };
 
         let mut painter = Painter::new(W::sink());
+        painter.term_is_dumb = false;
         painter.terminal_size = (20, 10);
         painter.prompt_start_row.mark_verified(0);
         painter.prompt_height = 1;
@@ -2610,6 +2760,7 @@ mod tests {
         use_ansi_coloring: bool,
     ) -> (String, bool) {
         let mut p = Painter::new(W::capture());
+        p.term_is_dumb = false;
         p.terminal_size = (20, 10);
         p.prompt_start_row.mark_verified(0);
         p.prompt_height = 1;
