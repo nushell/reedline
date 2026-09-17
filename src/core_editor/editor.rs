@@ -451,6 +451,20 @@ impl Editor {
         self.line_buffer.collapse_to_caret();
     }
 
+    /// Collapse the selection onto the end the user is steering, for a switch
+    /// into a mode that has no selection. Has to run while the editor still
+    /// holds the mode being left, since that mode's geometry says where the
+    /// caret shows: a bar sits on the head itself, a block covers the grapheme
+    /// before a forward head. No commit, the mode change that follows owes one.
+    pub(crate) fn collapse_selection_onto_caret(&mut self) {
+        let cursor = self.line_buffer.cursor();
+        let caret = match self.caret_geometry() {
+            CaretGeometry::Bar => cursor.head(),
+            CaretGeometry::Block => cursor.caret(self.line_buffer.get_buffer()),
+        };
+        self.line_buffer.set_cursor(Cursor::point(caret));
+    }
+
     fn operate(&mut self, selection: Cursor, verb: OperatorVerb, granularity: Granularity) {
         // `register` is the span the cut buffer keeps; `delete` is the span that
         // leaves the buffer. They coincide except for a linewise Cut/Copy of the

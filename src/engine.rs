@@ -35,7 +35,7 @@ use {
             semantic_prompt::{Osc133ClickEventsMarkers, SemanticPromptMarkers},
         },
         utils::text_manipulation,
-        AbbrExpandContext, AutoPairAction, AutoPairContext, AutoPairs, Direction, EditCommand,
+        AbbrExpandContext, AutoPairAction, AutoPairContext, AutoPairs, EditCommand,
         ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, MouseButton, Prompt,
         PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult, Validator,
     },
@@ -1921,17 +1921,17 @@ impl Reedline {
     ///
     /// Repair: a machine's own transitions emit their repairs as events, the way `i`
     /// collapses the selection on the way into helix insert. An event-driven
-    /// flip never reaches that path, so the repair has to happen here. The one
-    /// that bites is leaving a block caret for a bar caret: a block policy rests
-    /// as a min-width-1 selection, and `insert_char` deletes the selection
-    /// before inserting, so the first keystroke would replace the covered
-    /// grapheme.
+    /// flip never reaches that path, so the repair has to happen here. What
+    /// bites is a selection arriving in a mode that has none: a block policy
+    /// rests as a min-width-1 selection and a bar caret can carry a
+    /// shift-selection, and either way `insert_char` and every vi operator
+    /// consume a live selection, so the first keystroke would eat text. It
+    /// collapses onto the caret, where the machines' own `Esc` leaves it.
     ///
-    /// Stated over the `RestPolicy` rather than per machine, so helix
-    /// normal/select and vi visual are one rule instead of three cases, and a
-    /// future machine inherits it.
+    /// Stated over the `RestPolicy` being entered rather than per machine, so
+    /// emacs, both insert modes and vi normal are one rule instead of four
+    /// cases, and a future machine inherits it.
     fn change_edit_mode(&mut self, event: ReedlineEvent) -> EventStatus {
-        let before = self.edit_mode.edit_mode().rest_policy();
         let mut status = self.edit_mode.handle_mode_specific_event(event.clone());
         if matches!(status, EventStatus::Inapplicable) {
             if let Some(i) = self.inactive_edit_modes.iter_mut().position(|m| {
@@ -1945,13 +1945,14 @@ impl Reedline {
             }
         };
 
-        let after = self.edit_mode.edit_mode().rest_policy();
-        if before.is_block() && !after.is_block() {
-            // `run_edit_commands` re-syncs the policy from the mode the machine
-            // now reports, so this resolves under `after`. Collapsing under the
-            // block policy being left would re-widen the cursor and undo it.
-            // Backward is the edge `i` lands on.
-            self.run_edit_commands(&[EditCommand::CollapseSelection(Direction::Backward)]);
+        let after = self.edit_mode.edit_mode();
+        if matches!(status, EventStatus::Handled) && !after.rest_policy().is_block() {
+            // Collapse first, while the editor still holds the mode being left
+            // and so knows where its caret shows. Adopting the new policy
+            // afterwards leaves the settle to the pre-paint commit; a commit
+            // under the block policy being left would re-widen the point.
+            self.editor.collapse_selection_onto_caret();
+            self.editor.sync_edit_mode(after);
         }
         status
     }
@@ -2997,8 +2998,8 @@ mod tests {
     use super::*;
     use crate::terminal_extensions::semantic_prompt::PromptKind;
     use crate::{
-        ColumnarMenu, CompletionOrigin, CompletionResult, DefaultPrompt, FindStop, ListMenu,
-        MenuBuilder, MotionTarget, PromptHelixMode, PromptViMode, Span, Suggestion,
+        ColumnarMenu, CompletionOrigin, CompletionResult, DefaultPrompt, Direction, FindStop,
+        ListMenu, MenuBuilder, MotionTarget, PromptHelixMode, PromptViMode, Span, Suggestion,
     };
     use rstest::rstest;
 
@@ -4594,7 +4595,7 @@ mod tests {
     }
 
     /// Switching into emacs from any state leaves the cursor where it was: a
-    /// bar caret stays put, a block caret collapses onto its left edge.
+    /// bar caret stays put, a block caret collapses onto the grapheme it covers.
     /// `setup` walks the caret from the end of `abcd` back to between `b` and
     /// `c` (or onto `c` for a block) before Alt-e fires from that table.
     #[rstest]
@@ -4643,6 +4644,125 @@ mod tests {
         assert_eq!(rl.editor.insertion_point(), 2);
         drive_until_signal(&mut rl, &[ch('X')]);
         assert_eq!(rl.editor.get_buffer(), "abXcd");
+    }
+
+    fn shift(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::SHIFT)
+    }
+
+    /// Vi normal has no notion of a selection, so one carried in from a bar
+    /// caret must not survive the switch: every operator would read it as its
+    /// range and the first keystroke would delete text. Both directions are
+    /// covered since the head sits on a different edge in each, and either way
+    /// the caret stays where the user left it.
+    #[rstest]
+    #[case::selected_leftward(&[shift(KeyCode::Left), shift(KeyCode::Left), shift(KeyCode::Left)], 1)]
+    #[case::selected_rightward(
+        &[key(KeyCode::Home), key(KeyCode::Right), shift(KeyCode::Right), shift(KeyCode::Right)],
+        3
+    )]
+    fn switch_mode_into_vi_normal_drops_a_bar_selection(
+        #[case] select: &[KeyEvent],
+        #[case] caret: usize,
+    ) {
+        let mut emacs = crate::default_emacs_keybindings();
+        emacs.add_binding(
+            KeyModifiers::ALT,
+            KeyCode::Char('n'),
+            ReedlineEvent::SwitchMode(PromptEditMode::Vi(PromptViMode::Normal)),
+        );
+        let mut rl = Reedline::create()
+            .with_edit_mode(Box::new(crate::Emacs::new(emacs)))
+            .with_additional_edit_mode(Box::<crate::Vi>::default())
+            .with_validator(Box::new(crate::DefaultValidator));
+        rl.painter.force_prompt_anchored_for_test(0);
+
+        drive_until_signal(&mut rl, &[ch('a'), ch('b'), ch('c'), ch('d'), ch('e')]);
+        drive_until_signal(&mut rl, &[key(KeyCode::Left)]);
+        drive_until_signal(&mut rl, select);
+        assert!(
+            rl.editor.get_selection().is_some(),
+            "setup: a live selection"
+        );
+
+        drive_until_signal(&mut rl, &[alt('n')]);
+        assert_eq!(
+            rl.prompt_edit_mode(),
+            PromptEditMode::Vi(PromptViMode::Normal)
+        );
+        assert_eq!(rl.editor.get_selection(), None);
+        assert_eq!(rl.editor.insertion_point(), caret);
+        // `x` takes the one grapheme under the caret, not the old selection.
+        drive_until_signal(&mut rl, &[ch('x')]);
+        assert_eq!(rl.editor.get_buffer().len(), 4);
+    }
+
+    /// A selection wider than one grapheme collapses onto the caret, where the
+    /// machine's own `Esc` leaves it, rather than onto the selection's start.
+    /// `setup` selects `abc` forward from the start of `abcd`, caret on `c`.
+    #[rstest]
+    #[case::vi_visual_into_vi_normal(
+        false,
+        &[key(KeyCode::Esc), ch('0'), ch('v'), ch('l'), ch('l')],
+        PromptEditMode::Vi(PromptViMode::Normal)
+    )]
+    #[case::vi_visual_into_emacs(
+        false,
+        &[key(KeyCode::Esc), ch('0'), ch('v'), ch('l'), ch('l')],
+        PromptEditMode::Emacs
+    )]
+    #[case::helix_select_into_emacs(
+        true,
+        &[key(KeyCode::Esc), ch('g'), ch('h'), ch('v'), ch('l'), ch('l')],
+        PromptEditMode::Emacs
+    )]
+    #[case::helix_select_into_helix_insert(
+        true,
+        &[key(KeyCode::Esc), ch('g'), ch('h'), ch('v'), ch('l'), ch('l')],
+        PromptEditMode::Helix(PromptHelixMode::Insert)
+    )]
+    fn switch_mode_collapses_a_wide_selection_onto_the_caret(
+        #[case] helix: bool,
+        #[case] setup: &[KeyEvent],
+        #[case] target: PromptEditMode,
+    ) {
+        let bind = |mut table: crate::Keybindings| {
+            table.add_binding(
+                KeyModifiers::ALT,
+                KeyCode::Char('t'),
+                ReedlineEvent::SwitchMode(target.clone()),
+            );
+            table
+        };
+        let machine: Box<dyn EditMode> = if helix {
+            Box::new(
+                crate::Helix::default()
+                    .with_select_keybindings(bind(crate::default_helix_select_keybindings())),
+            )
+        } else {
+            Box::new(crate::Vi::new(
+                crate::default_vi_insert_keybindings(),
+                crate::default_vi_normal_keybindings(),
+                bind(crate::default_vi_visual_keybindings()),
+            ))
+        };
+        let mut rl = Reedline::create()
+            .with_edit_mode(machine)
+            .with_additional_edit_mode(Box::<crate::Emacs>::default())
+            .with_validator(Box::new(crate::DefaultValidator));
+        rl.painter.force_prompt_anchored_for_test(0);
+
+        drive_until_signal(&mut rl, &[ch('a'), ch('b'), ch('c'), ch('d')]);
+        drive_until_signal(&mut rl, setup);
+        assert_eq!(rl.editor.insertion_point(), 2, "setup: caret on `c`");
+
+        drive_until_signal(
+            &mut rl,
+            &[KeyEvent::new(KeyCode::Char('t'), KeyModifiers::ALT)],
+        );
+        assert_eq!(rl.prompt_edit_mode(), target);
+        assert_eq!(rl.editor.get_selection(), None);
+        assert_eq!(rl.editor.insertion_point(), 2);
     }
 
     /// A switch while the history menu is open neither moves the cursor nor
