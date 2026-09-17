@@ -1953,7 +1953,7 @@ impl Reedline {
             // and so knows where its caret shows. Adopting the new policy
             // afterwards leaves the settle to the pre-paint commit; a commit
             // under the block policy being left would re-widen the point.
-            self.editor.collapse_selection_onto_caret();
+            self.editor.clear_selection();
             self.editor.sync_edit_mode(after);
         }
         status
