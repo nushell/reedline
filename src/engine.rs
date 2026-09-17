@@ -162,9 +162,9 @@ pub struct Reedline {
 
     // Edit Mode: Vi, Emacs
     edit_mode: Box<dyn EditMode>,
-    /// Machines a [`ReedlineEvent::SwitchMode`] can swap into `edit_mode`,
-    /// offered a target in registration order.
-    inactive_edit_modes: Vec<Box<dyn EditMode>>,
+    /// Standbys: machines a [`ReedlineEvent::SwitchMode`] can swap into
+    /// `edit_mode`, offered a target in registration order.
+    standby_edit_modes: Vec<Box<dyn EditMode>>,
 
     // Provides the tab completions
     completer: Box<dyn Completer + Send>,
@@ -371,7 +371,7 @@ impl Reedline {
             painter,
             transient_prompt: None,
             edit_mode,
-            inactive_edit_modes: Vec::new(),
+            standby_edit_modes: Vec::new(),
             completer,
             quick_completions: false,
             partial_completions: false,
@@ -798,24 +798,25 @@ impl Reedline {
         self
     }
 
-    /// A builder that registers another edit mode a
+    /// A builder that registers another edit mode as a standby, which a
     /// [`ReedlineEvent::SwitchMode`] can activate. The mode given to
-    /// [`with_edit_mode`](Self::with_edit_mode) stays active until then.
+    /// [`with_edit_mode`](Self::with_edit_mode) stays active until then, and
+    /// the mode a switch replaces becomes a standby in turn.
     ///
     /// Registering appends, so a host that rebuilds its modes on every prompt
     /// clears them with [`clear_edit_modes`](Self::clear_edit_modes) first.
     #[must_use]
     pub fn with_additional_edit_mode(mut self, edit_mode: Box<dyn EditMode>) -> Self {
-        self.inactive_edit_modes.push(edit_mode);
+        self.standby_edit_modes.push(edit_mode);
         self
     }
 
-    /// A builder that clears the edit modes registered with
+    /// A builder that clears the standby edit modes registered with
     /// [`with_additional_edit_mode`](Self::with_additional_edit_mode), leaving
     /// the active one alone.
     #[must_use]
     pub fn clear_edit_modes(mut self) -> Self {
-        self.inactive_edit_modes = Vec::new();
+        self.standby_edit_modes = Vec::new();
         self
     }
 
@@ -1934,16 +1935,17 @@ impl Reedline {
     fn change_edit_mode(&mut self, event: ReedlineEvent) -> EventStatus {
         let mut status = self.edit_mode.handle_mode_specific_event(event.clone());
         if matches!(status, EventStatus::Inapplicable) {
-            if let Some(i) = self.inactive_edit_modes.iter_mut().position(|m| {
-                matches!(
-                    m.handle_mode_specific_event(event.clone()),
-                    EventStatus::Handled
-                )
-            }) {
-                std::mem::swap(&mut self.edit_mode, &mut self.inactive_edit_modes[i]);
-                status = EventStatus::Handled;
+            // Offering is not a query: the standby that accepts has already
+            // moved into the target state, and `EditMode` asks the ones that
+            // decline to stay as they were.
+            for standby in &mut self.standby_edit_modes {
+                if let EventStatus::Handled = standby.handle_mode_specific_event(event.clone()) {
+                    std::mem::swap(&mut self.edit_mode, standby);
+                    status = EventStatus::Handled;
+                    break;
+                }
             }
-        };
+        }
 
         let after = self.edit_mode.edit_mode();
         if matches!(status, EventStatus::Handled) && !after.rest_policy().is_block() {
@@ -4851,7 +4853,7 @@ mod tests {
             .clear_edit_modes();
         rl.painter.force_prompt_anchored_for_test(0);
 
-        assert!(rl.inactive_edit_modes.is_empty());
+        assert!(rl.standby_edit_modes.is_empty());
         drive_until_signal(&mut rl, &[ctrl('h')]);
         assert_eq!(rl.prompt_edit_mode(), PromptEditMode::Emacs);
     }
