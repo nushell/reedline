@@ -488,6 +488,12 @@ impl Painter {
         }
     }
 
+    /// Whether the terminal declared itself `TERM=dumb`, as of construction
+    /// or the last resize.
+    pub(crate) fn term_is_dumb(&self) -> bool {
+        self.term_is_dumb
+    }
+
     /// Computes the right prompt position when the terminal can position it.
     fn compute_right_prompt(
         &self,
