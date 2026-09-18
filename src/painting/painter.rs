@@ -2284,6 +2284,7 @@ mod tests {
     ) {
         let mut p = Painter::new(W::capture());
         p.terminal_size = (20, 10);
+        p.term_is_dumb = false;
         p.prompt_start_row.mark_verified(0);
         p.prompt_height = 1;
         let shapes = Some(CursorConfig {
