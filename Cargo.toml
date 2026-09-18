@@ -27,7 +27,6 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", optional = true }
 strip-ansi-escapes = "0.2.0"
 strum = { version = "0.28.0", features = ["derive"] }
-thiserror = "2.0.19"
 unicase = "2.8.0"
 unicode-segmentation = "1.13.3"
 unicode-width = "0.2"

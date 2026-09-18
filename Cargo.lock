@@ -700,7 +700,6 @@ dependencies = [
  "strip-ansi-escapes",
  "strum",
  "tempfile",
- "thiserror",
  "unicase",
  "unicode-segmentation",
  "unicode-width",
