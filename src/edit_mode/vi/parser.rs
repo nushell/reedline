@@ -733,21 +733,14 @@ mod tests {
         ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Extend(MotionTarget::Word { kind: WordKind::Word, edge: WordEdge::Start, direction: Direction::Forward })])]))]
     #[case(&['W'],
         ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Extend(MotionTarget::Word { kind: WordKind::LongWord, edge: WordEdge::Start, direction: Direction::Forward })])]))]
+    // `h`/`l` only extend in visual, like `j`/`k`: accepting a hint would
+    // insert text under a held selection, and a menu has no claim on them.
     #[case(&['2', 'l'], ReedlineEvent::Multiple(vec![
-        ReedlineEvent::UntilFound(vec![
-                ReedlineEvent::HistoryHintComplete,
-                ReedlineEvent::MenuRight,
-                ReedlineEvent::Edit(vec![EditCommand::MoveRight{select:true}]),
-            ]),ReedlineEvent::UntilFound(vec![
-                ReedlineEvent::HistoryHintComplete,
-                ReedlineEvent::MenuRight,
-                ReedlineEvent::Edit(vec![EditCommand::MoveRight{select:true}]),
-            ]) ]))]
-    #[case(&['l'], ReedlineEvent::Multiple(vec![ReedlineEvent::UntilFound(vec![
-                ReedlineEvent::HistoryHintComplete,
-                ReedlineEvent::MenuRight,
-                ReedlineEvent::Edit(vec![EditCommand::MoveRight{select:true}]),
-            ])]))]
+        ReedlineEvent::Edit(vec![EditCommand::MoveRight{select:true}]),
+        ReedlineEvent::Edit(vec![EditCommand::MoveRight{select:true}]),
+    ]))]
+    #[case(&['l'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveRight{select:true}])]))]
+    #[case(&['h'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveLeft{select:true}])]))]
     #[case(&['0'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Extend(MotionTarget::LineEdge(Direction::Backward))])]))]
     #[case(&['$'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Extend(MotionTarget::LineEdge(Direction::Forward))])]))]
     #[case(&['g', 'g'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Extend(MotionTarget::BufferEdge(Direction::Backward))])]))]

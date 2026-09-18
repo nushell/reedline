@@ -212,7 +212,8 @@ A WORD is whitespace-delimited, a word is not.
 
 In normal mode `h`, `j`, `k` and `l` carry the same fallback chain as the
 arrow keys: an open menu takes the key first, and `l` accepts a history hint
-before it moves. In visual mode `j` and `k` only extend by line.
+before it moves. In visual mode all four only extend, by grapheme or by line,
+as the arrow keys do there.
 
 #### Normal mode commands
 
