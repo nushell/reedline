@@ -11,6 +11,11 @@ pub struct CursorConfig {
     pub vi_insert: Option<SetCursorStyle>,
     /// The cursor to be used when in vi normal mode
     pub vi_normal: Option<SetCursorStyle>,
+    /// The cursor to be used when in vi visual mode. `None` follows
+    /// [`vi_normal`](Self::vi_normal) instead of leaving the cursor alone:
+    /// visual drew the normal shape before it had a slot, and a config that
+    /// only names `vi_normal` keeps that.
+    pub vi_visual: Option<SetCursorStyle>,
     /// The cursor to be used when in emacs mode
     pub emacs: Option<SetCursorStyle>,
     /// The cursor to be used when in hx insert mode

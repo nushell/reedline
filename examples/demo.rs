@@ -85,6 +85,7 @@ fn main() -> reedline::Result<()> {
         emacs: Some(SetCursorStyle::BlinkingBar),
         vi_insert: Some(SetCursorStyle::BlinkingBar),
         vi_normal: Some(SetCursorStyle::SteadyBlock),
+        vi_visual: Some(SetCursorStyle::SteadyUnderScore),
         hx_insert: Some(SetCursorStyle::BlinkingBar),
         hx_normal: Some(SetCursorStyle::SteadyBlock),
         hx_select: Some(SetCursorStyle::SteadyUnderScore),

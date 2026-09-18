@@ -831,7 +831,8 @@ impl Painter {
             let shape = match &prompt_mode {
                 PromptEditMode::Emacs => shapes.emacs,
                 PromptEditMode::Vi(PromptViMode::Insert) => shapes.vi_insert,
-                PromptEditMode::Vi(PromptViMode::Normal | PromptViMode::Visual) => shapes.vi_normal,
+                PromptEditMode::Vi(PromptViMode::Normal) => shapes.vi_normal,
+                PromptEditMode::Vi(PromptViMode::Visual) => shapes.vi_visual.or(shapes.vi_normal),
                 PromptEditMode::Helix(PromptHelixMode::Insert) => shapes.hx_insert,
                 PromptEditMode::Helix(PromptHelixMode::Normal) => shapes.hx_normal,
                 PromptEditMode::Helix(PromptHelixMode::Select) => shapes.hx_select,
@@ -1532,6 +1533,7 @@ mod tests {
     use super::*;
     use crate::menu::{MenuEvent, MenuSettings};
     use crate::{Color, Completer, Editor, PromptHistorySearch, Suggestion};
+    use crossterm::cursor::SetCursorStyle;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
     use std::borrow::Cow;
@@ -2278,6 +2280,40 @@ mod tests {
             p.last_required_lines,
             p.large_buffer,
         )
+    }
+
+    /// Vi visual has a cursor shape of its own. A config that leaves it unset
+    /// keeps the normal-mode shape, which is what visual drew before the slot
+    /// existed, so a host that only names `vi_normal` sees no change.
+    #[rstest]
+    #[case::its_own_shape(Some(SetCursorStyle::SteadyUnderScore), "\x1b[4 q")]
+    #[case::unset_follows_vi_normal(None, "\x1b[2 q")]
+    fn test_vi_visual_cursor_shape(
+        #[case] vi_visual: Option<SetCursorStyle>,
+        #[case] expected: &str,
+    ) {
+        let mut p = Painter::new(W::capture());
+        p.terminal_size = (20, 10);
+        p.prompt_start_row.mark_verified(0);
+        p.prompt_height = 1;
+        let shapes = Some(CursorConfig {
+            vi_normal: Some(SetCursorStyle::SteadyBlock),
+            vi_visual,
+            ..CursorConfig::default()
+        });
+
+        p.repaint_buffer(
+            &TestPrompt,
+            &make_lines(TEST_PROMPT, "", "", "abc", ""),
+            PromptEditMode::Vi(PromptViMode::Visual),
+            None,
+            false,
+            &shapes,
+        )
+        .expect("repaint_buffer failed");
+
+        let out = String::from_utf8_lossy(p.stdout.captured()).into_owned();
+        assert!(out.contains(expected), "cursor shape missing: {out:?}");
     }
 
     // #1145 made the exit erase unconditional, and `ClearType::FromCursorDown`
