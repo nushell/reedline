@@ -69,8 +69,9 @@ impl Vi {
     /// order insert, normal, visual.
     ///
     /// Visual no longer reads the normal table, so a binding meant for both
-    /// goes into both. [`default_vi_visual_keybindings`] starts out as a copy
-    /// of [`default_vi_normal_keybindings`].
+    /// goes into both. [`default_vi_visual_keybindings`] is the normal table
+    /// with its navigation keys rebound to extend the selection, so build a
+    /// custom visual table on top of it rather than on the normal one.
     pub fn new(
         insert_keybindings: Keybindings,
         normal_keybindings: Keybindings,
@@ -1246,6 +1247,108 @@ mod test {
         assert_eq!(
             vi.parse_event(key(KeyCode::Char('t'), KeyModifiers::CONTROL)),
             ReedlineEvent::ClearScreen
+        );
+    }
+
+    fn in_visual(code: KeyCode, modifiers: KeyModifiers) -> ReedlineEvent {
+        let mut vi = Vi {
+            mode: ViMode::Visual,
+            ..Default::default()
+        };
+        vi.parse_event(key(code, modifiers))
+    }
+
+    fn word_start(direction: Direction) -> MotionTarget {
+        MotionTarget::Word {
+            kind: crate::WordKind::Word,
+            edge: crate::WordEdge::Start,
+            direction,
+        }
+    }
+
+    /// A navigation key in visual extends like the modal key it stands for,
+    /// where the normal table's would collapse the selection and restart it.
+    #[rstest]
+    #[case::left_is_h(KeyCode::Left, KeyModifiers::NONE, EditCommand::MoveLeft { select: true })]
+    #[case::right_is_l(KeyCode::Right, KeyModifiers::NONE, EditCommand::MoveRight { select: true })]
+    #[case::backspace_is_h(KeyCode::Backspace, KeyModifiers::NONE, EditCommand::MoveLeft { select: true })]
+    #[case::up_is_k(KeyCode::Up, KeyModifiers::NONE, EditCommand::MoveLineUp { select: true })]
+    #[case::down_is_j(KeyCode::Down, KeyModifiers::NONE, EditCommand::MoveLineDown { select: true })]
+    #[case::ctrl_p_is_k(KeyCode::Char('p'), KeyModifiers::CONTROL, EditCommand::MoveLineUp { select: true })]
+    #[case::ctrl_n_is_j(KeyCode::Char('n'), KeyModifiers::CONTROL, EditCommand::MoveLineDown { select: true })]
+    #[case::ctrl_left_is_b(
+        KeyCode::Left,
+        KeyModifiers::CONTROL,
+        EditCommand::Extend(word_start(Direction::Backward))
+    )]
+    #[case::ctrl_right_is_w(
+        KeyCode::Right,
+        KeyModifiers::CONTROL,
+        EditCommand::Extend(word_start(Direction::Forward))
+    )]
+    #[case::home_is_0(
+        KeyCode::Home,
+        KeyModifiers::NONE,
+        EditCommand::Extend(MotionTarget::LineEdge(Direction::Backward))
+    )]
+    #[case::end_is_dollar(
+        KeyCode::End,
+        KeyModifiers::NONE,
+        EditCommand::Extend(MotionTarget::LineEdge(Direction::Forward))
+    )]
+    #[case::ctrl_a_is_0(
+        KeyCode::Char('a'),
+        KeyModifiers::CONTROL,
+        EditCommand::Extend(MotionTarget::LineEdge(Direction::Backward))
+    )]
+    #[case::ctrl_e_is_dollar(
+        KeyCode::Char('e'),
+        KeyModifiers::CONTROL,
+        EditCommand::Extend(MotionTarget::LineEdge(Direction::Forward))
+    )]
+    #[case::ctrl_home_is_gg(
+        KeyCode::Home,
+        KeyModifiers::CONTROL,
+        EditCommand::Extend(MotionTarget::BufferEdge(Direction::Backward))
+    )]
+    #[case::ctrl_end_is_g(
+        KeyCode::End,
+        KeyModifiers::CONTROL,
+        EditCommand::Extend(MotionTarget::BufferEdge(Direction::Forward))
+    )]
+    fn visual_navigation_keys_extend_the_selection(
+        #[case] code: KeyCode,
+        #[case] modifiers: KeyModifiers,
+        #[case] expected: EditCommand,
+    ) {
+        assert_eq!(
+            in_visual(code, modifiers),
+            ReedlineEvent::Edit(vec![expected])
+        );
+    }
+
+    /// `Delete` is `d`: it takes the selection and returns to normal, which a
+    /// table binding can only do through `SwitchMode`.
+    #[test]
+    fn visual_delete_cuts_the_selection_and_leaves_visual() {
+        assert_eq!(
+            in_visual(KeyCode::Delete, KeyModifiers::NONE),
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Edit(vec![EditCommand::CutSelection {
+                    granularity: crate::Granularity::CharWise
+                }]),
+                ReedlineEvent::SwitchMode(PromptEditMode::Vi(PromptViMode::Normal)),
+            ])
+        );
+    }
+
+    /// The visual table must not leak into normal, where an open menu takes
+    /// the arrows first and `Right` accepts a history hint.
+    #[test]
+    fn normal_mode_arrows_keep_menu_navigation() {
+        assert_eq!(
+            in_normal(KeyCode::Left, KeyModifiers::NONE),
+            ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuLeft, ReedlineEvent::Left])
         );
     }
 }

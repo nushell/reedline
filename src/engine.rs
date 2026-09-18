@@ -4652,6 +4652,33 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::SHIFT)
     }
 
+    /// The visual table's navigation keys grow the selection they are pressed
+    /// in, so the operator that follows takes all of it. `setup` starts from
+    /// `abcde` with `v` on `a`.
+    #[rstest]
+    #[case::right_then_d(&[key(KeyCode::Right), ch('d')], "cde")]
+    #[case::end_then_d(&[key(KeyCode::End), ch('d')], "")]
+    #[case::right_then_delete(&[key(KeyCode::Right), key(KeyCode::Delete)], "cde")]
+    fn vi_visual_navigation_keys_feed_the_operator(
+        #[case] keys: &[KeyEvent],
+        #[case] left_over: &str,
+    ) {
+        let mut rl = Reedline::create()
+            .with_edit_mode(Box::<crate::Vi>::default())
+            .with_validator(Box::new(crate::DefaultValidator));
+        rl.painter.force_prompt_anchored_for_test(0);
+
+        drive_until_signal(&mut rl, &[ch('a'), ch('b'), ch('c'), ch('d'), ch('e')]);
+        drive_until_signal(&mut rl, &[key(KeyCode::Esc), ch('0'), ch('v')]);
+        drive_until_signal(&mut rl, keys);
+
+        assert_eq!(rl.editor.get_buffer(), left_over);
+        assert_eq!(
+            rl.prompt_edit_mode(),
+            PromptEditMode::Vi(PromptViMode::Normal)
+        );
+    }
+
     /// `Esc` drops a selection without moving the caret. Under a bar caret the
     /// caret is the head on either side of the anchor; reading a forward head
     /// as a block's far edge would step it back a grapheme.
