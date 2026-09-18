@@ -2278,7 +2278,7 @@ mod tests {
     #[rstest]
     #[case::its_own_shape(Some(SetCursorStyle::SteadyUnderScore), "\x1b[4 q")]
     #[case::unset_follows_vi_normal(None, "\x1b[2 q")]
-    fn test_vi_visual_cursor_shape(
+    fn test_vi_visual_draws_its_own_cursor_shape(
         #[case] vi_visual: Option<SetCursorStyle>,
         #[case] expected: &str,
     ) {

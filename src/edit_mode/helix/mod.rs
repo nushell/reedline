@@ -169,9 +169,8 @@ impl EditMode for Helix {
         match event {
             ReedlineEvent::SwitchMode(PromptEditMode::Helix(target)) => {
                 // `dispatch` drops the sequence before a bound chord fires, so
-                // a binding never gets here with one armed. A host can send
-                // the event without a key though, so reset rather than lean on
-                // that from over here.
+                // no binding gets here with one armed. Reset anyway, rather
+                // than lean on that guarantee from over here.
                 self.pending = None;
                 self.count = None;
                 self.mode = HelixMode::from(target);

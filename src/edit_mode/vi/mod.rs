@@ -73,8 +73,7 @@ impl Vi {
         normal_keybindings: Keybindings,
         visual_keybindings: Keybindings,
     ) -> Self {
-        // Spelled out rather than `..Default::default()`, which would build
-        // the three default tables only to drop them.
+        // Every field is spelled out, since `Default` is built through here.
         Self {
             insert_keybindings,
             normal_keybindings,

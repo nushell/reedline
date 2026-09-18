@@ -284,9 +284,9 @@ the selection instead of replacing it.
 A count prefixes any modal key but `g`. Upstream reads `3gg` as "go to line
 3", which reedline has no target for yet, so a counted `g` is rejected and
 drops both the count and the `g`: `3gh` and `3gl` act as a bare `h` and `l`,
-and the second `g` of `3gg` starts an ordinary goto. A pending count sends the
-next key straight to the modal layer, bypassing the keybinding table, so
-`3Alt-d` is not `Alt-d` three times.
+and the second `g` of `3gg` starts an ordinary goto. A count only multiplies
+modal keys: a bound chord typed after one fires once and drops the count, so
+`3Alt-d` is `Alt-d` once, not three times.
 
 Descriptions follow
 [upstream's keymap](https://docs.helix-editor.com/keymap.html).
