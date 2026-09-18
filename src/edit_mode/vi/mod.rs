@@ -52,15 +52,11 @@ pub struct Vi {
 
 impl Default for Vi {
     fn default() -> Self {
-        Vi {
-            insert_keybindings: default_vi_insert_keybindings(),
-            normal_keybindings: default_vi_normal_keybindings(),
-            visual_keybindings: default_vi_visual_keybindings(),
-            cache: Vec::new(),
-            mode: ViMode::Insert,
-            previous: None,
-            last_char_search: None,
-        }
+        Self::new(
+            default_vi_insert_keybindings(),
+            default_vi_normal_keybindings(),
+            default_vi_visual_keybindings(),
+        )
     }
 }
 
@@ -68,20 +64,25 @@ impl Vi {
     /// Creates Vi editor using defined keybindings, one table per mode, in the
     /// order insert, normal, visual.
     ///
-    /// Visual no longer reads the normal table, so a binding meant for both
-    /// goes into both. [`default_vi_visual_keybindings`] is the normal table
-    /// with its navigation keys rebound to extend the selection, so build a
-    /// custom visual table on top of it rather than on the normal one.
+    /// Visual reads only its own table, so a binding meant for both goes into
+    /// both. [`default_vi_visual_keybindings`] is the normal table with its
+    /// navigation keys rebound to extend the selection, so build a custom
+    /// visual table on top of it rather than on the normal one.
     pub fn new(
         insert_keybindings: Keybindings,
         normal_keybindings: Keybindings,
         visual_keybindings: Keybindings,
     ) -> Self {
+        // Spelled out rather than `..Default::default()`, which would build
+        // the three default tables only to drop them.
         Self {
             insert_keybindings,
             normal_keybindings,
             visual_keybindings,
-            ..Default::default()
+            cache: Vec::new(),
+            mode: ViMode::Insert,
+            previous: None,
+            last_char_search: None,
         }
     }
 
@@ -1260,8 +1261,8 @@ mod test {
 
     fn word_start(direction: Direction) -> MotionTarget {
         MotionTarget::Word {
-            kind: crate::WordKind::Word,
-            edge: crate::WordEdge::Start,
+            kind: WordKind::Word,
+            edge: WordEdge::Start,
             direction,
         }
     }
@@ -1335,7 +1336,7 @@ mod test {
             in_visual(KeyCode::Delete, KeyModifiers::NONE),
             ReedlineEvent::Multiple(vec![
                 ReedlineEvent::Edit(vec![EditCommand::CutSelection {
-                    granularity: crate::Granularity::CharWise
+                    granularity: Granularity::CharWise
                 }]),
                 ReedlineEvent::SwitchMode(PromptEditMode::Vi(PromptViMode::Normal)),
             ])

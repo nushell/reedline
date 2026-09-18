@@ -34,9 +34,10 @@ pub fn default_vi_normal_keybindings() -> Keybindings {
 ///
 /// Normal's bindings move with `select: false`, which in visual drops the
 /// selection and starts a new one under the cursor, so here every key does
-/// what its modal twin does in visual. See
-/// [`add_extending_navigation_bindings`] for the rules the rebinding keeps;
-/// layer custom bindings onto this table rather than onto the normal one.
+/// what its modal twin does in visual. Up and Down never reach history and no
+/// key accepts a history hint, as in helix select, which shares the
+/// rebinding. Layer custom bindings onto this table rather than onto the
+/// normal one.
 pub fn default_vi_visual_keybindings() -> Keybindings {
     use EditCommand as EC;
     use KeyCode as KC;

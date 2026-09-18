@@ -1,6 +1,5 @@
 use crate::terminal_extensions::semantic_prompt::{PromptKind, SemanticPromptMarkers};
-use crate::PromptHelixMode;
-use crate::{CursorConfig, PromptEditMode, PromptViMode};
+use crate::{CursorConfig, PromptEditMode};
 
 use {
     super::utils::{
@@ -827,20 +826,11 @@ impl Painter {
         // neither.
         self.queue_cursor_placement(margin_cursor_row)?;
 
-        if let Some(shapes) = cursor_config {
-            let shape = match &prompt_mode {
-                PromptEditMode::Emacs => shapes.emacs,
-                PromptEditMode::Vi(PromptViMode::Insert) => shapes.vi_insert,
-                PromptEditMode::Vi(PromptViMode::Normal) => shapes.vi_normal,
-                PromptEditMode::Vi(PromptViMode::Visual) => shapes.vi_visual.or(shapes.vi_normal),
-                PromptEditMode::Helix(PromptHelixMode::Insert) => shapes.hx_insert,
-                PromptEditMode::Helix(PromptHelixMode::Normal) => shapes.hx_normal,
-                PromptEditMode::Helix(PromptHelixMode::Select) => shapes.hx_select,
-                _ => None,
-            };
-            if let Some(shape) = shape {
-                self.stdout.queue(shape)?;
-            }
+        let shape = cursor_config
+            .as_ref()
+            .and_then(|shapes| shapes.shape_for(&prompt_mode));
+        if let Some(shape) = shape {
+            self.stdout.queue(shape)?;
         }
         self.stdout.queue(cursor::Show)?;
 
@@ -1532,7 +1522,7 @@ impl Painter {
 mod tests {
     use super::*;
     use crate::menu::{MenuEvent, MenuSettings};
-    use crate::{Color, Completer, Editor, PromptHistorySearch, Suggestion};
+    use crate::{Color, Completer, Editor, PromptHistorySearch, PromptViMode, Suggestion};
     use crossterm::cursor::SetCursorStyle;
     use pretty_assertions::assert_eq;
     use rstest::rstest;

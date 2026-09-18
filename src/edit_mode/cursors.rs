@@ -1,3 +1,4 @@
+use crate::{PromptEditMode, PromptHelixMode, PromptViMode};
 use crossterm::cursor::SetCursorStyle;
 
 /// Maps cursor shapes to each edit mode (emacs, vi and helix).
@@ -24,4 +25,20 @@ pub struct CursorConfig {
     pub hx_normal: Option<SetCursorStyle>,
     /// The cursor to be used when in hx select mode
     pub hx_select: Option<SetCursorStyle>,
+}
+
+impl CursorConfig {
+    /// The shape to draw in `mode`, `None` to leave the cursor as it is.
+    pub(crate) fn shape_for(&self, mode: &PromptEditMode) -> Option<SetCursorStyle> {
+        match mode {
+            PromptEditMode::Emacs => self.emacs,
+            PromptEditMode::Vi(PromptViMode::Insert) => self.vi_insert,
+            PromptEditMode::Vi(PromptViMode::Normal) => self.vi_normal,
+            PromptEditMode::Vi(PromptViMode::Visual) => self.vi_visual.or(self.vi_normal),
+            PromptEditMode::Helix(PromptHelixMode::Insert) => self.hx_insert,
+            PromptEditMode::Helix(PromptHelixMode::Normal) => self.hx_normal,
+            PromptEditMode::Helix(PromptHelixMode::Select) => self.hx_select,
+            PromptEditMode::Default | PromptEditMode::Custom(_) => None,
+        }
+    }
 }

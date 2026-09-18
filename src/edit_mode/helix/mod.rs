@@ -231,14 +231,22 @@ impl Helix {
         // Insert should never use this code-path.
         debug_assert!(self.mode != HelixMode::Insert);
 
-        // A half-typed sequence claims the keys it could use: a character is a
-        // count digit or a pending argument, and a binding on one must not
-        // steal it. Anything else would only be rejected, so a chord bound in
-        // the table fires instead of being eaten and abandons the sequence,
+        // The table comes first, except for a key the machine claims:
+        // - `Esc` always reaches it, otherwise modes get stranded;
+        // - a plain `1`-`9` starts or continues a count;
+        // - a half-typed sequence takes any character, which is its next count
+        //   digit or its pending argument, so a binding cannot steal it.
+        // Anything else mid-sequence would only be rejected, so a chord bound
+        // in the table fires instead of being eaten and abandons the sequence,
         // which is how vi treats its own `cache`.
         let mid_sequence = self.pending.is_some() || self.count.is_some();
-        let sequence_can_use = matches!(key.code, KeyCode::Char(_) if is_text_char(key.modifiers));
-        if mid_sequence && !sequence_can_use && key.code != KeyCode::Esc {
+        let claimed = match key.code {
+            KeyCode::Esc => true,
+            KeyCode::Char('1'..='9') if key.modifiers == KeyModifiers::NONE => true,
+            KeyCode::Char(_) => mid_sequence && is_text_char(key.modifiers),
+            _ => false,
+        };
+        if !claimed {
             if let Some(event) = self.keybindings().find_binding(key.modifiers, key.code) {
                 self.pending = None;
                 self.count = None;
@@ -264,17 +272,8 @@ impl Helix {
                 );
                 return ReedlineEvent::None;
             }
-            // Do a table lookup, else use the helix machine,
-            // we don't handle insert mode in dispatch.
-            // Esc must always reach the machine, otherwise modes get stranded.
-            (None, code) => {
-                if self.count.is_none() && code != KeyCode::Esc {
-                    if let Some(event) = self.keybindings().find_binding(key.modifiers, code) {
-                        return event;
-                    }
-                }
-                interpret(self.mode, self.count, key)
-            }
+            // Unbound or claimed, so the helix machine reads it.
+            (None, _) => interpret(self.mode, self.count, key),
         };
 
         match outcome {

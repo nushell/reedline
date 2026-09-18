@@ -4497,11 +4497,9 @@ mod tests {
             KeyCode::Char('h'),
             ReedlineEvent::SwitchMode(PromptEditMode::Helix(PromptHelixMode::Normal)),
         );
-        let mut rl = Reedline::create()
-            .with_edit_mode(Box::new(crate::Emacs::new(emacs)))
+        let mut rl = seam_engine(Box::new(crate::Emacs::new(emacs)))
             .with_additional_edit_mode(Box::<crate::Helix>::default())
             .with_validator(Box::new(crate::DefaultValidator));
-        rl.painter.force_prompt_anchored_for_test(0);
 
         drive_until_signal(&mut rl, &[ch('a'), ch('b'), ch('c'), ctrl('h')]);
         assert_eq!(
@@ -4526,13 +4524,11 @@ mod tests {
             KeyCode::Char('z'),
             ReedlineEvent::SwitchMode(PromptEditMode::Emacs),
         );
-        let mut rl = Reedline::create()
-            .with_edit_mode(Box::new(
-                crate::Helix::default().with_normal_keybindings(normal),
-            ))
-            .with_additional_edit_mode(Box::<crate::Emacs>::default())
-            .with_validator(Box::new(crate::DefaultValidator));
-        rl.painter.force_prompt_anchored_for_test(0);
+        let mut rl = seam_engine(Box::new(
+            crate::Helix::default().with_normal_keybindings(normal),
+        ))
+        .with_additional_edit_mode(Box::<crate::Emacs>::default())
+        .with_validator(Box::new(crate::DefaultValidator));
 
         let signal = drive_until_signal(
             &mut rl,
@@ -4569,16 +4565,14 @@ mod tests {
             KeyCode::Char('v'),
             ReedlineEvent::SwitchMode(PromptEditMode::Vi(PromptViMode::Normal)),
         );
-        let mut rl = Reedline::create()
-            .with_edit_mode(Box::new(crate::Vi::new(
-                vi_insert,
-                crate::default_vi_normal_keybindings(),
-                crate::default_vi_visual_keybindings(),
-            )))
-            .with_additional_edit_mode(Box::new(
-                crate::Helix::default().with_normal_keybindings(helix_normal),
-            ));
-        rl.painter.force_prompt_anchored_for_test(0);
+        let mut rl = seam_engine(Box::new(crate::Vi::new(
+            vi_insert,
+            crate::default_vi_normal_keybindings(),
+            crate::default_vi_visual_keybindings(),
+        )))
+        .with_additional_edit_mode(Box::new(
+            crate::Helix::default().with_normal_keybindings(helix_normal),
+        ));
 
         drive_until_signal(&mut rl, &[ch('a'), ctrl('h')]);
         assert_eq!(
@@ -4633,11 +4627,9 @@ mod tests {
                 bind(crate::default_vi_visual_keybindings()),
             ))
         };
-        let mut rl = Reedline::create()
-            .with_edit_mode(machine)
+        let mut rl = seam_engine(machine)
             .with_additional_edit_mode(Box::<crate::Emacs>::default())
             .with_validator(Box::new(crate::DefaultValidator));
-        rl.painter.force_prompt_anchored_for_test(0);
 
         drive_until_signal(&mut rl, &[ch('a'), ch('b'), ch('c'), ch('d')]);
         drive_until_signal(&mut rl, setup);
@@ -4653,8 +4645,8 @@ mod tests {
     }
 
     /// The visual table's navigation keys grow the selection they are pressed
-    /// in, so the operator that follows takes all of it. `setup` starts from
-    /// `abcde` with `v` on `a`.
+    /// in, so the operator that follows takes all of it. Starts from `abcde`
+    /// with `v` on `a`.
     #[rstest]
     #[case::right_then_d(&[key(KeyCode::Right), ch('d')], "cde")]
     #[case::end_then_d(&[key(KeyCode::End), ch('d')], "")]
@@ -4663,10 +4655,8 @@ mod tests {
         #[case] keys: &[KeyEvent],
         #[case] left_over: &str,
     ) {
-        let mut rl = Reedline::create()
-            .with_edit_mode(Box::<crate::Vi>::default())
+        let mut rl = seam_engine(Box::<crate::Vi>::default())
             .with_validator(Box::new(crate::DefaultValidator));
-        rl.painter.force_prompt_anchored_for_test(0);
 
         drive_until_signal(&mut rl, &[ch('a'), ch('b'), ch('c'), ch('d'), ch('e')]);
         drive_until_signal(&mut rl, &[key(KeyCode::Esc), ch('0'), ch('v')]);
@@ -4730,11 +4720,9 @@ mod tests {
             KeyCode::Char('n'),
             ReedlineEvent::SwitchMode(PromptEditMode::Vi(PromptViMode::Normal)),
         );
-        let mut rl = Reedline::create()
-            .with_edit_mode(Box::new(crate::Emacs::new(emacs)))
+        let mut rl = seam_engine(Box::new(crate::Emacs::new(emacs)))
             .with_additional_edit_mode(Box::<crate::Vi>::default())
             .with_validator(Box::new(crate::DefaultValidator));
-        rl.painter.force_prompt_anchored_for_test(0);
 
         drive_until_signal(&mut rl, &[ch('a'), ch('b'), ch('c'), ch('d'), ch('e')]);
         drive_until_signal(&mut rl, &[key(KeyCode::Left)]);
@@ -4805,20 +4793,15 @@ mod tests {
                 bind(crate::default_vi_visual_keybindings()),
             ))
         };
-        let mut rl = Reedline::create()
-            .with_edit_mode(machine)
+        let mut rl = seam_engine(machine)
             .with_additional_edit_mode(Box::<crate::Emacs>::default())
             .with_validator(Box::new(crate::DefaultValidator));
-        rl.painter.force_prompt_anchored_for_test(0);
 
         drive_until_signal(&mut rl, &[ch('a'), ch('b'), ch('c'), ch('d')]);
         drive_until_signal(&mut rl, setup);
         assert_eq!(rl.editor.insertion_point(), 2, "setup: caret on `c`");
 
-        drive_until_signal(
-            &mut rl,
-            &[KeyEvent::new(KeyCode::Char('t'), KeyModifiers::ALT)],
-        );
+        drive_until_signal(&mut rl, &[alt('t')]);
         assert_eq!(rl.prompt_edit_mode(), target);
         assert_eq!(rl.editor.get_selection(), None);
         assert_eq!(rl.editor.insertion_point(), 2);
@@ -4886,8 +4869,7 @@ mod tests {
                 ReedlineEvent::Edit(vec![EditCommand::InsertString("!".into())]),
             ]),
         );
-        let mut rl = Reedline::create().with_edit_mode(Box::new(crate::Emacs::new(emacs)));
-        rl.painter.force_prompt_anchored_for_test(0);
+        let mut rl = seam_engine(Box::new(crate::Emacs::new(emacs)));
 
         drive_until_signal(&mut rl, &[ctrl('h')]);
         assert_eq!(rl.prompt_edit_mode(), PromptEditMode::Emacs);
@@ -4904,11 +4886,9 @@ mod tests {
             KeyCode::Char('h'),
             ReedlineEvent::SwitchMode(PromptEditMode::Helix(PromptHelixMode::Normal)),
         );
-        let mut rl = Reedline::create()
-            .with_edit_mode(Box::new(crate::Emacs::new(emacs)))
+        let mut rl = seam_engine(Box::new(crate::Emacs::new(emacs)))
             .with_additional_edit_mode(Box::<crate::Helix>::default())
             .clear_edit_modes();
-        rl.painter.force_prompt_anchored_for_test(0);
 
         assert!(rl.standby_edit_modes.is_empty());
         drive_until_signal(&mut rl, &[ctrl('h')]);
