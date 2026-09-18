@@ -10,7 +10,6 @@ use std::{
     collections::VecDeque,
     fs::OpenOptions,
     io::{BufRead, BufReader, BufWriter, Seek, SeekFrom, Write},
-    ops::{Deref, DerefMut},
     path::PathBuf,
 };
 
@@ -221,17 +220,16 @@ impl History for FileBackedHistory {
                 std::fs::create_dir_all(base_dir)?;
             }
 
-            let mut f_lock = fd_lock::RwLock::new(
-                OpenOptions::new()
-                    .create(true)
-                    .write(true)
-                    .read(true)
-                    .truncate(false)
-                    .open(fname)?,
-            );
-            let mut writer_guard = f_lock.write()?;
+            let mut file = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .read(true)
+                .truncate(false)
+                .open(fname)?;
+
+            file.lock()?;
             let (mut foreign_entries, truncate) = {
-                let reader = BufReader::new(writer_guard.deref());
+                let reader = BufReader::new(&file);
                 let mut from_file = reader
                     .lines()
                     .map(|o| o.map(|i| decode_entry(&i)))
@@ -249,7 +247,7 @@ impl History for FileBackedHistory {
             };
 
             {
-                let mut writer = BufWriter::new(writer_guard.deref_mut());
+                let mut writer = BufWriter::new(&file);
                 if truncate {
                     writer.rewind()?;
 
@@ -267,7 +265,6 @@ impl History for FileBackedHistory {
                 writer.flush()?;
             }
             if truncate {
-                let file = writer_guard.deref_mut();
                 let file_len = file.stream_position()?;
                 file.set_len(file_len)?;
             }
