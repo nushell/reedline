@@ -1344,11 +1344,11 @@ impl Painter {
         // doesn't reset the cursor position — possibly a `position()`
         // bug.
         //
-        // Read directly rather than via `measure_cursor_position`: `height`
-        // came from the resize event, and this read can beat the terminal's own
-        // clamp into the new screen, so growing on it would undo a shrink.
-        if let Ok(Some((_, cursor_row))) = cursor_position_for_term(&self.stdout, self.term_is_dumb)
-        {
+        // Measured, so the row raises a `height` that under-reports: the next
+        // paint takes this row as verified and never asks again, which leaves
+        // this read as the only proof of the height until the next reported
+        // size.
+        if let Ok(Some((_, cursor_row))) = self.measure_cursor_position() {
             self.prompt_start_row = PromptStartRow::Resized { cursor_row };
         }
     }
@@ -1947,8 +1947,8 @@ mod tests {
     }
 
     /// Paint `buffer` against a screen believed to be `believed_height` tall,
-    /// from a stale anchor at `cursor_row` — the state a resize leaves, and the
-    /// one path where a paint measures the cursor itself.
+    /// from a stale anchor at `cursor_row`, the one path where a paint measures
+    /// the cursor itself.
     ///
     /// Returns the anchor after each paint, the final believed height, and
     /// whether it took the large-buffer branch.
@@ -1975,7 +1975,7 @@ mod tests {
 
         let anchors = (0..paints)
             .map(|_| {
-                // Every paint re-enters through the reconcile, as a resize does.
+                // Every paint re-enters through the reconcile.
                 painter.prompt_start_row = PromptStartRow::Stale(anchor_row);
                 let lines = make_lines(TEST_PROMPT, "", "", buffer, "");
                 painter
@@ -2009,6 +2009,36 @@ mod tests {
         assert_eq!(anchors, vec![35; 4], "prompt walked up the screen");
         assert_eq!(height, 36, "measured row 35 did not raise the height");
         assert!(!large_buffer);
+    }
+
+    // The same under-reporting winsize, arriving as a resize event. A resize
+    // records the cursor row and the next paint takes it as verified, so that
+    // paint never measures: the recorded row is the only proof of the height.
+    #[test]
+    fn test_prompt_does_not_climb_after_a_resize_that_under_reports() {
+        let mut painter = Painter::new(W::sink_with_cursor_at((0, 35)));
+        painter.handle_resize(80, 10);
+
+        let anchors: Vec<u16> = (0..4)
+            .map(|_| {
+                let lines = make_lines(TEST_PROMPT, "", "", "show", "");
+                painter
+                    .repaint_buffer(
+                        &TestPrompt,
+                        &lines,
+                        PromptEditMode::Default,
+                        None,
+                        false,
+                        &None,
+                    )
+                    .expect("repaint_buffer failed");
+                painter.prompt_start_row.last_known_row()
+            })
+            .collect();
+
+        assert_eq!(anchors, vec![35; 4], "prompt walked up the screen");
+        assert_eq!(painter.screen_height(), 36);
+        assert!(!painter.large_buffer);
     }
 
     // An accurately reported screen is untouched: the cursor is already inside
