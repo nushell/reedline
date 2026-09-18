@@ -1,6 +1,5 @@
 use std::{collections::HashMap, ops::ControlFlow, path::PathBuf};
 
-use itertools::Itertools;
 use nu_ansi_term::{Color, Style};
 
 use crate::{enums::ReedlineRawEvent, CursorConfig};
@@ -740,7 +739,7 @@ impl Reedline {
     #[must_use]
     pub fn with_buffer_editor(mut self, editor: Command, temp_file: PathBuf) -> Self {
         let mut editor = editor;
-        if !editor.get_args().contains(&temp_file.as_os_str()) {
+        if !editor.get_args().any(|arg| arg == temp_file.as_os_str()) {
             editor.arg(&temp_file);
         }
         self.buffer_editor = Some(BufferEditor {
