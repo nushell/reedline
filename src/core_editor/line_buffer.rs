@@ -196,6 +196,15 @@ impl LineBuffer {
         self.lines[..self.cursor.head()].matches('\n').count()
     }
 
+    /// Calculates the grapheme index in the line the cursor head is on.
+    ///
+    /// Zero-based index
+    pub fn col(&self) -> usize {
+        self.lines[self.line_start_index()..self.cursor.head()]
+            .grapheme_indices(true)
+            .count()
+    }
+
     /// Counts the number of lines in the buffer
     pub fn num_lines(&self) -> usize {
         self.lines.split('\n').count()
