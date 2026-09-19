@@ -29,6 +29,11 @@ pub fn default_vi_normal_keybindings() -> Keybindings {
     kb
 }
 
+/// Default Vi visual keybindings, a copy of the normal table.
+pub fn default_vi_visual_keybindings() -> Keybindings {
+    default_vi_normal_keybindings()
+}
+
 /// Default Vi insert keybindings
 pub fn default_vi_insert_keybindings() -> Keybindings {
     let mut kb = Keybindings::new();

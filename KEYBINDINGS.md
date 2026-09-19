@@ -17,7 +17,10 @@ that applies. The tables write those with "otherwise".
 Vi and Helix add a modal layer, but the tables come first: a plain character
 is looked up as a binding and only reaches the modal grammar when it is
 unbound. A half-typed vi or helix sequence is the exception and claims the
-next key before any table.
+next character before any table, so a binding on a letter cannot take the
+argument of `f`. A key the sequence has no use for still reaches the table,
+and a binding found there fires and abandons the sequence: any non-character
+key in both, and in helix also a `Ctrl` or `Alt` chord.
 
 ## Common bindings
 
@@ -165,6 +168,11 @@ and `Alt-d` leaves insert and starts a `d` operator. `Ctrl-w` deletes a word
 left without cutting it.
 
 ### Normal and visual mode
+
+Normal and visual each have a keybinding table of their own,
+`default_vi_normal_keybindings()` and `default_vi_visual_keybindings()`. The
+defaults are identical, which is why they share this section, but a binding
+added to one does not reach the other.
 
 The control, navigation and selection sets, but not editing. In its place:
 

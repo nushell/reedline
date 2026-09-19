@@ -451,8 +451,10 @@ impl Editor {
         // anchor: under `Block` the stored head sits on the far edge, so dropping
         // the anchor alone would strand the cursor one grapheme past where it
         // shows. Collapsing to `point(caret)` keeps it put; the commit boundary
-        // re-widens it under the active policy.
-        let caret = self.line_buffer.insertion_point();
+        // re-widens it under the active policy. The caret is the editor's
+        // policy-aware one: the line buffer's always reads block geometry, which
+        // under a bar steps a forward head back a grapheme.
+        let caret = self.insertion_point();
         self.line_buffer.set_cursor(Cursor::point(caret));
     }
 

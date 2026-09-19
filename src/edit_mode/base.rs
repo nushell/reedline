@@ -14,7 +14,22 @@ pub trait EditMode: Send {
     /// What to display in the prompt indicator
     fn edit_mode(&self) -> PromptEditMode;
 
-    /// Handles events that apply only to specific edit modes (e.g changing vi mode)
+    /// Handles events that apply only to specific edit modes.
+    ///
+    /// This is also how a [`ReedlineEvent::SwitchMode`] finds its machine. The
+    /// engine offers the target to the active mode and then to every standby
+    /// registered with `Reedline::with_additional_edit_mode`, and activates the
+    /// first one to answer `EventStatus::Handled`. So a mode has to:
+    ///
+    /// - answer `Handled` for every [`PromptEditMode`] it can report from
+    ///   [`edit_mode`](Self::edit_mode), moving into that state and dropping
+    ///   any half-typed sequence, or no binding can ever reach it;
+    /// - answer `Inapplicable` for everything else *without changing state*,
+    ///   since a standby that declines stays a standby and would otherwise be
+    ///   left altered by a switch that went elsewhere.
+    ///
+    /// The default declines everything, which suits a mode that is only ever
+    /// the active one.
     ///
     /// Only the machine's own state changes here. Any cursor repair the flip
     /// implies is the engine's job, stated over the rest policy the mode maps
