@@ -952,7 +952,7 @@ impl EditCommand {
 
             EditCommand::AddTextObject { .. }
             | EditCommand::RemoveTextObject { .. }
-            | EditCommand::ReplaceTextObject { .. } => EditType::MoveCursor { select: true },
+            | EditCommand::ReplaceTextObject { .. } => EditType::EditText,
 
             // The six MotionTarget verbs. `Move`/`Extend` carry the old `select`
             // bool in the verb itself (Extend must be `select: true` so the editor
