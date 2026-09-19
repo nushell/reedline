@@ -379,7 +379,13 @@ impl Editor {
                     | EditCommand::LowercaseSelection
                     | EditCommand::UppercaseSelection
                     | EditCommand::SwitchcaseSelection
-            ) && self.edit_mode.retains_selection_after_edit());
+            ) && self.edit_mode.retains_selection_after_edit())
+            || matches!(
+                command,
+                EditCommand::ReplaceTextObject { .. }
+                    | EditCommand::CutTextObject { .. }
+                    | EditCommand::CopyTextObject { .. }
+            );
         if !leaves_selection {
             self.clear_selection();
         }
@@ -387,12 +393,6 @@ impl Editor {
         self.commit_cursor();
 
         let new_undo_behavior = match (command, command.edit_type()) {
-            (
-                EditCommand::AddTextObject { .. }
-                | EditCommand::RemoveTextObject { .. }
-                | EditCommand::ReplaceTextObject { .. },
-                EditType::MoveCursor { .. },
-            ) => UndoBehavior::CreateUndoPoint,
             (_, EditType::MoveCursor { .. }) => UndoBehavior::MoveCursor,
             (EditCommand::InsertChar(c), EditType::EditText) => UndoBehavior::InsertCharacter(*c),
             (EditCommand::Delete, EditType::EditText) => {
