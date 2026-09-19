@@ -66,7 +66,7 @@ pub enum TextObjectQuote {
     DoubleQuote,
     /// \`
     Tick,
-    /// (, ), \[, ], {, }, <, >
+    /// ', ", \`
     All,
 }
 
