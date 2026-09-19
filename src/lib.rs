@@ -257,7 +257,8 @@ mod enums;
 pub use enums::{
     Direction, EditCommand, EditCommandDiscriminants, FindStop, Granularity, MotionTarget,
     MouseButton, ReedlineEvent, ReedlineEventDiscriminants, ReedlineRawEvent, Signal, TextObject,
-    TextObjectScope, TextObjectType, UndoBehavior, WordEdge, WordKind,
+    TextObjectBracket, TextObjectQuote, TextObjectScope, TextObjectType, UndoBehavior, WordEdge,
+    WordKind,
 };
 
 mod painting;
