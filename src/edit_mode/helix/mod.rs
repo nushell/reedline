@@ -386,6 +386,15 @@ fn complete_pending(pending: Pending, count: usize, key: KeyEvent) -> Outcome {
             if matches!(action, MatchAction::Replace) {
                 return Outcome::Absorb(Pending::MatchReplace(text_object));
             }
+            if matches!(
+                (action, text_object),
+                (
+                    MatchAction::Set | MatchAction::Delete | MatchAction::Replace,
+                    TextObjectType::Word | TextObjectType::BigWord
+                )
+            ) {
+                return Outcome::Reject;
+            }
             exec(
                 count,
                 Verb::Match(Match {
