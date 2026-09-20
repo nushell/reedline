@@ -2184,4 +2184,28 @@ mod test {
         // Verify buffer remains valid after operations
         assert!(buf.is_valid());
     }
+    // The head sits on opposite ends for the two directions, so this pins that
+    // the collapse lands on the start of the deleted range either way.
+    #[rstest]
+    #[case::forward("foo bar baz", Cursor::new(4, 7), "foo  baz", 4)]
+    #[case::backward("foo bar baz", Cursor::new(7, 4), "foo  baz", 4)]
+    #[case::forward_multibyte("aäöb", Cursor::new(1, 5), "ab", 1)]
+    #[case::backward_multibyte("aäöb", Cursor::new(5, 1), "ab", 1)]
+    #[case::to_buffer_end("foo bar", Cursor::new(4, 7), "foo ", 4)]
+    #[case::point_is_a_no_op("foo bar", Cursor::point(3), "foo bar", 3)]
+    fn delete_selection_collapses_to_range_start(
+        #[case] input: &str,
+        #[case] cursor: Cursor,
+        #[case] expected_buffer: &str,
+        #[case] expected_position: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_cursor(cursor);
+
+        line_buffer.delete_selection();
+
+        assert_eq!(line_buffer.get_buffer(), expected_buffer);
+        assert_eq!(line_buffer.cursor(), Cursor::point(expected_position));
+        line_buffer.assert_valid();
+    }
 }
