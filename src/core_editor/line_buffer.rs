@@ -161,6 +161,30 @@ impl LineBuffer {
         self.cursor = Cursor::point(self.insertion_point());
     }
 
+    /// The selected byte range, ascending, or `None` for a point cursor.
+    pub(crate) fn get_selection(&self) -> Option<(usize, usize)> {
+        // `None` exactly when the cursor is empty (head == anchor): with the
+        // collapsed `Cursor` storage, `selection_anchor()` is derived from
+        // `!is_empty()`, so an anchor on the head is simply no selection.
+        self.selection_anchor()?;
+        let cursor = self.cursor();
+
+        // Inclusivity is geometric (widened by put_cursor).
+        Some((cursor.start(), cursor.end().min(self.len())))
+    }
+
+    /// Deletes the selected text, if any, and leaves a point cursor where it was.
+    ///
+    /// Collapses with [`collapse_to_caret`](Self::collapse_to_caret), not
+    /// [`clear_selection`](Self::clear_selection): that one collapses to the
+    /// head, which under `Block` sits one grapheme past the visible position.
+    pub(crate) fn delete_selection(&mut self) {
+        if let Some((start, end)) = self.get_selection() {
+            self.clear_range_safe(start..end);
+            self.collapse_to_caret();
+        }
+    }
+
     /// Moves the cursor head to `pos`. If `select` is true, preserves any
     /// existing selection anchor (or plants one at the current head if none
     /// exists). If `select` is false, clears the selection.
