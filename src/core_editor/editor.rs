@@ -4382,6 +4382,60 @@ mod test {
         let result = editor.get_buffer();
         assert_eq!(result, expected_output);
     }
+
+    #[rstest]
+    // `[]` => `[]`
+    #[case("", Cursor::new(0, 0), Cursor::new(0, 0))]
+    // Quick test of commit_cursor
+    #[case("", Cursor::new(0, 1), Cursor::new(0, 0))]
+    // `[{}]` => `[]`
+    #[case("{}", Cursor::new(0, 1), Cursor::new(0, 0))]
+    // `]{}[` => `[]`
+    #[case("{}", Cursor::new(1, 0), Cursor::new(0, 0))]
+    // `abc[{}]def` => `ab[c]def`
+    #[case("abc{}def", Cursor::new(3, 4), Cursor::new(2, 2))]
+    // `[abc]` => `[abc]`
+    #[case("abc", Cursor::new(0, 2), Cursor::new(0, 2))]
+    // `]abc[` => `]abc[`
+    #[case("abc", Cursor::new(2, 0), Cursor::new(2, 0))]
+    // `{[abc]}` => `[abc]`
+    #[case("{abc}", Cursor::new(1, 3), Cursor::new(0, 2))]
+    // `[{abc}]` => `[abc]`
+    #[case("{abc}", Cursor::new(0, 4), Cursor::new(0, 2))]
+    // `[abc]{def}ghi` => `[abc]{def}ghi`
+    #[case("abc{def}ghi", Cursor::new(0, 2), Cursor::new(0, 2))]
+    // `abc{[def]}ghi` => `abc[def]ghi`
+    #[case("abc{def}ghi", Cursor::new(4, 6), Cursor::new(3, 5))]
+    // `abc{]def[}ghi` => `abc]def[ghi`
+    #[case("abc{def}ghi", Cursor::new(6, 4), Cursor::new(5, 3))]
+    // `abc{def}[ghi]` => `abc{def}[ghi]`
+    #[case("abc{def}ghi", Cursor::new(8, 10), Cursor::new(8, 10))]
+    // `[abc{def}ghi]` => `[abc{def}ghi]`
+    #[case("abc{def}ghi", Cursor::new(0, 10), Cursor::new(0, 10))]
+    // `]abc{def}ghi[` => `]abc{def}ghi[`
+    #[case("abc{def}ghi", Cursor::new(10, 0), Cursor::new(10, 0))]
+    // `abc[{def}]ghi` => `abc[def]ghi`
+    #[case("abc{def}ghi", Cursor::new(3, 7), Cursor::new(3, 5))]
+    // `abc{d[ef}gh]i` => `abc{d[ef}gh]i`
+    // Note : only the head inside a text object can remove the text object
+    #[case("abc{def}ghi", Cursor::new(5, 9), Cursor::new(5, 9))]
+    // `a[bc{de]f}ghi` => `a[bcde]fghi`
+    #[case("abc{def}ghi", Cursor::new(1, 5), Cursor::new(1, 4))]
+    // `abc{de]f}gh[i` => `abcde]fgh[i`
+    #[case("abc{def}ghi", Cursor::new(9, 5), Cursor::new(7, 4))]
+    fn test_selection_after_removing_text_object(
+        #[case] input: &str,
+        #[case] input_cursor: Cursor,
+        #[case] expected_cursor: Cursor,
+    ) {
+        let mut editor = editor_with(input);
+        editor.place(input_cursor);
+
+        editor.remove_text_object(TextObjectType::Brackets(TextObjectBracket::CurlyBracket));
+        let result = editor.line_buffer().cursor();
+        assert_eq!(result, expected_cursor);
+    }
+
     #[rstest]
     #[case(
         "",
