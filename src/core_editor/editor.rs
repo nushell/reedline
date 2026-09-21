@@ -1787,10 +1787,10 @@ impl Editor {
             _ => return,
         };
         let cursor = self.line_buffer.cursor();
-        let cursor_left = cursor.with_direction(super::cursor::Direction::Forward);
-        self.line_buffer.set_cursor(cursor_left);
+        let cursor_forward = cursor.with_direction(super::cursor::Direction::Forward);
+        self.line_buffer.set_cursor(cursor_forward);
         self.line_buffer.insert_char(pair.1);
-        self.line_buffer.set_cursor(cursor_left.flip());
+        self.line_buffer.set_cursor(cursor_forward.flip());
         self.line_buffer.insert_char(pair.0);
         self.place(Cursor::new(cursor.anchor() + 1, cursor.head() + 1));
     }
