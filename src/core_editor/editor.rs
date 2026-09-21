@@ -1768,6 +1768,9 @@ impl Editor {
             TextObjectType::Quotes(quote_type) => {
                 self.quote_text_object_range(text_object.scope, quote_type)
             }
+            TextObjectType::Pair { left, right } => {
+                self.matching_pair_group_text_object_range(text_object.scope, &[(left, right)])
+            }
         }
     }
 
@@ -1792,6 +1795,7 @@ impl Editor {
             TextObjectType::Quotes(TextObjectQuote::SingleQuote) => ('\'', '\''),
             TextObjectType::Quotes(TextObjectQuote::DoubleQuote) => ('"', '"'),
             TextObjectType::Quotes(TextObjectQuote::Tick) => ('`', '`'),
+            TextObjectType::Pair { left, right } => (left, right),
             _ => return,
         };
         let cursor = self.line_buffer.cursor();
@@ -1804,10 +1808,7 @@ impl Editor {
     }
 
     fn remove_text_object(&mut self, text_object: TextObjectType) {
-        if !matches!(
-            text_object,
-            TextObjectType::Brackets(_) | TextObjectType::Quotes(_)
-        ) {
+        if matches!(text_object, TextObjectType::Word | TextObjectType::BigWord) {
             return;
         }
         let cursor = self.line_buffer.cursor();
@@ -1838,11 +1839,11 @@ impl Editor {
         self.place(new_cursor);
     }
     fn replace_text_object(&mut self, old: TextObjectType, new: TextObjectType) {
-        if !matches!(
+        if matches!(
             (old, new),
             (
-                TextObjectType::Brackets(_) | TextObjectType::Quotes(_),
-                TextObjectType::Brackets(_) | TextObjectType::Quotes(_)
+                TextObjectType::Word | TextObjectType::BigWord,
+                TextObjectType::Word | TextObjectType::BigWord
             )
         ) {
             return;
