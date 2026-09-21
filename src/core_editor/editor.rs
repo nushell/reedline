@@ -1811,16 +1811,22 @@ impl Editor {
             self.line_buffer.set_cursor(cursor);
             return;
         };
+        let range = range.start - 1..range.end;
         self.line_buffer.clear_range(range.end..range.end + 1);
-        self.line_buffer.clear_range(range.start - 1..range.start);
-        let new_cursor = Cursor::new(
-            if cursor.anchor() > range.start {
-                cursor.anchor() - 1
-            } else {
-                cursor.anchor()
-            },
-            cursor.head() - 1,
-        );
+        self.line_buffer.clear_range(range.start..range.start + 1);
+        let is_range_empty = (range.end - range.start) == 1;
+        let anchor = cursor
+            .anchor()
+            .saturating_sub(
+                (cursor.anchor() > range.start || cursor.anchor() == range.start && is_range_empty)
+                    as usize,
+            )
+            .saturating_sub((cursor.anchor() >= range.end) as usize);
+        let head = cursor
+            .head()
+            .saturating_sub((cursor.head() > range.start || is_range_empty) as usize)
+            .saturating_sub((cursor.head() == range.end) as usize);
+        let new_cursor = Cursor::new(anchor, head);
         self.place(new_cursor);
     }
     fn replace_text_object(&mut self, old: TextObjectType, new: TextObjectType) {
