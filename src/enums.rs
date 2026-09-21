@@ -96,6 +96,8 @@ pub enum TextObjectType {
     Brackets(TextObjectBracket),
     /// Quotes pairs (`"`, `'`, `\``)
     Quotes(TextObjectQuote),
+    /// Custom pair
+    Pair { left: char, right: char },
 }
 
 impl TextObjectType {
@@ -111,6 +113,10 @@ impl TextObjectType {
             '"' => Some(Self::Quotes(TextObjectQuote::DoubleQuote)),
             '\'' => Some(Self::Quotes(TextObjectQuote::SingleQuote)),
             '`' => Some(Self::Quotes(TextObjectQuote::Tick)),
+            _ if !ch.is_ascii_control() && ch.is_ascii() => Some(Self::Pair {
+                left: ch,
+                right: ch,
+            }),
             _ => None,
         }
     }
