@@ -1778,10 +1778,7 @@ impl Reedline {
                         invalidate_anchor_if_host_completer_runs(menu, &mut self.painter);
                     }
                 }
-                Ok(match status {
-                    EditCommandStatus::Applied => EventStatus::Handled,
-                    EditCommandStatus::Inapplicable => EventStatus::Inapplicable,
-                })
+                Ok(status.into())
             }
             ReedlineEvent::OpenEditor => self.open_editor().map(|_| EventStatus::Handled),
             ReedlineEvent::Resize(width, height) => {
@@ -1801,18 +1798,15 @@ impl Reedline {
                 self.next_history()?;
                 Ok(EventStatus::Handled)
             }
-            ReedlineEvent::Up => Ok(self.up_command()?),
-            ReedlineEvent::Down => Ok(self.down_command()?),
+            ReedlineEvent::Up => self.up_command(),
+            ReedlineEvent::Down => self.down_command(),
             ReedlineEvent::Left | ReedlineEvent::Right => {
                 let command = if event == ReedlineEvent::Left {
                     EditCommand::MoveLeft { select: false }
                 } else {
                     EditCommand::MoveRight { select: false }
                 };
-                Ok(match self.run_edit_commands_with_status(&[command]) {
-                    EditCommandStatus::Applied => EventStatus::Handled,
-                    EditCommandStatus::Inapplicable => EventStatus::Inapplicable,
-                })
+                Ok(self.run_edit_commands_with_status(&[command]).into())
             }
             ReedlineEvent::ToStart | ReedlineEvent::ToEnd => {
                 let initial_cursor = self.editor.line_buffer().cursor();
@@ -2238,17 +2232,14 @@ impl Reedline {
         // If we're at the top, then:
         if self.editor.is_cursor_at_first_line() {
             // If we're at the top, move to previous history
-            self.moved_by(Self::previous_history)
+            self.walk_and_report(Self::previous_history)
         } else {
             // Through `apply_edit_commands` so the cursor settles under the mode's
             // rest policy — a bare `editor.move_line_up` skips the commit boundary,
             // leaving a vi-normal caret past the last grapheme on a short line.
-            Ok(
-                match self.apply_edit_commands(&[EditCommand::MoveLineUp { select: false }]) {
-                    EditCommandStatus::Applied => EventStatus::Handled,
-                    EditCommandStatus::Inapplicable => EventStatus::Inapplicable,
-                },
-            )
+            Ok(self
+                .apply_edit_commands(&[EditCommand::MoveLineUp { select: false }])
+                .into())
         }
     }
 
@@ -2260,30 +2251,29 @@ impl Reedline {
         // If we're at the bottom, then:
         if self.editor.is_cursor_at_last_line() {
             // If we're at the bottom, move to next history
-            self.moved_by(Self::next_history)
+            self.walk_and_report(Self::next_history)
         } else {
             // See `up_command`: settle under the rest policy via the commit boundary.
-            Ok(
-                match self.apply_edit_commands(&[EditCommand::MoveLineDown { select: false }]) {
-                    EditCommandStatus::Applied => EventStatus::Handled,
-                    EditCommandStatus::Inapplicable => EventStatus::Inapplicable,
-                },
-            )
+            Ok(self
+                .apply_edit_commands(&[EditCommand::MoveLineDown { select: false }])
+                .into())
         }
     }
 
     /// Run a history walk and report whether it moved anything: the buffer's
-    /// text, or the cursor within it. The walk itself says nothing — at either
-    /// end of history it is a no-op by design — so what it did is read off the
-    /// editor, which is the one place the answer cannot drift from the truth.
-    fn moved_by(&mut self, walk: fn(&mut Self) -> io::Result<()>) -> io::Result<EventStatus> {
-        let before = (
-            self.editor.get_buffer().to_string(),
-            self.editor.insertion_point(),
-        );
+    /// text, or the cursor within it. The walk itself says nothing, since at
+    /// either end of history it is a no-op by design, so the answer is read
+    /// off the editor before and after.
+    fn walk_and_report(
+        &mut self,
+        walk: fn(&mut Self) -> io::Result<()>,
+    ) -> io::Result<EventStatus> {
+        let text_before = self.editor.get_buffer().to_string();
+        let cursor_before = self.editor.insertion_point();
         walk(self)?;
-        let after = (self.editor.get_buffer(), self.editor.insertion_point());
-        Ok(if (before.0.as_str(), before.1) == after {
+        let unmoved = self.editor.get_buffer() == text_before
+            && self.editor.insertion_point() == cursor_before;
+        Ok(if unmoved {
             EventStatus::Inapplicable
         } else {
             EventStatus::Handled
