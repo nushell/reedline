@@ -508,10 +508,12 @@ fn char_to_text_object(c: char, scope: TextObjectScope) -> Option<TextObject> {
         'b' => Some(TextObject {
             scope,
             object_type: TextObjectType::Brackets(TextObjectBracket::All),
+            check_next: true,
         }),
         'q' => Some(TextObject {
             scope,
             object_type: TextObjectType::Quotes(TextObjectQuote::All),
+            check_next: true,
         }),
         '$' => Some(TextObject {
             scope,
@@ -519,6 +521,7 @@ fn char_to_text_object(c: char, scope: TextObjectScope) -> Option<TextObject> {
                 left: '$',
                 right: '$',
             },
+            check_next: true,
         }),
         _ => {
             let tot = TextObjectType::from_char(c)?;
@@ -530,6 +533,7 @@ fn char_to_text_object(c: char, scope: TextObjectScope) -> Option<TextObject> {
             Some(TextObject {
                 scope,
                 object_type: tot,
+                check_next: true,
             })
         }
     }
