@@ -513,9 +513,24 @@ fn char_to_text_object(c: char, scope: TextObjectScope) -> Option<TextObject> {
             scope,
             object_type: TextObjectType::Quotes(TextObjectQuote::All),
         }),
-        _ => TextObjectType::from_char(c).map(|tot| TextObject {
+        '$' => Some(TextObject {
             scope,
-            object_type: tot,
+            object_type: TextObjectType::Pair {
+                left: '$',
+                right: '$',
+            },
         }),
+        _ => {
+            let tot = TextObjectType::from_char(c)?;
+
+            if matches!(tot, TextObjectType::Pair { .. }) {
+                return None;
+            }
+
+            Some(TextObject {
+                scope,
+                object_type: tot,
+            })
+        }
     }
 }
