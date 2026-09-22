@@ -252,6 +252,16 @@ fn select_prompt_row(
             let start_row = *painter_state.previous_prompt_rows_range.start();
             return PromptRowSelector::UseExistingPrompt { start_row };
         }
+
+        // Still on a row we painted, but we cannot re-use the old anchor (e.g. a
+        // bottom-flush prompt whose cursor came back on a different column after
+        // `$EDITOR`). The cells past column 0 are our own prompt/buffer, not
+        // foreign output: advancing with `column > 0` would start one row below
+        // and leave the previous line on screen (nushell/nushell#13240,
+        // nushell/reedline#824). Replace in place on this row instead.
+        if painter_state.previous_prompt_rows_range.contains(&row) {
+            return PromptRowSelector::MakeNewPrompt { new_row: row };
+        }
     }
 
     // Assumption: if the cursor is not on the zeroth column,
@@ -1713,6 +1723,11 @@ mod tests {
             select_prompt_row(Some(&state), (0, 16)),
             PromptRowSelector::MakeNewPrompt { new_row: 16 }
         );
+        // Mid-line foreign output below the old prompt still advances a row.
+        assert_eq!(
+            select_prompt_row(Some(&state), (3, 16)),
+            PromptRowSelector::MakeNewPrompt { new_row: 17 }
+        );
     }
 
     // Regression test for nushell/reedline#1130.
@@ -1766,6 +1781,25 @@ mod tests {
         };
         assert_eq!(
             select_prompt_row(Some(&state), (0, 7)),
+            PromptRowSelector::MakeNewPrompt { new_row: 7 }
+        );
+    }
+
+    // Regression test for nushell/nushell#13240 / nushell/reedline#824.
+    //
+    // Windows Ctrl-O / buffer-editor return often lands back on a prompt row
+    // with a non-zero column that is not the suspended cell (so the bottom-flush
+    // reuse check fails). Advancing for `column > 0` would paint one row down and
+    // leave a duplicate of the line; stay on the cursor's row instead.
+    #[test]
+    fn test_select_prompt_row_keeps_row_when_column_moved_inside_prompt_range() {
+        let state = PainterSuspendedState {
+            previous_prompt_rows_range: 5..=7,
+            was_flush_at_bottom: true,
+            cursor: Some((10, 7)),
+        };
+        assert_eq!(
+            select_prompt_row(Some(&state), (4, 7)),
             PromptRowSelector::MakeNewPrompt { new_row: 7 }
         );
     }
