@@ -1541,7 +1541,8 @@ mod test {
         #[case] prefix: &[char],
         #[values(
             (KeyCode::F(5), KeyModifiers::NONE, ReedlineEvent::ClearScreen),
-            (KeyCode::Char('t'), KeyModifiers::CONTROL, ReedlineEvent::ClearScrollback)
+            (KeyCode::Char('t'), KeyModifiers::CONTROL, ReedlineEvent::ClearScrollback),
+            (KeyCode::Char('d'), KeyModifiers::ALT, ReedlineEvent::ClearScreen)
         )]
         chord: (KeyCode, KeyModifiers, ReedlineEvent),
     ) {

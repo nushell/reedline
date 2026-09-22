@@ -4841,6 +4841,7 @@ mod tests {
         assert_eq!(rl.prompt_edit_mode(), PromptEditMode::Emacs);
         assert_eq!(rl.editor.get_buffer(), "abcd");
         assert_eq!(rl.editor.insertion_point(), 2);
+        assert!(menu_is_active(&rl), "the menu outlives the switch");
     }
 
     /// No registered machine accepts the target: nothing changes, and the
