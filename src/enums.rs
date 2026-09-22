@@ -97,7 +97,12 @@ pub enum TextObjectType {
     /// Quotes pairs (`"`, `'`, `\``)
     Quotes(TextObjectQuote),
     /// Custom pair
-    Pair { left: char, right: char },
+    Pair {
+        /// left character of the pair
+        left: char,
+        /// right character of the pair
+        right: char,
+    },
 }
 
 impl TextObjectType {
