@@ -551,7 +551,7 @@ pub enum EditCommand {
     /// Paste the cut buffer in front of the insertion point (Emacs, vi `P`)
     PasteCutBufferBefore,
 
-    /// Paste the cut buffer in front of the insertion point (vi `p`)
+    /// Paste the cut buffer after the insertion point (vi `p`)
     PasteCutBufferAfter,
 
     /// Paste the cut buffer at the selection edge in the given `direction` and

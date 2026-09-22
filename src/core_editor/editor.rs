@@ -300,8 +300,8 @@ impl Editor {
             EditCommand::CutBigWordRight => self.cut_big_word_right(),
             EditCommand::CutWordRightToNext => self.cut_word_right_to_next(),
             EditCommand::CutBigWordRightToNext => self.cut_big_word_right_to_next(),
-            EditCommand::PasteCutBufferBefore => self.insert_cut_buffer_before(),
-            EditCommand::PasteCutBufferAfter => self.insert_cut_buffer_after(),
+            EditCommand::PasteCutBufferBefore => self.paste_cut_buffer_before(),
+            EditCommand::PasteCutBufferAfter => self.paste_cut_buffer_after(),
             EditCommand::PasteAtSelectionEdge { direction, count } => {
                 self.paste_at_selection_edge(*direction, *count)
             }
@@ -341,7 +341,8 @@ impl Editor {
             EditCommand::LowercaseSelection => self.lowercase_selection(),
             EditCommand::UppercaseSelection => self.uppercase_selection(),
             EditCommand::SwitchcaseSelection => self.switchcase_selection(),
-            EditCommand::Paste => self.paste_cut_buffer(),
+            // Same command as `PasteCutBufferBefore`, both names are public
+            EditCommand::Paste => self.paste_cut_buffer_before(),
             EditCommand::CopyFromStart => self.copy_from_start(),
             EditCommand::CopyFromStartLinewise => self.copy_from_start_linewise(),
             EditCommand::CopyFromLineStart => self.copy_from_line_start(),
@@ -447,13 +448,7 @@ impl Editor {
     }
 
     pub(crate) fn clear_selection(&mut self) {
-        // Collapse to the caret (the visible position), not merely drop the
-        // anchor: under `Block` the stored head sits on the far edge, so dropping
-        // the anchor alone would strand the cursor one grapheme past where it
-        // shows. Collapsing to `point(caret)` keeps it put; the commit boundary
-        // re-widens it under the active policy.
-        let caret = self.line_buffer.insertion_point();
-        self.line_buffer.set_cursor(Cursor::point(caret));
+        self.line_buffer.collapse_to_caret();
     }
 
     fn operate(&mut self, selection: Cursor, verb: OperatorVerb, granularity: Granularity) {
@@ -1116,56 +1111,6 @@ impl Editor {
         }
     }
 
-    fn insert_cut_buffer_before(&mut self) {
-        self.delete_selection();
-        insert_clipboard_content_before(&mut self.line_buffer, self.cut_buffer.deref_mut())
-    }
-
-    fn insert_cut_buffer_after(&mut self) {
-        // After replacing a selection the cursor already sits at the deletion
-        // point, so it must NOT skip a grapheme; only the plain no-selection `p`
-        // steps past the grapheme under the cursor before inserting.
-        let had_selection = self.line_buffer.selection_anchor().is_some();
-        self.delete_selection();
-        match self.cut_buffer.get() {
-            (content, Granularity::CharWise) => {
-                if !had_selection {
-                    self.line_buffer.move_right();
-                }
-                self.line_buffer.insert_str(&content);
-            }
-            (mut content, Granularity::LineWise) => {
-                if !content.ends_with('\n') {
-                    content.push('\n');
-                }
-                let ip = self.line_buffer.insertion_point();
-                match line::start_of_next_line(self.line_buffer.get_buffer(), ip) {
-                    // A line exists below: insert at its start so the pasted lines
-                    // land between current and next — i.e. below the current line.
-                    Some(next) => {
-                        self.line_buffer.set_insertion_point(next);
-                        self.line_buffer.insert_str(&content);
-                    }
-                    // Last line: no line below, so append after the current line's
-                    // terminator. Drop the trailing `\n` so no blank line is added,
-                    // otherwise the paste would land *above* (like `P`).
-                    None => {
-                        let trimmed = content.strip_suffix('\n').unwrap_or(&content);
-                        if self.line_buffer.is_empty() {
-                            // No current line to append below — insert as-is so an
-                            // empty buffer (e.g. after `dd` on the only line) does
-                            // not gain a leading blank line.
-                            self.line_buffer.insert_str(trimmed);
-                        } else {
-                            self.line_buffer.set_insertion_point(self.line_buffer.len());
-                            self.line_buffer.insert_str(&format!("\n{trimmed}"));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     fn paste_at_selection_edge(&mut self, direction: Direction, count: usize) {
         let at = match direction {
             Direction::Forward => self.line_buffer.cursor().end(),
@@ -1442,14 +1387,7 @@ impl Editor {
     /// If a selection is active returns the selected range, otherwise None.
     /// The range is guaranteed to be ascending.
     pub fn get_selection(&self) -> Option<(usize, usize)> {
-        // `None` exactly when the cursor is empty (head == anchor): with the
-        // collapsed `Cursor` storage, `selection_anchor()` is derived from
-        // `!is_empty()`, so an anchor on the head is simply no selection.
-        self.line_buffer.selection_anchor()?;
-        let cursor = self.line_buffer.cursor();
-
-        // Inclusivity is geometric (widened by put_cursor).
-        Some((cursor.start(), cursor.end().min(self.line_buffer.len())))
+        self.line_buffer.get_selection()
     }
 
     /// The one-grapheme cell the caret rests on inside the active selection,
@@ -1471,16 +1409,9 @@ impl Editor {
         (cell_start < to && cell_end > from).then_some((cell_start, cell_end))
     }
 
-    fn delete_selection(&mut self) {
-        if let Some((start, end)) = self.get_selection() {
-            self.line_buffer.clear_range_safe(start..end);
-            self.clear_selection();
-        }
-    }
-
     fn backspace(&mut self) {
         if self.line_buffer.selection_anchor().is_some() {
-            self.delete_selection();
+            self.line_buffer.delete_selection();
         } else {
             self.line_buffer.delete_left_grapheme();
         }
@@ -1506,7 +1437,7 @@ impl Editor {
 
     fn delete(&mut self) {
         if self.line_buffer.selection_anchor().is_some() {
-            self.delete_selection();
+            self.line_buffer.delete_selection();
         } else {
             self.line_buffer.delete_right_grapheme();
         }
@@ -1614,17 +1545,17 @@ impl Editor {
     }
 
     fn insert_char(&mut self, c: char) {
-        self.delete_selection();
+        self.line_buffer.delete_selection();
         self.line_buffer.insert_char(c);
     }
 
     fn insert_str(&mut self, str: &str) {
-        self.delete_selection();
+        self.line_buffer.delete_selection();
         self.line_buffer.insert_str(str);
     }
 
     fn insert_newline(&mut self) {
-        self.delete_selection();
+        self.line_buffer.delete_selection();
         self.line_buffer.insert_newline();
     }
 
@@ -1650,13 +1581,15 @@ impl Editor {
 
     #[cfg(feature = "system_clipboard")]
     fn paste_from_system(&mut self) {
-        self.delete_selection();
         insert_clipboard_content_before(&mut self.line_buffer, self.system_clipboard.deref_mut());
     }
 
-    fn paste_cut_buffer(&mut self) {
-        self.delete_selection();
+    fn paste_cut_buffer_before(&mut self) {
         insert_clipboard_content_before(&mut self.line_buffer, self.cut_buffer.deref_mut());
+    }
+
+    fn paste_cut_buffer_after(&mut self) {
+        insert_clipboard_content_after(&mut self.line_buffer, self.cut_buffer.deref_mut());
     }
 
     fn cut_range(&mut self, range: Range<usize>) {
@@ -2001,7 +1934,10 @@ impl Editor {
     }
 }
 
+/// Replaces the selection, if any, then inserts the clipboard content before
+/// the caret. Linewise content lands above the current line (vi `P`).
 fn insert_clipboard_content_before(line_buffer: &mut LineBuffer, clipboard: &mut dyn Clipboard) {
+    line_buffer.delete_selection();
     match clipboard.get() {
         (content, Granularity::CharWise) => {
             line_buffer.insert_str(&content);
@@ -2012,6 +1948,53 @@ fn insert_clipboard_content_before(line_buffer: &mut LineBuffer, clipboard: &mut
                 content.push('\n');
             }
             line_buffer.insert_str(&content);
+        }
+    }
+}
+
+/// Replaces the selection, if any, then inserts the clipboard content after
+/// the caret. Linewise content lands below the current line (vi `p`).
+fn insert_clipboard_content_after(line_buffer: &mut LineBuffer, clipboard: &mut dyn Clipboard) {
+    // After replacing a selection the cursor already sits at the deletion
+    // point, so it must NOT skip a grapheme; only the plain no-selection `p`
+    // steps past the grapheme under the cursor before inserting.
+    let had_selection = line_buffer.selection_anchor().is_some();
+    line_buffer.delete_selection();
+    match clipboard.get() {
+        (content, Granularity::CharWise) => {
+            if !had_selection {
+                line_buffer.move_right();
+            }
+            line_buffer.insert_str(&content);
+        }
+        (mut content, Granularity::LineWise) => {
+            if !content.ends_with('\n') {
+                content.push('\n');
+            }
+            let ip = line_buffer.insertion_point();
+            match line::start_of_next_line(line_buffer.get_buffer(), ip) {
+                // A line exists below: insert at its start so the pasted lines
+                // land between current and next — i.e. below the current line.
+                Some(next) => {
+                    line_buffer.set_insertion_point(next);
+                    line_buffer.insert_str(&content);
+                }
+                // Last line: no line below, so append after the current line's
+                // terminator. Drop the trailing `\n` so no blank line is added,
+                // otherwise the paste would land *above* (like `P`).
+                None => {
+                    let trimmed = content.strip_suffix('\n').unwrap_or(&content);
+                    if line_buffer.is_empty() {
+                        // No current line to append below — insert as-is so an
+                        // empty buffer (e.g. after `dd` on the only line) does
+                        // not gain a leading blank line.
+                        line_buffer.insert_str(trimmed);
+                    } else {
+                        line_buffer.set_insertion_point(line_buffer.len());
+                        line_buffer.insert_str(&format!("\n{trimmed}"));
+                    }
+                }
+            }
         }
     }
 }
@@ -3664,7 +3647,7 @@ mod test {
         assert_eq!(editor.insertion_point(), 5); // Cursor should return to original position
 
         // Test yanked content by pasting
-        editor.paste_cut_buffer();
+        editor.paste_cut_buffer_before();
         assert_eq!(editor.get_buffer(), "foo(bbarar)baz");
 
         // Test with cursor outside brackets
@@ -3703,7 +3686,7 @@ mod test {
         assert_eq!(editor.cut_buffer.get().0, "baz");
 
         // Test yanked content by pasting
-        editor.paste_cut_buffer();
+        editor.paste_cut_buffer_before();
         assert_eq!(editor.get_buffer(), "foo(bar(bazbaz)qux)quux");
 
         editor.move_to_position(4, false); // Move inside outer brackets
