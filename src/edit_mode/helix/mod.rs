@@ -645,12 +645,12 @@ fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
             MatchAction::Inner => action.repeated(EditCommand::SelectTextObject(TextObject {
                 scope: TextObjectScope::Inner,
                 object_type: m.text_object,
-                check_next: true,
+                check_next: false,
             })),
             MatchAction::Around => action.repeated(EditCommand::SelectTextObject(TextObject {
                 scope: TextObjectScope::Around,
                 object_type: m.text_object,
-                check_next: true,
+                check_next: false,
             })),
             MatchAction::Set => ReedlineEvent::Edit(vec![EditCommand::AddTextObject {
                 text_object: m.text_object,
