@@ -370,5 +370,5 @@ pub use utils::{
 
 // Reexport the key types to be independent from an explicit crossterm dependency.
 pub use crossterm::event::{KeyCode, KeyModifiers};
-pub use external_printer::ExternalPrinter;
+pub use external_printer::{ExternalOutput, ExternalPrinter};
 pub use nu_ansi_term::Color;

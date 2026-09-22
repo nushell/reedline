@@ -7,6 +7,7 @@
 //! ```
 use std::{
     fmt::Display,
+    io,
     sync::mpsc::{sync_channel, Receiver, SendError, SyncSender},
 };
 
@@ -62,6 +63,24 @@ where
     }
 }
 
+/// A source of text that arrives while a line is being edited.
+pub trait ExternalOutput: Send {
+    /// Text received since the last call, in arrival order. Must not block.
+    fn drain(&mut self) -> io::Result<Vec<String>>;
+}
+
+impl<T: Display + Send> ExternalOutput for ExternalPrinter<T> {
+    fn drain(&mut self) -> io::Result<Vec<String>> {
+        let mut messages = Vec::new();
+        // `Disconnected` cannot happen while `self.sender` is alive, so any
+        // `Err` just ends the drain.
+        while let Ok(message) = self.receiver.try_recv() {
+            messages.extend(message.to_string().lines().map(String::from));
+        }
+        Ok(messages)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -82,5 +101,14 @@ mod tests {
         let printer = ExternalPrinter::<String>::new(1);
         printer.print("via print".to_string()).unwrap();
         assert_eq!(printer.get_line().as_deref(), Some("via print"));
+    }
+
+    #[test]
+    fn drain_flattens_messages_into_lines_in_order() {
+        let mut printer = ExternalPrinter::<String>::new(2);
+        printer.print("one\ntwo".to_string()).unwrap();
+        printer.print("three".to_string()).unwrap();
+        assert_eq!(printer.drain().unwrap(), ["one", "two", "three"]);
+        assert!(printer.drain().unwrap().is_empty());
     }
 }
