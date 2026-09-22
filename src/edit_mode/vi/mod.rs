@@ -219,28 +219,36 @@ impl Vi {
                     })
             }
             (_, KeyModifiers::NONE, KeyCode::Esc) => ReedlineEvent::Multiple(self.escape()),
-            (ViMode::Normal | ViMode::Visual, _, _) => self
-                .keybindings()
-                .find_binding(modifiers, code)
-                .unwrap_or_else(|| {
-                    // Default Enter behavior when no custom binding
-                    if modifiers == KeyModifiers::NONE && code == KeyCode::Enter {
-                        self.mode = ViMode::Insert;
-                        // The normal/visual block caret rests *on* a grapheme;
-                        // submitting (or inserting a newline on incomplete input)
-                        // acts past it. Release the caret forward like `a`/append
-                        // — under the now-`Between` policy — so the trailing edit
-                        // (abbreviation expansion or the newline) lands at the line
-                        // end, not one grapheme short, which otherwise split the
-                        // last word and dropped submit-time abbreviation expansion.
-                        ReedlineEvent::Multiple(vec![
-                            ReedlineEvent::Edit(vec![EditCommand::MoveRight { select: false }]),
-                            ReedlineEvent::Enter,
-                        ])
-                    } else {
-                        ReedlineEvent::None
+            (ViMode::Normal | ViMode::Visual, _, _) => {
+                match self.keybindings().find_binding(modifiers, code) {
+                    // A key the sequence has no use for: the binding fires and
+                    // abandons what was half typed, as a `SwitchMode` does, so
+                    // the next character is not read as a stale argument.
+                    Some(event) => {
+                        self.cache.clear();
+                        event
                     }
-                }),
+                    None => {
+                        // Default Enter behavior when no custom binding
+                        if modifiers == KeyModifiers::NONE && code == KeyCode::Enter {
+                            self.mode = ViMode::Insert;
+                            // The normal/visual block caret rests *on* a grapheme;
+                            // submitting (or inserting a newline on incomplete input)
+                            // acts past it. Release the caret forward like `a`/append
+                            // — under the now-`Between` policy — so the trailing edit
+                            // (abbreviation expansion or the newline) lands at the line
+                            // end, not one grapheme short, which otherwise split the
+                            // last word and dropped submit-time abbreviation expansion.
+                            ReedlineEvent::Multiple(vec![
+                                ReedlineEvent::Edit(vec![EditCommand::MoveRight { select: false }]),
+                                ReedlineEvent::Enter,
+                            ])
+                        } else {
+                            ReedlineEvent::None
+                        }
+                    }
+                }
+            }
             (ViMode::Insert, _, _) => self
                 .keybindings()
                 .find_binding(modifiers, code)
@@ -1218,6 +1226,37 @@ mod test {
         )));
         assert!(vi.cache.is_empty());
         assert_eq!(vi.mode, ViMode::Insert);
+    }
+
+    /// A key the sequence has no use for still reaches the table, and the
+    /// binding found there abandons the half-typed sequence, as in helix: the
+    /// character after it starts fresh instead of serving as `f`'s argument.
+    #[test]
+    fn a_bound_key_fires_during_a_half_typed_sequence_and_abandons_it() {
+        let mut normal = crate::default_vi_normal_keybindings();
+        normal.add_binding(
+            KeyModifiers::NONE,
+            KeyCode::F(5),
+            ReedlineEvent::ClearScreen,
+        );
+        let mut vi = Vi::new(
+            crate::default_vi_insert_keybindings(),
+            normal,
+            crate::default_vi_visual_keybindings(),
+        );
+        vi.mode = ViMode::Normal;
+        let _ = vi.parse_event(key(KeyCode::Char('f'), KeyModifiers::NONE));
+        assert!(!vi.cache.is_empty(), "setup: sequence is armed");
+
+        assert_eq!(
+            vi.parse_event(key(KeyCode::F(5), KeyModifiers::NONE)),
+            ReedlineEvent::ClearScreen
+        );
+        assert!(vi.cache.is_empty());
+        assert_eq!(
+            vi.parse_event(key(KeyCode::Char('x'), KeyModifiers::NONE)),
+            in_normal(KeyCode::Char('x'), KeyModifiers::NONE)
+        );
     }
 
     // --- visual keybinding table ---
