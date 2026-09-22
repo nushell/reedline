@@ -8,7 +8,6 @@ use crate::{
     history::SearchFilter,
     menu_functions::{parse_selection_char, ParseAction},
 };
-#[cfg(feature = "external_printer")]
 use {
     crate::external_printer::ExternalPrinter,
     std::io::{Error, ErrorKind},
@@ -267,7 +266,6 @@ pub struct Reedline {
     // Only used when external_printer or idle_callback is configured.
     poll_interval: Duration,
 
-    #[cfg(feature = "external_printer")]
     external_printer: Option<ExternalPrinter<String>>,
 
     // Callback function that is called periodically while waiting for input.
@@ -552,7 +550,6 @@ impl Reedline {
             break_signal: None,
             repaint_signal: None,
             poll_interval: DEFAULT_POLL_INTERVAL,
-            #[cfg(feature = "external_printer")]
             external_printer: None,
             idle_callback: None,
         }
@@ -1269,7 +1266,6 @@ impl Reedline {
                 .as_ref()
                 .is_some_and(|sig| Arc::strong_count(&sig.flag) > 1);
 
-        #[cfg(feature = "external_printer")]
         {
             poll |= self.external_printer.is_some();
         }
@@ -1337,7 +1333,6 @@ impl Reedline {
                 self.repaint(prompt)?;
             }
 
-            #[cfg(feature = "external_printer")]
             if let Some(ref external_printer) = self.external_printer {
                 // get messages from printer as crlf separated "lines"
                 let messages = Self::external_messages(external_printer)?;
@@ -3301,10 +3296,6 @@ impl Reedline {
     }
 
     /// Adds an external printer
-    ///
-    /// ## Required feature:
-    /// `external_printer`
-    #[cfg(feature = "external_printer")]
     pub fn with_external_printer(mut self, printer: ExternalPrinter<String>) -> Self {
         self.external_printer = Some(printer);
         self
@@ -3359,7 +3350,6 @@ impl Reedline {
         self
     }
 
-    #[cfg(feature = "external_printer")]
     fn external_messages(external_printer: &ExternalPrinter<String>) -> Result<Vec<String>> {
         let mut messages = Vec::new();
         loop {

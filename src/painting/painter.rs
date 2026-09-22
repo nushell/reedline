@@ -1482,7 +1482,6 @@ impl Painter {
     ///
     /// This function doesn't flush the buffer. So buffer should be flushed
     /// afterwards perhaps by repainting the prompt via `repaint_buffer()`.
-    #[cfg(feature = "external_printer")]
     pub(crate) fn print_external_message(&mut self, messages: Vec<String>) -> Result<()> {
         let starting_row = self.prompt_start_row.last_known_row();
         // Print from the prompt's first row, wherever the cursor is in a

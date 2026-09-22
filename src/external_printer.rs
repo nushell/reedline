@@ -3,24 +3,18 @@
 //! See example:
 //!
 //! ``` shell
-//! cargo run --example external_printer --features=external_printer
+//! cargo run --example external_printer
 //! ```
-#[cfg(feature = "external_printer")]
 use std::{
     fmt::Display,
     sync::mpsc::{sync_channel, Receiver, SendError, SyncSender},
 };
 
-#[cfg(feature = "external_printer")]
 pub const EXTERNAL_PRINTER_DEFAULT_CAPACITY: usize = 20;
 
 /// An ExternalPrinter allows to print messages of text while editing a line.
 /// The message is printed as a new line, the line-edit will continue below the
 /// output.
-///
-/// ## Required feature:
-/// `external_printer`
-#[cfg(feature = "external_printer")]
 #[derive(Debug)]
 pub struct ExternalPrinter<T>
 where
@@ -30,7 +24,6 @@ where
     receiver: Receiver<T>,
 }
 
-#[cfg(feature = "external_printer")]
 impl<T> ExternalPrinter<T>
 where
     T: Display,
@@ -60,7 +53,6 @@ where
     }
 }
 
-#[cfg(feature = "external_printer")]
 impl<T> Default for ExternalPrinter<T>
 where
     T: Display,
@@ -70,7 +62,7 @@ where
     }
 }
 
-#[cfg(all(test, feature = "external_printer"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
