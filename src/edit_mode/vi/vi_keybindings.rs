@@ -45,18 +45,10 @@ pub fn default_vi_visual_keybindings() -> Keybindings {
 
     let mut kb = default_vi_normal_keybindings();
 
-    add_extending_navigation_bindings(&mut kb);
-    // `h`/`l`, and Backspace following `h` as it does in normal.
-    kb.add_binding(KM::NONE, KC::Left, edit_bind(EC::MoveLeft { select: true }));
-    kb.add_binding(
-        KM::NONE,
-        KC::Right,
-        edit_bind(EC::MoveRight { select: true }),
-    );
-    kb.add_binding(
-        KM::NONE,
-        KC::Backspace,
-        edit_bind(EC::MoveLeft { select: true }),
+    add_extending_navigation_bindings(
+        &mut kb,
+        EC::MoveLeft { select: true },
+        EC::MoveRight { select: true },
     );
     // `d`: take the selection and return to normal. A binding cannot move the
     // machine itself, so the mode change rides along as an event.

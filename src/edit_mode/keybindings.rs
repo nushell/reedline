@@ -208,15 +208,24 @@ pub fn add_common_navigation_bindings(kb: &mut Keybindings) {
 /// selection is anchored in, and no key accepts a history hint, since that
 /// inserts text.
 ///
-/// The grapheme steps (`Left`, `Right`, `Backspace`) are left to the caller:
-/// the two machines lower `h`/`l` to different commands, and a key should
-/// equal its own twin.
-pub(crate) fn add_extending_navigation_bindings(kb: &mut Keybindings) {
+/// `left` and `right` are the grapheme steps, passed in since the two
+/// machines lower `h`/`l` to different commands and a key should equal its
+/// own twin. `Backspace` follows `left`, as it follows `h` in normal.
+pub(crate) fn add_extending_navigation_bindings(
+    kb: &mut Keybindings,
+    left: EditCommand,
+    right: EditCommand,
+) {
     use crate::{Direction as D, MotionTarget as MT, WordEdge, WordKind};
     use KeyCode as KC;
     use KeyModifiers as KM;
 
     let extend = |target: MT| edit_bind(EditCommand::Extend(target));
+
+    // `h`/`l` by grapheme, with Backspace following `h`.
+    kb.add_binding(KM::NONE, KC::Left, edit_bind(left.clone()));
+    kb.add_binding(KM::NONE, KC::Right, edit_bind(right));
+    kb.add_binding(KM::NONE, KC::Backspace, edit_bind(left));
     let word = |direction: D| MT::Word {
         kind: WordKind::Word,
         edge: WordEdge::Start,

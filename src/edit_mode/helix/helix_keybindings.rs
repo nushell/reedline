@@ -61,20 +61,15 @@ pub fn default_helix_normal_keybindings() -> Keybindings {
 /// `Ctrl-Right`: accepting a hint inserts text, which select mode must not do.
 pub fn default_helix_select_keybindings() -> Keybindings {
     use Direction as D;
-    use KeyCode as KC;
-    use KeyModifiers as KM;
     use MotionTarget as MT;
 
     let mut kb = default_helix_normal_keybindings();
 
-    let extend = |target: MT| edit_bind(EditCommand::Extend(target));
-
-    add_extending_navigation_bindings(&mut kb);
-    // The modal `h`/`l` extend by grapheme, and Backspace follows `h`, as it
-    // follows normal mode's collapsing left step.
-    kb.add_binding(KM::NONE, KC::Left, extend(MT::Grapheme(D::Backward)));
-    kb.add_binding(KM::NONE, KC::Right, extend(MT::Grapheme(D::Forward)));
-    kb.add_binding(KM::NONE, KC::Backspace, extend(MT::Grapheme(D::Backward)));
+    add_extending_navigation_bindings(
+        &mut kb,
+        EditCommand::Extend(MT::Grapheme(D::Backward)),
+        EditCommand::Extend(MT::Grapheme(D::Forward)),
+    );
 
     kb
 }
