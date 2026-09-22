@@ -1537,39 +1537,25 @@ mod test {
     #[case::after_a_pending_find(&['f'])]
     #[case::after_a_pending_goto(&['g'])]
     #[case::after_a_count_and_a_pending_find(&['3', 'f'])]
-    fn a_bound_chord_fires_during_a_half_typed_sequence(#[case] prefix: &[char]) {
+    fn a_bound_chord_fires_during_a_half_typed_sequence(
+        #[case] prefix: &[char],
+        #[values(
+            (KeyCode::F(5), KeyModifiers::NONE, ReedlineEvent::ClearScreen),
+            (KeyCode::Char('t'), KeyModifiers::CONTROL, ReedlineEvent::ClearScrollback)
+        )]
+        chord: (KeyCode, KeyModifiers, ReedlineEvent),
+    ) {
+        let (code, modifiers, bound) = chord;
         let mut bindings = default_helix_normal_keybindings();
-        bindings.add_binding(
-            KeyModifiers::NONE,
-            KeyCode::F(5),
-            ReedlineEvent::ClearScreen,
-        );
-        bindings.add_binding(
-            KeyModifiers::CONTROL,
-            KeyCode::Char('t'),
-            ReedlineEvent::ClearScrollback,
-        );
-        for (code, modifiers, bound) in [
-            (
-                KeyCode::F(5),
-                KeyModifiers::NONE,
-                ReedlineEvent::ClearScreen,
-            ),
-            (
-                KeyCode::Char('t'),
-                KeyModifiers::CONTROL,
-                ReedlineEvent::ClearScrollback,
-            ),
-        ] {
-            let mut helix = normal().with_normal_keybindings(bindings.clone());
-            for c in prefix {
-                helix.parse_event(chr(*c));
-            }
-
-            assert_eq!(helix.parse_event(key(code, modifiers)), bound);
-            assert_eq!(helix.pending, None);
-            assert_eq!(helix.count, None);
+        bindings.add_binding(modifiers, code, bound.clone());
+        let mut helix = normal().with_normal_keybindings(bindings);
+        for c in prefix {
+            helix.parse_event(chr(*c));
         }
+
+        assert_eq!(helix.parse_event(key(code, modifiers)), bound);
+        assert_eq!(helix.pending, None);
+        assert_eq!(helix.count, None);
     }
 
     /// A character key still belongs to the sequence: a binding on a letter

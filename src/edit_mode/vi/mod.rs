@@ -362,14 +362,19 @@ mod test {
         assert!(matches!(vi.mode, ViMode::Normal));
     }
 
-    /// What `code` with `modifiers` does in a fresh normal-mode `Vi`, for
-    /// comparing against the tail of a meta-prefixed dispatch.
-    fn in_normal(code: KeyCode, modifiers: KeyModifiers) -> ReedlineEvent {
+    /// What `code` with `modifiers` does in a fresh `Vi` sitting in `mode`.
+    fn in_mode(mode: ViMode, code: KeyCode, modifiers: KeyModifiers) -> ReedlineEvent {
         let mut vi = Vi {
-            mode: ViMode::Normal,
+            mode,
             ..Default::default()
         };
         vi.parse_event(key(code, modifiers))
+    }
+
+    /// [`in_mode`] for normal, for comparing against the tail of a
+    /// meta-prefixed dispatch.
+    fn in_normal(code: KeyCode, modifiers: KeyModifiers) -> ReedlineEvent {
+        in_mode(ViMode::Normal, code, modifiers)
     }
 
     #[test]
@@ -1251,11 +1256,7 @@ mod test {
     }
 
     fn in_visual(code: KeyCode, modifiers: KeyModifiers) -> ReedlineEvent {
-        let mut vi = Vi {
-            mode: ViMode::Visual,
-            ..Default::default()
-        };
-        vi.parse_event(key(code, modifiers))
+        in_mode(ViMode::Visual, code, modifiers)
     }
 
     fn word_start(direction: Direction) -> MotionTarget {

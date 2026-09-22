@@ -816,7 +816,7 @@ impl Reedline {
     /// the active one alone.
     #[must_use]
     pub fn clear_edit_modes(mut self) -> Self {
-        self.standby_edit_modes = Vec::new();
+        self.standby_edit_modes.clear();
         self
     }
 
@@ -3011,6 +3011,44 @@ mod tests {
         rl
     }
 
+    /// Emacs with one binding added to its default table.
+    fn emacs_with(
+        modifiers: KeyModifiers,
+        code: KeyCode,
+        event: ReedlineEvent,
+    ) -> Box<dyn EditMode> {
+        let mut emacs = crate::default_emacs_keybindings();
+        emacs.add_binding(modifiers, code, event);
+        Box::new(crate::Emacs::new(emacs))
+    }
+
+    /// A vi or helix machine with `Alt-<c>` bound to `SwitchMode(target)` in
+    /// every table, so the switch fires from whichever state a test lands in.
+    fn machine_switching_on_alt(helix: bool, c: char, target: PromptEditMode) -> Box<dyn EditMode> {
+        let bind = |mut table: crate::Keybindings| {
+            table.add_binding(
+                KeyModifiers::ALT,
+                KeyCode::Char(c),
+                ReedlineEvent::SwitchMode(target.clone()),
+            );
+            table
+        };
+        if helix {
+            Box::new(
+                crate::Helix::default()
+                    .with_insert_keybindings(bind(crate::default_helix_insert_keybindings()))
+                    .with_normal_keybindings(bind(crate::default_helix_normal_keybindings()))
+                    .with_select_keybindings(bind(crate::default_helix_select_keybindings())),
+            )
+        } else {
+            Box::new(crate::Vi::new(
+                bind(crate::default_vi_insert_keybindings()),
+                bind(crate::default_vi_normal_keybindings()),
+                bind(crate::default_vi_visual_keybindings()),
+            ))
+        }
+    }
+
     fn drive(rl: &mut Reedline, keys: &[KeyEvent]) {
         let prompt = DefaultPrompt::default();
         let events = keys.iter().copied().map(Event::Key).collect();
@@ -4491,15 +4529,13 @@ mod tests {
     /// where `h` is a motion rather than text.
     #[test]
     fn switch_mode_activates_a_standby_machine() {
-        let mut emacs = crate::default_emacs_keybindings();
-        emacs.add_binding(
+        let mut rl = seam_engine(emacs_with(
             KeyModifiers::CONTROL,
             KeyCode::Char('h'),
             ReedlineEvent::SwitchMode(PromptEditMode::Helix(PromptHelixMode::Normal)),
-        );
-        let mut rl = seam_engine(Box::new(crate::Emacs::new(emacs)))
-            .with_additional_edit_mode(Box::<crate::Helix>::default())
-            .with_validator(Box::new(crate::DefaultValidator));
+        ))
+        .with_additional_edit_mode(Box::<crate::Helix>::default())
+        .with_validator(Box::new(crate::DefaultValidator));
 
         drive_until_signal(&mut rl, &[ch('a'), ch('b'), ch('c'), ctrl('h')]);
         assert_eq!(
@@ -4605,29 +4641,7 @@ mod tests {
         #[case] setup: &[KeyEvent],
         #[case] helix: bool,
     ) {
-        fn bind(mut table: crate::Keybindings) -> crate::Keybindings {
-            table.add_binding(
-                KeyModifiers::ALT,
-                KeyCode::Char('e'),
-                ReedlineEvent::SwitchMode(PromptEditMode::Emacs),
-            );
-            table
-        }
-        let machine: Box<dyn EditMode> = if helix {
-            Box::new(
-                crate::Helix::default()
-                    .with_insert_keybindings(bind(crate::default_helix_insert_keybindings()))
-                    .with_normal_keybindings(bind(crate::default_helix_normal_keybindings()))
-                    .with_select_keybindings(bind(crate::default_helix_select_keybindings())),
-            )
-        } else {
-            Box::new(crate::Vi::new(
-                bind(crate::default_vi_insert_keybindings()),
-                bind(crate::default_vi_normal_keybindings()),
-                bind(crate::default_vi_visual_keybindings()),
-            ))
-        };
-        let mut rl = seam_engine(machine)
+        let mut rl = seam_engine(machine_switching_on_alt(helix, 'e', PromptEditMode::Emacs))
             .with_additional_edit_mode(Box::<crate::Emacs>::default())
             .with_validator(Box::new(crate::DefaultValidator));
 
@@ -4682,8 +4696,8 @@ mod tests {
         #[case] select: &[KeyEvent],
         #[case] caret: usize,
     ) {
-        let mut rl = Reedline::create().with_validator(Box::new(crate::DefaultValidator));
-        rl.painter.force_prompt_anchored_for_test(0);
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_validator(Box::new(crate::DefaultValidator));
 
         drive_until_signal(&mut rl, &[ch('a'), ch('b'), ch('c'), ch('d'), ch('e')]);
         drive_until_signal(&mut rl, &[key(KeyCode::Left)]);
@@ -4714,15 +4728,13 @@ mod tests {
         #[case] select: &[KeyEvent],
         #[case] caret: usize,
     ) {
-        let mut emacs = crate::default_emacs_keybindings();
-        emacs.add_binding(
+        let mut rl = seam_engine(emacs_with(
             KeyModifiers::ALT,
             KeyCode::Char('n'),
             ReedlineEvent::SwitchMode(PromptEditMode::Vi(PromptViMode::Normal)),
-        );
-        let mut rl = seam_engine(Box::new(crate::Emacs::new(emacs)))
-            .with_additional_edit_mode(Box::<crate::Vi>::default())
-            .with_validator(Box::new(crate::DefaultValidator));
+        ))
+        .with_additional_edit_mode(Box::<crate::Vi>::default())
+        .with_validator(Box::new(crate::DefaultValidator));
 
         drive_until_signal(&mut rl, &[ch('a'), ch('b'), ch('c'), ch('d'), ch('e')]);
         drive_until_signal(&mut rl, &[key(KeyCode::Left)]);
@@ -4773,27 +4785,7 @@ mod tests {
         #[case] setup: &[KeyEvent],
         #[case] target: PromptEditMode,
     ) {
-        let bind = |mut table: crate::Keybindings| {
-            table.add_binding(
-                KeyModifiers::ALT,
-                KeyCode::Char('t'),
-                ReedlineEvent::SwitchMode(target.clone()),
-            );
-            table
-        };
-        let machine: Box<dyn EditMode> = if helix {
-            Box::new(
-                crate::Helix::default()
-                    .with_select_keybindings(bind(crate::default_helix_select_keybindings())),
-            )
-        } else {
-            Box::new(crate::Vi::new(
-                crate::default_vi_insert_keybindings(),
-                crate::default_vi_normal_keybindings(),
-                bind(crate::default_vi_visual_keybindings()),
-            ))
-        };
-        let mut rl = seam_engine(machine)
+        let mut rl = seam_engine(machine_switching_on_alt(helix, 't', target.clone()))
             .with_additional_edit_mode(Box::<crate::Emacs>::default())
             .with_validator(Box::new(crate::DefaultValidator));
 
@@ -4817,18 +4809,16 @@ mod tests {
             KeyCode::Char('e'),
             ReedlineEvent::SwitchMode(PromptEditMode::Emacs),
         );
-        let mut rl = Reedline::create()
-            .with_edit_mode(Box::new(
-                crate::Helix::default().with_normal_keybindings(normal),
-            ))
-            .with_additional_edit_mode(Box::<crate::Emacs>::default())
-            .with_menu(ReedlineMenu::HistoryMenu(Box::new(
-                crate::ListMenu::default().with_name("history_menu"),
-            )));
+        let mut rl = seam_engine(Box::new(
+            crate::Helix::default().with_normal_keybindings(normal),
+        ))
+        .with_additional_edit_mode(Box::<crate::Emacs>::default())
+        .with_menu(ReedlineMenu::HistoryMenu(Box::new(
+            crate::ListMenu::default().with_name("history_menu"),
+        )));
         rl.history
             .save(HistoryItem::from_command_line("abcd x"))
             .expect("history ok");
-        rl.painter.force_prompt_anchored_for_test(0);
         let prompt = DefaultPrompt::default();
 
         // Caret on `c`, then open the menu over that buffer.
@@ -4845,10 +4835,7 @@ mod tests {
         );
         rl.handle_event(&prompt, ReedlineEvent::Menu("history_menu".into()))
             .expect("menu opens");
-        assert!(
-            rl.menus.iter().any(|menu| menu.is_active()),
-            "setup: history menu is open"
-        );
+        assert!(menu_is_active(&rl), "setup: history menu is open");
 
         drive_until_signal(&mut rl, &[alt('e')]);
         assert_eq!(rl.prompt_edit_mode(), PromptEditMode::Emacs);
@@ -4860,16 +4847,14 @@ mod tests {
     /// `Inapplicable` lets `UntilFound` fall through to the next candidate.
     #[test]
     fn switch_mode_to_an_unregistered_machine_falls_through() {
-        let mut emacs = crate::default_emacs_keybindings();
-        emacs.add_binding(
+        let mut rl = seam_engine(emacs_with(
             KeyModifiers::CONTROL,
             KeyCode::Char('h'),
             ReedlineEvent::UntilFound(vec![
                 ReedlineEvent::SwitchMode(PromptEditMode::Helix(PromptHelixMode::Normal)),
                 ReedlineEvent::Edit(vec![EditCommand::InsertString("!".into())]),
             ]),
-        );
-        let mut rl = seam_engine(Box::new(crate::Emacs::new(emacs)));
+        ));
 
         drive_until_signal(&mut rl, &[ctrl('h')]);
         assert_eq!(rl.prompt_edit_mode(), PromptEditMode::Emacs);
@@ -4880,15 +4865,13 @@ mod tests {
     /// a host that rebuilds its set every prompt does not accumulate one.
     #[test]
     fn clear_edit_modes_drops_the_standbys_and_keeps_the_active_machine() {
-        let mut emacs = crate::default_emacs_keybindings();
-        emacs.add_binding(
+        let mut rl = seam_engine(emacs_with(
             KeyModifiers::CONTROL,
             KeyCode::Char('h'),
             ReedlineEvent::SwitchMode(PromptEditMode::Helix(PromptHelixMode::Normal)),
-        );
-        let mut rl = seam_engine(Box::new(crate::Emacs::new(emacs)))
-            .with_additional_edit_mode(Box::<crate::Helix>::default())
-            .clear_edit_modes();
+        ))
+        .with_additional_edit_mode(Box::<crate::Helix>::default())
+        .clear_edit_modes();
 
         assert!(rl.standby_edit_modes.is_empty());
         drive_until_signal(&mut rl, &[ctrl('h')]);

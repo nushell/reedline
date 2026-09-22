@@ -2282,11 +2282,8 @@ mod tests {
         #[case] vi_visual: Option<SetCursorStyle>,
         #[case] expected: &str,
     ) {
-        let mut p = Painter::new(W::capture());
-        p.terminal_size = (20, 10);
-        p.term_is_dumb = false;
-        p.prompt_start_row.mark_verified(0);
-        p.prompt_height = 1;
+        let mut p = make_painter(20, 10, false);
+        p.stdout = W::capture();
         let shapes = Some(CursorConfig {
             vi_normal: Some(SetCursorStyle::SteadyBlock),
             vi_visual,
