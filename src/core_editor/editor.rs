@@ -424,6 +424,8 @@ impl Editor {
             || matches!(
                 command,
                 EditCommand::ReplaceTextObject { .. }
+                    | EditCommand::AddTextObject { .. }
+                    | EditCommand::RemoveTextObject { .. }
                     | EditCommand::CutTextObject { .. }
                     | EditCommand::CopyTextObject { .. }
             );
