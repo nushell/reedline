@@ -4318,7 +4318,9 @@ mod test {
         let mut editor = editor_with(input);
         editor.place(cursor);
 
-        editor.add_text_object(object_type);
+        editor.run_edit_command(&EditCommand::AddTextObject {
+            text_object: object_type,
+        });
         let result = editor.get_buffer();
         assert_eq!(result, expected_output);
     }
@@ -4405,7 +4407,9 @@ mod test {
         let mut editor = editor_with(input);
         editor.place(cursor);
 
-        editor.remove_text_object(object_type);
+        editor.run_edit_command(&EditCommand::RemoveTextObject {
+            text_object: object_type,
+        });
         let result = editor.get_buffer();
         assert_eq!(result, expected_output);
     }
@@ -4458,7 +4462,9 @@ mod test {
         let mut editor = editor_with(input);
         editor.place(input_cursor);
 
-        editor.remove_text_object(TextObjectType::Brackets(TextObjectBracket::CurlyBracket));
+        editor.run_edit_command(&EditCommand::RemoveTextObject {
+            text_object: TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        });
         let result = editor.line_buffer().cursor();
         assert_eq!(result, expected_cursor);
     }
@@ -4570,7 +4576,7 @@ mod test {
         let mut editor = editor_with(input);
         editor.place(cursor);
 
-        editor.replace_text_object(old, new);
+        editor.run_edit_command(&EditCommand::ReplaceTextObject { old, new });
         let result = editor.get_buffer();
         assert_eq!(result, expected_output);
     }
