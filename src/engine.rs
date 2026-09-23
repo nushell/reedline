@@ -4961,6 +4961,43 @@ mod tests {
         assert_eq!(rl.editor.get_buffer(), after_d);
     }
 
+    /// The demo's bindings, driven as the keys a terminal sends: a function
+    /// key into the active machine changes nothing, one into helix normal
+    /// carries the selection over.
+    #[test]
+    fn function_key_switches_through_the_emacs_parser_keep_an_emacs_selection() {
+        let mut emacs = crate::default_emacs_keybindings();
+        emacs.add_binding(
+            KeyModifiers::NONE,
+            KeyCode::F(5),
+            ReedlineEvent::SwitchMode(PromptEditMode::Emacs),
+        );
+        emacs.add_binding(
+            KeyModifiers::NONE,
+            KeyCode::F(7),
+            ReedlineEvent::SwitchMode(PromptEditMode::Helix(PromptHelixMode::Normal)),
+        );
+        let mut rl = seam_engine(Box::new(crate::Emacs::new(emacs)))
+            .with_additional_edit_mode(Box::<crate::Vi>::default())
+            .with_additional_edit_mode(Box::<crate::Helix>::default())
+            .with_validator(Box::new(crate::DefaultValidator));
+
+        drive_until_signal(&mut rl, &[ch('a'), ch('b'), ch('c'), ch('d'), ch('e')]);
+        drive_until_signal(&mut rl, &[shift(KeyCode::Left), shift(KeyCode::Left)]);
+        assert_eq!(rl.editor.get_selection(), Some((3, 5)), "setup");
+
+        drive_until_signal(&mut rl, &[key(KeyCode::F(5))]);
+        assert_eq!(rl.prompt_edit_mode(), PromptEditMode::Emacs);
+        assert_eq!(rl.editor.get_selection(), Some((3, 5)), "F5 in emacs");
+
+        drive_until_signal(&mut rl, &[key(KeyCode::F(7))]);
+        assert_eq!(
+            rl.prompt_edit_mode(),
+            PromptEditMode::Helix(PromptHelixMode::Normal)
+        );
+        assert_eq!(rl.editor.get_selection(), Some((3, 5)), "F7 into helix");
+    }
+
     /// A switch while the history menu is open neither moves the cursor nor
     /// touches the buffer the menu is querying with.
     #[test]
