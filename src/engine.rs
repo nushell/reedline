@@ -1915,10 +1915,13 @@ impl Reedline {
     /// Route a `SwitchMode` event to the machine that accepts it, make that
     /// machine the active one, then repair the cursor the flip left behind.
     ///
-    /// Routing: the active machine is offered the target first, then the
-    /// standbys in registration order; the first to accept is swapped in. When
-    /// none accepts nothing changes, and the `Inapplicable` lets an enclosing
-    /// `UntilFound` keep trying.
+    /// Routing: a target naming the state the active machine already reports
+    /// is not a move, so it is declined before any machine is asked. Otherwise
+    /// the active machine is offered the target first, then the standbys in
+    /// registration order; the first to accept is swapped in. When none
+    /// accepts nothing changes either. Both `Inapplicable` answers let an
+    /// enclosing `UntilFound` keep trying, which is what makes
+    /// `UntilFound([SwitchMode(A), SwitchMode(B)])` a toggle.
     ///
     /// Repair: a machine's own transitions emit their repairs as events, the way `i`
     /// collapses the selection on the way into helix insert. An event-driven
@@ -1933,6 +1936,12 @@ impl Reedline {
     /// emacs, both insert modes and vi normal are one rule instead of four
     /// cases, and a future machine inherits it.
     fn change_edit_mode(&mut self, event: ReedlineEvent) -> EventStatus {
+        if let ReedlineEvent::SwitchMode(target) = &event {
+            if *target == self.edit_mode.edit_mode() {
+                return EventStatus::Inapplicable;
+            }
+        }
+
         let mut status = self.edit_mode.handle_mode_specific_event(event.clone());
         if matches!(status, EventStatus::Inapplicable) {
             // Offering is not a query: the standby that accepts has already
@@ -4797,6 +4806,83 @@ mod tests {
         assert_eq!(rl.prompt_edit_mode(), target);
         assert_eq!(rl.editor.get_selection(), None);
         assert_eq!(rl.editor.insertion_point(), 2);
+    }
+
+    /// A target naming the state the active machine is already in is not a
+    /// move: the engine declines it before any machine is asked, so nothing is
+    /// repaired and a live selection survives.
+    #[test]
+    fn switch_mode_into_the_active_state_is_inapplicable() {
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_additional_edit_mode(Box::<crate::Vi>::default());
+        drive_until_signal(&mut rl, &[ch('a'), ch('b'), ch('c'), ch('d'), ch('e')]);
+        drive_until_signal(&mut rl, &[shift(KeyCode::Left), shift(KeyCode::Left)]);
+        assert_eq!(
+            rl.editor.get_selection(),
+            Some((3, 5)),
+            "setup: a live selection"
+        );
+
+        assert!(matches!(
+            status_of(&mut rl, ReedlineEvent::SwitchMode(PromptEditMode::Emacs)),
+            EventStatus::Inapplicable
+        ));
+        assert_eq!(rl.prompt_edit_mode(), PromptEditMode::Emacs);
+        assert_eq!(
+            rl.editor.get_selection(),
+            Some((3, 5)),
+            "and nothing was repaired"
+        );
+
+        // The same rule inside a machine with several states: only a move
+        // between them is handled.
+        let mut vi = seam_engine(Box::<crate::Vi>::default());
+        drive_until_signal(&mut vi, &[ch('a'), key(KeyCode::Esc)]);
+        assert!(matches!(
+            status_of(
+                &mut vi,
+                ReedlineEvent::SwitchMode(PromptEditMode::Vi(PromptViMode::Normal))
+            ),
+            EventStatus::Inapplicable
+        ));
+        assert!(matches!(
+            status_of(
+                &mut vi,
+                ReedlineEvent::SwitchMode(PromptEditMode::Vi(PromptViMode::Insert))
+            ),
+            EventStatus::Handled
+        ));
+    }
+
+    /// The honest answer is what makes a toggle: with both targets in one
+    /// `UntilFound`, the one already active falls through to the other.
+    #[test]
+    fn until_found_toggles_between_two_switch_targets() {
+        let toggle = ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::SwitchMode(PromptEditMode::Vi(PromptViMode::Normal)),
+            ReedlineEvent::SwitchMode(PromptEditMode::Emacs),
+        ]);
+        let mut vi_normal = crate::default_vi_normal_keybindings();
+        vi_normal.add_binding(KeyModifiers::ALT, KeyCode::Char('t'), toggle.clone());
+        let mut rl = seam_engine(emacs_with(KeyModifiers::ALT, KeyCode::Char('t'), toggle))
+            .with_additional_edit_mode(Box::new(crate::Vi::new(
+                crate::default_vi_insert_keybindings(),
+                vi_normal,
+                crate::default_vi_visual_keybindings(),
+            )));
+
+        drive_until_signal(&mut rl, &[alt('t')]);
+        assert_eq!(
+            rl.prompt_edit_mode(),
+            PromptEditMode::Vi(PromptViMode::Normal)
+        );
+        drive_until_signal(&mut rl, &[alt('t')]);
+        assert_eq!(rl.prompt_edit_mode(), PromptEditMode::Emacs);
+        drive_until_signal(&mut rl, &[alt('t')]);
+        assert_eq!(
+            rl.prompt_edit_mode(),
+            PromptEditMode::Vi(PromptViMode::Normal)
+        );
     }
 
     /// A switch while the history menu is open neither moves the cursor nor

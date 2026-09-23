@@ -1168,7 +1168,9 @@ pub enum ReedlineEvent {
     /// A target no machine accepts leaves everything alone and reports the
     /// event inapplicable. On its own that is a keybinding that does nothing;
     /// inside an [`UntilFound`](ReedlineEvent::UntilFound) it hands the key to
-    /// the next event in the list instead.
+    /// the next event in the list instead. A target naming the mode already
+    /// active is declined the same way, so a binding built as
+    /// `UntilFound([SwitchMode(A), SwitchMode(B)])` toggles between the two.
     SwitchMode(PromptEditMode),
 }
 

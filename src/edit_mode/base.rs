@@ -28,6 +28,11 @@ pub trait EditMode: Send {
     ///   since a standby that declines stays a standby and would otherwise be
     ///   left altered by a switch that went elsewhere.
     ///
+    /// The engine never asks about the state the active machine already
+    /// reports: that switch is declined up front as not a move. A machine
+    /// still answers `Handled` for it, since as a standby it may be asked for
+    /// the very state it rests in.
+    ///
     /// The default declines everything, which suits a mode that is only ever
     /// the active one.
     ///
