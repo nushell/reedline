@@ -17,7 +17,10 @@ that applies. The tables write those with "otherwise".
 Vi and Helix add a modal layer, but the tables come first: a plain character
 is looked up as a binding and only reaches the modal grammar when it is
 unbound. A half-typed vi or helix sequence is the exception and claims the
-next key before any table.
+next character before any table, so a binding on a letter cannot take the
+argument of `f`. A key the sequence has no use for still reaches the table,
+and a binding found there fires and abandons the sequence: any non-character
+key in both, and in helix also a `Ctrl` or `Alt` chord.
 
 ## Common bindings
 
@@ -26,7 +29,7 @@ Four sets are shared between modes:
 | Set | Emacs | Vi insert | Vi normal / visual | Helix insert | Helix normal / select |
 | --- | --- | --- | --- | --- | --- |
 | [Control](#control) | yes | yes | yes | yes | yes |
-| [Navigation](#navigation) | yes | yes | yes | yes | yes, rebound in select |
+| [Navigation](#navigation) | yes | yes | yes, rebound in visual | yes | yes, rebound in select |
 | [Editing](#editing) | yes | yes | no | yes | no |
 | [Selection](#selection) | yes | yes | yes | yes | yes |
 
@@ -166,12 +169,25 @@ left without cutting it.
 
 ### Normal and visual mode
 
+Normal and visual each have a keybinding table of their own,
+`default_vi_normal_keybindings()` and `default_vi_visual_keybindings()`, so a
+binding added to one does not reach the other.
+
 The control, navigation and selection sets, but not editing. In its place:
 
 | Key | Action |
 | --- | --- |
-| `Backspace` | Move one grapheme left |
-| `Delete` | Delete the grapheme under the cursor |
+| `Backspace` | Move one grapheme left in normal mode, extend one left in visual mode |
+| `Delete` | Delete the grapheme under the cursor in normal mode; in visual mode cut the selection and return to normal, like `d` |
+
+Visual mode rebinds the navigation set so each key extends the way its modal
+twin does: the arrows follow `h`/`j`/`k`/`l`, `Ctrl-Left`/`Ctrl-Right` follow
+`b`/`w`, `Home`/`End` and `Ctrl-a`/`Ctrl-e` follow `0`/`$`, and
+`Ctrl-Home`/`Ctrl-End` with `Alt-<`/`Alt->` follow `gg`/`G`. `Up`, `Down`,
+`Ctrl-p` and `Ctrl-n` extend by line and never reach history, which would
+replace the buffer the selection is anchored in. The history-hint step of
+`Right`, `End`, `Ctrl-e` and `Ctrl-Right` is dropped too, since accepting a
+hint inserts text.
 
 #### Motions
 
@@ -196,7 +212,8 @@ A WORD is whitespace-delimited, a word is not.
 
 In normal mode `h`, `j`, `k` and `l` carry the same fallback chain as the
 arrow keys: an open menu takes the key first, and `l` accepts a history hint
-before it moves. In visual mode `j` and `k` only extend by line.
+before it moves. In visual mode all four only extend, by grapheme or by line,
+as the arrow keys do there.
 
 #### Normal mode commands
 
@@ -267,9 +284,9 @@ the selection instead of replacing it.
 A count prefixes any modal key but `g`. Upstream reads `3gg` as "go to line
 3", which reedline has no target for yet, so a counted `g` is rejected and
 drops both the count and the `g`: `3gh` and `3gl` act as a bare `h` and `l`,
-and the second `g` of `3gg` starts an ordinary goto. A pending count sends the
-next key straight to the modal layer, bypassing the keybinding table, so
-`3Alt-d` is not `Alt-d` three times.
+and the second `g` of `3gg` starts an ordinary goto. A count only multiplies
+modal keys: a bound chord typed after one fires once and drops the count, so
+`3Alt-d` is `Alt-d` once, not three times.
 
 Descriptions follow
 [upstream's keymap](https://docs.helix-editor.com/keymap.html).
