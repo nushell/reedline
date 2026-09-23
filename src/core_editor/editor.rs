@@ -4470,6 +4470,52 @@ mod test {
     }
 
     #[rstest]
+    #[case("", Cursor::new(0, 0), Cursor::new(1, 1))]
+    #[case("abc", Cursor::new(0, 2), Cursor::new(1, 3))]
+    #[case("abc", Cursor::new(2, 0), Cursor::new(3, 1))]
+    #[case("abc def ghi", Cursor::new(4, 6), Cursor::new(5, 7))]
+    #[case("abc def ghi", Cursor::new(6, 4), Cursor::new(7, 5))]
+    fn test_selection_after_adding_text_object(
+        #[case] input: &str,
+        #[case] input_cursor: Cursor,
+        #[case] expected_cursor: Cursor,
+    ) {
+        let mut editor = editor_with(input);
+        editor.place(input_cursor);
+
+        editor.run_edit_command(&EditCommand::AddTextObject {
+            text_object: TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        });
+        let result = editor.line_buffer().cursor();
+        assert_eq!(result, expected_cursor);
+    }
+
+    #[rstest]
+    #[case("", Cursor::new(0, 0), Cursor::new(0, 0))]
+    #[case("abc", Cursor::new(0, 2), Cursor::new(0, 2))]
+    #[case("[abc]", Cursor::new(1, 3), Cursor::new(1, 3))]
+    #[case("[abc]", Cursor::new(3, 1), Cursor::new(3, 1))]
+    #[case("abc def ghi", Cursor::new(4, 6), Cursor::new(4, 6))]
+    #[case("abc def ghi", Cursor::new(6, 4), Cursor::new(6, 4))]
+    #[case("abc [def] ghi", Cursor::new(5, 7), Cursor::new(5, 7))]
+    #[case("abc [def] ghi", Cursor::new(7, 5), Cursor::new(7, 5))]
+    fn test_selection_after_replacing_text_object(
+        #[case] input: &str,
+        #[case] input_cursor: Cursor,
+        #[case] expected_cursor: Cursor,
+    ) {
+        let mut editor = editor_with(input);
+        editor.place(input_cursor);
+
+        editor.run_edit_command(&EditCommand::ReplaceTextObject {
+            old: TextObjectType::Brackets(TextObjectBracket::SquareBracket),
+            new: TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        });
+        let result = editor.line_buffer().cursor();
+        assert_eq!(result, expected_cursor);
+    }
+
+    #[rstest]
     #[case(
         "",
         Cursor::new(0, 0),
