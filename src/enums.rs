@@ -1,3 +1,4 @@
+use crate::core_editor::EditCommandStatus;
 use crossterm::event::{Event, KeyEvent, KeyEventKind};
 use serde::{Deserialize, Serialize};
 use strum::{EnumDiscriminants, EnumIter, EnumString, VariantArray};
@@ -1175,6 +1176,17 @@ pub enum EventStatus {
     Handled,
     Inapplicable,
     Exits(Signal),
+}
+
+/// An edit that applied is a handled event, and one that had nothing to do
+/// is an inapplicable one, so a binding can fall through it.
+impl From<EditCommandStatus> for EventStatus {
+    fn from(status: EditCommandStatus) -> Self {
+        match status {
+            EditCommandStatus::Applied => EventStatus::Handled,
+            EditCommandStatus::Inapplicable => EventStatus::Inapplicable,
+        }
+    }
 }
 
 /// A wrapper for [crossterm::event::Event].

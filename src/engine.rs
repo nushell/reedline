@@ -1784,10 +1784,7 @@ impl Reedline {
                         invalidate_anchor_if_host_completer_runs(menu, &mut self.painter);
                     }
                 }
-                Ok(match status {
-                    EditCommandStatus::Applied => EventStatus::Handled,
-                    EditCommandStatus::Inapplicable => EventStatus::Inapplicable,
-                })
+                Ok(status.into())
             }
             ReedlineEvent::OpenEditor => self.open_editor().map(|_| EventStatus::Handled),
             ReedlineEvent::Resize(width, height) => {
@@ -1807,24 +1804,15 @@ impl Reedline {
                 self.next_history()?;
                 Ok(EventStatus::Handled)
             }
-            ReedlineEvent::Up => {
-                self.up_command()?;
-                Ok(EventStatus::Handled)
-            }
-            ReedlineEvent::Down => {
-                self.down_command()?;
-                Ok(EventStatus::Handled)
-            }
+            ReedlineEvent::Up => self.up_command(),
+            ReedlineEvent::Down => self.down_command(),
             ReedlineEvent::Left | ReedlineEvent::Right => {
                 let command = if event == ReedlineEvent::Left {
                     EditCommand::MoveLeft { select: false }
                 } else {
                     EditCommand::MoveRight { select: false }
                 };
-                Ok(match self.run_edit_commands_with_status(&[command]) {
-                    EditCommandStatus::Applied => EventStatus::Handled,
-                    EditCommandStatus::Inapplicable => EventStatus::Inapplicable,
-                })
+                Ok(self.run_edit_commands_with_status(&[command]).into())
             }
             ReedlineEvent::ToStart | ReedlineEvent::ToEnd => {
                 let initial_cursor = self.editor.line_buffer().cursor();
@@ -2240,30 +2228,62 @@ impl Reedline {
         }
     }
 
-    fn up_command(&mut self) -> io::Result<()> {
+    /// Move the cursor up a line, or from the first line walk back into
+    /// history. Reports `Inapplicable` when there was nowhere to go: the
+    /// cursor on the first line and history already at its oldest entry, or
+    /// empty. An honest report is what lets a binding built on
+    /// [`ReedlineEvent::UntilFound`] fall through to its next event, as
+    /// `Left` and `Right` already do at the edges of the line.
+    fn up_command(&mut self) -> io::Result<EventStatus> {
         // If we're at the top, then:
         if self.editor.is_cursor_at_first_line() {
             // If we're at the top, move to previous history
-            self.previous_history()
+            self.walk_and_report(Self::previous_history)
         } else {
             // Through `apply_edit_commands` so the cursor settles under the mode's
             // rest policy — a bare `editor.move_line_up` skips the commit boundary,
             // leaving a vi-normal caret past the last grapheme on a short line.
-            self.apply_edit_commands(&[EditCommand::MoveLineUp { select: false }]);
-            Ok(())
+            Ok(self
+                .apply_edit_commands(&[EditCommand::MoveLineUp { select: false }])
+                .into())
         }
     }
 
-    fn down_command(&mut self) -> io::Result<()> {
-        // If we're at the top, then:
+    /// Move the cursor down a line, or from the last line walk forward through
+    /// history. Reports `Inapplicable` when there was nowhere to go: the cursor
+    /// on the last line of the line being typed, with nothing newer below it.
+    /// See [`up_command`](Self::up_command).
+    fn down_command(&mut self) -> io::Result<EventStatus> {
+        // If we're at the bottom, then:
         if self.editor.is_cursor_at_last_line() {
-            // If we're at the top, move to previous history
-            self.next_history()
+            // If we're at the bottom, move to next history
+            self.walk_and_report(Self::next_history)
         } else {
             // See `up_command`: settle under the rest policy via the commit boundary.
-            self.apply_edit_commands(&[EditCommand::MoveLineDown { select: false }]);
-            Ok(())
+            Ok(self
+                .apply_edit_commands(&[EditCommand::MoveLineDown { select: false }])
+                .into())
         }
+    }
+
+    /// Run a history walk and report whether it moved anything: the buffer's
+    /// text, or the cursor within it. The walk itself says nothing, since at
+    /// either end of history it is a no-op by design, so the answer is read
+    /// off the editor before and after.
+    fn walk_and_report(
+        &mut self,
+        walk: fn(&mut Self) -> io::Result<()>,
+    ) -> io::Result<EventStatus> {
+        let text_before = self.editor.get_buffer().to_string();
+        let cursor_before = self.editor.insertion_point();
+        walk(self)?;
+        let unmoved = self.editor.get_buffer() == text_before
+            && self.editor.insertion_point() == cursor_before;
+        Ok(if unmoved {
+            EventStatus::Inapplicable
+        } else {
+            EventStatus::Handled
+        })
     }
 
     /// Checks if hints should be displayed and are able to be completed
@@ -3912,6 +3932,148 @@ mod tests {
             "older",
             "from the first line, Up walks back to the older entry"
         );
+    }
+
+    // --- Up and Down report what they did ---
+
+    /// What an event reports when the engine handles it.
+    fn status_of(rl: &mut Reedline, event: ReedlineEvent) -> EventStatus {
+        rl.handle_editor_event(&DefaultPrompt::default(), event)
+            .expect("event ok")
+    }
+
+    /// On the line being typed, with nothing newer below it, Down has nowhere
+    /// to go. It says so, and a binding built on `UntilFound` gets to try its
+    /// next event — the way `Left` and `Right` already report at the edges.
+    #[test]
+    fn down_on_the_line_being_typed_is_inapplicable() {
+        let mut rl = two_entry_history_engine();
+        rl.run_edit_commands(&[EditCommand::InsertString("typed".into())]);
+        assert!(matches!(
+            status_of(&mut rl, ReedlineEvent::Down),
+            EventStatus::Inapplicable
+        ));
+        assert_eq!(rl.editor.get_buffer(), "typed", "and nothing moved");
+    }
+
+    /// With history to walk, Down is handled: forward an entry, then to the
+    /// draft, and only then inapplicable — and it stays so.
+    #[test]
+    fn down_walks_forward_through_history_and_is_handled_until_it_cannot() {
+        let mut rl = two_entry_history_engine();
+        drive(&mut rl, &[key(KeyCode::Up), key(KeyCode::Up)]);
+        assert_eq!(rl.editor.get_buffer(), "older", "setup");
+        assert!(matches!(
+            status_of(&mut rl, ReedlineEvent::Down),
+            EventStatus::Handled
+        ));
+        assert_eq!(rl.editor.get_buffer(), "one\ntwo", "forward one entry");
+        assert!(
+            matches!(
+                status_of(&mut rl, ReedlineEvent::Down),
+                EventStatus::Handled
+            ),
+            "to the draft"
+        );
+        assert_eq!(rl.editor.get_buffer(), "");
+        assert!(
+            matches!(
+                status_of(&mut rl, ReedlineEvent::Down),
+                EventStatus::Inapplicable
+            ),
+            "nothing below the draft"
+        );
+        assert!(
+            matches!(
+                status_of(&mut rl, ReedlineEvent::Down),
+                EventStatus::Inapplicable
+            ),
+            "and it stays that way"
+        );
+    }
+
+    /// Inside a multi-line buffer, Down is handled while it moves the cursor:
+    /// down a line, then to the end of the last one. Only then, with the
+    /// cursor at the end of the line being typed, has it nowhere to go.
+    #[test]
+    fn down_inside_a_multiline_buffer_is_handled_while_the_cursor_moves() {
+        let mut rl = seam_engine(Box::<Emacs>::default());
+        rl.run_edit_commands(&[
+            EditCommand::InsertString("one\ntwo".into()),
+            EditCommand::MoveToStart { select: false },
+        ]);
+        assert!(
+            matches!(
+                status_of(&mut rl, ReedlineEvent::Down),
+                EventStatus::Handled
+            ),
+            "to line 2"
+        );
+        assert!(
+            matches!(
+                status_of(&mut rl, ReedlineEvent::Down),
+                EventStatus::Handled
+            ),
+            "to its end"
+        );
+        assert_eq!(rl.editor.insertion_point(), 7);
+        assert!(matches!(
+            status_of(&mut rl, ReedlineEvent::Down),
+            EventStatus::Inapplicable
+        ));
+    }
+
+    /// Up mirrors Down: handled while there is an older entry, inapplicable
+    /// at the oldest, and with no history at all.
+    #[test]
+    fn up_is_inapplicable_once_history_is_exhausted() {
+        let mut rl = two_entry_history_engine();
+        assert!(matches!(
+            status_of(&mut rl, ReedlineEvent::Up),
+            EventStatus::Handled
+        ));
+        assert_eq!(rl.editor.get_buffer(), "one\ntwo", "the newest entry");
+        assert!(
+            matches!(status_of(&mut rl, ReedlineEvent::Up), EventStatus::Handled),
+            "to the oldest"
+        );
+        assert_eq!(rl.editor.get_buffer(), "older");
+        assert!(
+            matches!(
+                status_of(&mut rl, ReedlineEvent::Up),
+                EventStatus::Inapplicable
+            ),
+            "nothing older"
+        );
+        assert_eq!(rl.editor.get_buffer(), "older", "and nothing moved");
+
+        let mut empty = seam_engine(Box::<Emacs>::default());
+        assert!(
+            matches!(
+                status_of(&mut empty, ReedlineEvent::Up),
+                EventStatus::Inapplicable
+            ),
+            "no history at all"
+        );
+    }
+
+    /// The report is what `UntilFound` consults: Down on the line being typed
+    /// falls through to the next event in the binding.
+    #[test]
+    fn until_found_falls_through_down_on_the_line_being_typed() {
+        let mut rl = two_entry_history_engine();
+        rl.run_edit_commands(&[EditCommand::InsertString("typed".into())]);
+        let status = rl
+            .handle_editor_event(
+                &DefaultPrompt::default(),
+                ReedlineEvent::UntilFound(vec![
+                    ReedlineEvent::Down,
+                    ReedlineEvent::Edit(vec![EditCommand::InsertString("!".into())]),
+                ]),
+            )
+            .expect("event ok");
+        assert!(matches!(status, EventStatus::Handled));
+        assert_eq!(rl.editor.get_buffer(), "typed!", "the second event ran");
     }
 
     // --- a history that refuses to save ---
