@@ -7,6 +7,7 @@ use crate::{
 /// Available default options:
 /// - Emacs
 /// - Vi
+/// - Helix
 pub trait EditMode: Send {
     /// Translate the given user input event into what the `LineEditor` understands
     fn parse_event(&mut self, event: ReedlineRawEvent) -> ReedlineEvent;

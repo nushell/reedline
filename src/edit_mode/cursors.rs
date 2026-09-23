@@ -4,8 +4,10 @@ use crossterm::cursor::SetCursorStyle;
 /// Maps cursor shapes to each edit mode (emacs, vi and helix).
 /// If any of the fields is `None`, the cursor won't get changed by Reedline for that mode.
 ///
-/// Build one with `..CursorConfig::default()` rather than an exhaustive
-/// literal, so a mode gaining a field of its own does not break the literal.
+/// A host that names only some of the fields should build it with
+/// `..CursorConfig::default()`, so a mode gaining a slot of its own does not
+/// break the literal. One that names every field, like the demo, needs no
+/// spread.
 #[derive(Default)]
 pub struct CursorConfig {
     /// The cursor to be used when in vi insert mode
