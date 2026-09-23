@@ -4662,6 +4662,7 @@ mod test {
         assert_eq!(result, expected_output);
     }
 
+    #[allow(clippy::identity_op)]
     #[test]
     fn test_custom_pair_unicode_safety() {
         let (left_char, right_char) = ('𐊢', '»');
