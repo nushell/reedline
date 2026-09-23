@@ -1792,16 +1792,8 @@ impl Editor {
     }
 
     fn add_text_object(&mut self, text_object: TextObjectType) {
-        let pair = match text_object {
-            TextObjectType::Brackets(TextObjectBracket::Parenthesis) => ('(', ')'),
-            TextObjectType::Brackets(TextObjectBracket::SquareBracket) => ('[', ']'),
-            TextObjectType::Brackets(TextObjectBracket::CurlyBracket) => ('{', '}'),
-            TextObjectType::Brackets(TextObjectBracket::AngleBracket) => ('<', '>'),
-            TextObjectType::Quotes(TextObjectQuote::SingleQuote) => ('\'', '\''),
-            TextObjectType::Quotes(TextObjectQuote::DoubleQuote) => ('"', '"'),
-            TextObjectType::Quotes(TextObjectQuote::Tick) => ('`', '`'),
-            TextObjectType::Pair { left, right } => (left, right),
-            _ => return,
+        let Some(pair) = text_object.to_chars() else {
+            return;
         };
         let cursor = self.line_buffer.cursor();
         let cursor_forward = cursor.with_direction(super::cursor::Direction::Forward);
@@ -1809,13 +1801,19 @@ impl Editor {
         self.line_buffer.insert_char(pair.1);
         self.line_buffer.set_cursor(cursor_forward.flip());
         self.line_buffer.insert_char(pair.0);
-        self.place(Cursor::new(cursor.anchor() + 1, cursor.head() + 1));
+        self.place(Cursor::new(
+            cursor.anchor() + pair.0.len_utf8(),
+            cursor.head() + pair.0.len_utf8(),
+        ));
     }
 
     fn remove_text_object(&mut self, text_object: TextObjectType) {
-        if matches!(text_object, TextObjectType::Word | TextObjectType::BigWord) {
+        let Some((left_len, right_len)) = text_object
+            .to_chars()
+            .map(|(l, r)| (l.len_utf8(), r.len_utf8()))
+        else {
             return;
-        }
+        };
         let cursor = self.line_buffer.cursor();
         self.line_buffer.set_cursor(Cursor::point(cursor.head()));
         let Some(range) = self.text_object_range(TextObject {
@@ -1826,30 +1824,40 @@ impl Editor {
             self.line_buffer.set_cursor(cursor);
             return;
         };
-        let range = range.start - 1..range.end;
-        self.line_buffer.clear_range(range.end..range.end + 1);
-        self.line_buffer.clear_range(range.start..range.start + 1);
-        let is_range_empty = (range.end - range.start) == 1;
-        let anchor = cursor
-            .anchor()
-            .saturating_sub(
-                (cursor.anchor() > range.start || cursor.anchor() == range.start && is_range_empty)
-                    as usize,
-            )
-            .saturating_sub((cursor.anchor() >= range.end) as usize);
-        let head = cursor
-            .head()
-            .saturating_sub((cursor.head() > range.start || is_range_empty) as usize)
-            .saturating_sub((cursor.head() == range.end) as usize);
+        let range = range.start - left_len..range.end;
+        self.line_buffer
+            .clear_range(range.end..range.end + right_len);
+        self.line_buffer
+            .clear_range(range.start..range.start + left_len);
+        let is_range_empty = (range.end - range.start) == left_len;
+        let mut anchor = cursor.anchor();
+        if cursor.anchor() > range.start || cursor.anchor() == range.start && is_range_empty {
+            anchor = anchor.saturating_sub(left_len);
+        }
+        if cursor.anchor() > range.end {
+            anchor = anchor.saturating_sub(right_len);
+        }
+        let mut head = cursor.head();
+        if cursor.head() > range.start || is_range_empty {
+            head = head.saturating_sub(left_len);
+        }
+        if cursor.head() > range.end || cursor.head() == range.end && is_range_empty {
+            head = head.saturating_sub(right_len);
+        }
         let new_cursor = Cursor::new(anchor, head);
         self.place(new_cursor);
     }
     fn replace_text_object(&mut self, old: TextObjectType, new: TextObjectType) {
-        if matches!(old, TextObjectType::Word | TextObjectType::BigWord)
-            || matches!(new, TextObjectType::Word | TextObjectType::BigWord)
-        {
+        let Some((old_left_len, old_right_len)) =
+            old.to_chars().map(|(l, r)| (l.len_utf8(), r.len_utf8()))
+        else {
             return;
-        }
+        };
+        let Some((new_left_len, new_right_len)) =
+            new.to_chars().map(|(l, r)| (l.len_utf8(), r.len_utf8()))
+        else {
+            return;
+        };
         let cursor = self.line_buffer.cursor();
         self.line_buffer.set_cursor(Cursor::point(cursor.head()));
         let Some(range) = self.text_object_range(TextObject {
@@ -1861,10 +1869,36 @@ impl Editor {
             return;
         };
         self.remove_text_object(old);
-        self.line_buffer
-            .set_cursor(Cursor::new(range.start - 1, range.end - 1));
+        self.line_buffer.set_cursor(Cursor::new(
+            range.start - old_left_len,
+            range.end - old_left_len,
+        ));
         self.add_text_object(new);
-        self.place(cursor);
+
+        let (left_diff, right_diff) = (
+            old_left_len as isize - new_left_len as isize,
+            old_right_len as isize - new_right_len as isize,
+        );
+        if left_diff == 0 && right_diff == 0 {
+            self.place(cursor);
+            return;
+        }
+        let mut anchor = cursor.anchor();
+        if cursor.anchor() >= range.start {
+            anchor = anchor.saturating_sub_signed(left_diff);
+        }
+        if cursor.anchor() > range.end {
+            anchor = anchor.saturating_sub_signed(right_diff);
+        }
+        let mut head = cursor.head();
+        if cursor.head() >= range.start {
+            head = head.saturating_sub_signed(left_diff);
+        }
+        if cursor.head() > range.end {
+            head = head.saturating_sub_signed(right_diff);
+        }
+        let new_cursor = Cursor::new(anchor, head);
+        self.place(new_cursor);
     }
 
     fn select_text_object(&mut self, text_object: TextObject) {
@@ -4324,6 +4358,7 @@ mod test {
         let result = editor.get_buffer();
         assert_eq!(result, expected_output);
     }
+
     #[rstest]
     #[case(
         "",
@@ -4432,7 +4467,7 @@ mod test {
     // `{[abc]}` => `[abc]`
     #[case("{abc}", Cursor::new(1, 3), Cursor::new(0, 2))]
     // `[{abc}]` => `[abc]`
-    #[case("{abc}", Cursor::new(0, 4), Cursor::new(0, 2))]
+    #[case("{abc}", Cursor::new(0, 4), Cursor::new(0, 3))]
     // `[abc]{def}ghi` => `[abc]{def}ghi`
     #[case("abc{def}ghi", Cursor::new(0, 2), Cursor::new(0, 2))]
     // `abc{[def]}ghi` => `abc[def]ghi`
@@ -4446,7 +4481,7 @@ mod test {
     // `]abc{def}ghi[` => `]abc{def}ghi[`
     #[case("abc{def}ghi", Cursor::new(10, 0), Cursor::new(10, 0))]
     // `abc[{def}]ghi` => `abc[def]ghi`
-    #[case("abc{def}ghi", Cursor::new(3, 7), Cursor::new(3, 5))]
+    #[case("abc{def}ghi", Cursor::new(3, 7), Cursor::new(3, 6))]
     // `abc{d[ef}gh]i` => `abc{d[ef}gh]i`
     // Note : only the head inside a text object can remove the text object
     #[case("abc{def}ghi", Cursor::new(5, 9), Cursor::new(5, 9))]
@@ -4625,6 +4660,67 @@ mod test {
         editor.run_edit_command(&EditCommand::ReplaceTextObject { old, new });
         let result = editor.get_buffer();
         assert_eq!(result, expected_output);
+    }
+
+    #[test]
+    fn test_custom_pair_unicode_safety() {
+        let (left_char, right_char) = ('𐊢', '»');
+        let left_len = left_char.len_utf8();
+        let custom_pair = TextObjectType::Pair {
+            left: left_char,
+            right: right_char,
+        };
+        let mut editor = editor_with("abc");
+
+        editor.place(Cursor::new(0, 3));
+
+        editor.run_edit_command(&EditCommand::AddTextObject {
+            text_object: custom_pair,
+        });
+        assert_eq!(
+            editor.line_buffer().cursor(),
+            Cursor::new(0 + left_len, 3 + left_len)
+        );
+        assert_eq!(editor.get_buffer(), "𐊢abc»");
+        editor.run_edit_command(&EditCommand::RemoveTextObject {
+            text_object: custom_pair,
+        });
+        assert_eq!(editor.line_buffer().cursor(), Cursor::new(0, 3));
+        assert_eq!(editor.get_buffer(), "abc");
+        editor.set_buffer(String::from("[abc]"), UndoBehavior::NoOp);
+        editor.place(Cursor::new(1, 4));
+        editor.run_edit_command(&EditCommand::ReplaceTextObject {
+            old: TextObjectType::Brackets(TextObjectBracket::SquareBracket),
+            new: custom_pair,
+        });
+        assert_eq!(
+            editor.line_buffer().cursor(),
+            Cursor::new(0 + left_len, 3 + left_len)
+        );
+        assert_eq!(editor.get_buffer(), "𐊢abc»");
+        editor.run_edit_command(&EditCommand::ReplaceTextObject {
+            old: custom_pair,
+            new: TextObjectType::Brackets(TextObjectBracket::SquareBracket),
+        });
+        assert_eq!(editor.line_buffer().cursor(), Cursor::new(1, 4));
+        assert_eq!(editor.get_buffer(), "[abc]");
+        // with reversed cursor
+        editor.place(Cursor::new(4, 1));
+        editor.run_edit_command(&EditCommand::ReplaceTextObject {
+            old: TextObjectType::Brackets(TextObjectBracket::SquareBracket),
+            new: custom_pair,
+        });
+        assert_eq!(
+            editor.line_buffer().cursor(),
+            Cursor::new(3 + left_len, 0 + left_len)
+        );
+        assert_eq!(editor.get_buffer(), "𐊢abc»");
+        editor.run_edit_command(&EditCommand::ReplaceTextObject {
+            old: custom_pair,
+            new: TextObjectType::Brackets(TextObjectBracket::SquareBracket),
+        });
+        assert_eq!(editor.line_buffer().cursor(), Cursor::new(4, 1));
+        assert_eq!(editor.get_buffer(), "[abc]");
     }
 
     // --- MotionTarget verbs (Move / Extend / Cut / Copy / Erase) ---

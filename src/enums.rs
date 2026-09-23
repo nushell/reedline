@@ -125,6 +125,24 @@ impl TextObjectType {
             _ => None,
         }
     }
+
+    /// Returns the pair of character if any is associated
+    pub fn to_chars(self) -> Option<(char, char)> {
+        match self {
+            Self::Word
+            | Self::BigWord
+            | Self::Brackets(TextObjectBracket::All)
+            | Self::Quotes(TextObjectQuote::All) => None,
+            Self::Brackets(TextObjectBracket::Parenthesis) => Some(('(', ')')),
+            Self::Brackets(TextObjectBracket::SquareBracket) => Some(('[', ']')),
+            Self::Brackets(TextObjectBracket::CurlyBracket) => Some(('{', '}')),
+            Self::Brackets(TextObjectBracket::AngleBracket) => Some(('<', '>')),
+            Self::Quotes(TextObjectQuote::SingleQuote) => Some(('\'', '\'')),
+            Self::Quotes(TextObjectQuote::DoubleQuote) => Some(('"', '"')),
+            Self::Quotes(TextObjectQuote::Tick) => Some(('`', '`')),
+            Self::Pair { left, right } => Some((left, right)),
+        }
+    }
 }
 
 /// Text objects that can be operated on with vim-style commands
