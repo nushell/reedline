@@ -4885,6 +4885,82 @@ mod tests {
         );
     }
 
+    /// A bar selection carried into a block mode keeps the text it covers.
+    /// Emacs holds `bc` of `abcde` as the span `(1, 3)` with the caret after
+    /// `c`; a block mode reads the same span as `v` on `b` then `l`, caret on
+    /// `c`, so the operator that follows takes exactly what was shown. A
+    /// backward span already has its caret on a grapheme and moves nothing.
+    #[rstest]
+    #[case::forward_into_vi_visual(
+        &[key(KeyCode::Home), key(KeyCode::Right), shift(KeyCode::Right), shift(KeyCode::Right)],
+        PromptEditMode::Vi(PromptViMode::Visual),
+        (1, 3),
+        2,
+        "ade"
+    )]
+    #[case::forward_into_helix_select(
+        &[key(KeyCode::Home), key(KeyCode::Right), shift(KeyCode::Right), shift(KeyCode::Right)],
+        PromptEditMode::Helix(PromptHelixMode::Select),
+        (1, 3),
+        2,
+        "ade"
+    )]
+    #[case::forward_into_helix_normal(
+        &[key(KeyCode::Home), key(KeyCode::Right), shift(KeyCode::Right), shift(KeyCode::Right)],
+        PromptEditMode::Helix(PromptHelixMode::Normal),
+        (1, 3),
+        2,
+        "ade"
+    )]
+    #[case::backward_into_vi_visual(
+        &[shift(KeyCode::Left), shift(KeyCode::Left)],
+        PromptEditMode::Vi(PromptViMode::Visual),
+        (3, 5),
+        3,
+        "abc"
+    )]
+    #[case::backward_into_helix_select(
+        &[shift(KeyCode::Left), shift(KeyCode::Left)],
+        PromptEditMode::Helix(PromptHelixMode::Select),
+        (3, 5),
+        3,
+        "abc"
+    )]
+    #[case::backward_into_helix_normal(
+        &[shift(KeyCode::Left), shift(KeyCode::Left)],
+        PromptEditMode::Helix(PromptHelixMode::Normal),
+        (3, 5),
+        3,
+        "abc"
+    )]
+    fn switch_mode_into_a_block_mode_keeps_the_selected_text(
+        #[case] select: &[KeyEvent],
+        #[case] target: PromptEditMode,
+        #[case] selection: (usize, usize),
+        #[case] caret: usize,
+        #[case] after_d: &str,
+    ) {
+        let mut rl = seam_engine(emacs_with(
+            KeyModifiers::ALT,
+            KeyCode::Char('b'),
+            ReedlineEvent::SwitchMode(target.clone()),
+        ))
+        .with_additional_edit_mode(Box::<crate::Vi>::default())
+        .with_additional_edit_mode(Box::<crate::Helix>::default())
+        .with_validator(Box::new(crate::DefaultValidator));
+
+        drive_until_signal(&mut rl, &[ch('a'), ch('b'), ch('c'), ch('d'), ch('e')]);
+        drive_until_signal(&mut rl, select);
+        assert_eq!(rl.editor.get_selection(), Some(selection), "setup");
+
+        drive_until_signal(&mut rl, &[alt('b')]);
+        assert_eq!(rl.prompt_edit_mode(), target);
+        assert_eq!(rl.editor.get_selection(), Some(selection));
+        assert_eq!(rl.editor.insertion_point(), caret);
+        drive_until_signal(&mut rl, &[ch('d')]);
+        assert_eq!(rl.editor.get_buffer(), after_d);
+    }
+
     /// A switch while the history menu is open neither moves the cursor nor
     /// touches the buffer the menu is querying with.
     #[test]
