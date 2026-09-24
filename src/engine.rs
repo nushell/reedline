@@ -247,8 +247,12 @@ struct BufferEditor {
 }
 
 impl BufferEditor {
+    const FILE: &str = "{file}";
+    const LINE: &str = "{line}";
+    const COL: &str = "{col}";
+
     /// renders the editor command template,
-    /// substituting `{file}`, `{line}`, and `{col}` where present.
+    /// substituting template placeholders where present.
     pub(crate) fn render_command(&self, line_buffer: &LineBuffer) -> Command {
         let mut rendered = Command::new(self.command.get_program());
 
@@ -269,9 +273,9 @@ impl BufferEditor {
             has_file_placeholder |= arg.contains("{file}");
 
             let arg = arg
-                .replace("{file}", &file)
-                .replace("{line}", &line)
-                .replace("{col}", &col);
+                .replace(Self::FILE, &file)
+                .replace(Self::LINE, &line)
+                .replace(Self::COL, &col);
 
             rendered.arg(arg);
         }
