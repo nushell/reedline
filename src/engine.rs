@@ -251,6 +251,20 @@ impl BufferEditor {
     const LINE: &str = "{line}";
     const COL: &str = "{col}";
 
+    fn new(mut command: Command, temp_file: PathBuf) -> BufferEditor {
+        let mut has_file_arg = false;
+
+        for arg in command.get_args() {
+            has_file_arg |= arg == temp_file.as_os_str();
+        }
+
+        if !has_file_arg {
+            command.arg(&temp_file);
+        }
+
+        BufferEditor { command, temp_file }
+    }
+
     /// renders the editor command template,
     /// substituting template placeholders where present.
     pub(crate) fn render_command(&self, line_buffer: &LineBuffer) -> Command {
@@ -813,23 +827,7 @@ impl Reedline {
     /// ```
     #[must_use]
     pub fn with_buffer_editor(mut self, editor: Command, temp_file: PathBuf) -> Self {
-        let mut command = editor;
-
-        let mut has_file_arg = false;
-
-        for arg in command.get_args() {
-            has_file_arg |= arg == temp_file.as_os_str();
-
-            if let Some(arg) = arg.to_str() {
-                has_file_arg |= arg.contains(BufferEditor::FILE);
-            }
-        }
-
-        if !has_file_arg {
-            command.arg(&temp_file);
-        }
-
-        self.buffer_editor = Some(BufferEditor { command, temp_file });
+        self.buffer_editor = Some(BufferEditor::new(editor, temp_file));
         self
     }
 
