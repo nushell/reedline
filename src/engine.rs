@@ -267,21 +267,13 @@ impl BufferEditor {
         let line = (line_buffer.line() + 1).to_string();
         let col = (line_buffer.col() + 1).to_string();
 
-        let mut has_file_placeholder = false;
-
         for arg in self.command.get_args().map(OsStr::to_string_lossy) {
-            has_file_placeholder |= arg.contains("{file}");
-
             let arg = arg
                 .replace(Self::FILE, &file)
                 .replace(Self::LINE, &line)
                 .replace(Self::COL, &col);
 
             rendered.arg(arg);
-        }
-
-        if !has_file_placeholder {
-            rendered.arg(&self.temp_file);
         }
 
         rendered
@@ -821,14 +813,23 @@ impl Reedline {
     /// ```
     #[must_use]
     pub fn with_buffer_editor(mut self, editor: Command, temp_file: PathBuf) -> Self {
-        let mut editor = editor;
-        if !editor.get_args().any(|arg| arg == temp_file.as_os_str()) {
-            editor.arg(&temp_file);
+        let mut command = editor;
+
+        let mut has_file_arg = false;
+
+        for arg in command.get_args() {
+            has_file_arg |= arg == temp_file.as_os_str();
+
+            if let Some(arg) = arg.to_str() {
+                has_file_arg |= arg.contains(BufferEditor::FILE);
+            }
         }
-        self.buffer_editor = Some(BufferEditor {
-            command: editor,
-            temp_file,
-        });
+
+        if !has_file_arg {
+            command.arg(&temp_file);
+        }
+
+        self.buffer_editor = Some(BufferEditor { command, temp_file });
         self
     }
 
@@ -7770,17 +7771,18 @@ mod tests {
 
     #[rstest]
     #[case(&["nano"], "nano foo.rs")]
+    #[case(&["vim", "foo.rs"], "vim foo.rs")]
     #[case(&["code", "--goto", "{file}:{line}:{col}"], "code --goto foo.rs:2:4")]
     #[case(&["hx", "{file}:{line}:{col}"], "hx foo.rs:2:4")]
     #[case(&["nvim", "{file}", "\"call cursor({line}, {col})\""], "nvim foo.rs \"call cursor(2, 4)\"")]
     #[case(&["vim", "+{line}", "{file}"], "vim +2 foo.rs")]
     #[case(&["emacs", "+{line}:{col}", "{file}"], "emacs +2:4 foo.rs")]
     #[case(&["emacs", "+{line}:{col}"], "emacs +2:4 foo.rs")]
+    #[case(&["emacs", "+{line}:{col}", "foo.rs"], "emacs +2:4 foo.rs")]
     fn render_editor_command_with_pattern(#[case] command: &[&str], #[case] expected: &str) {
-        let buffer_editor = BufferEditor {
-            command: command_from_strs(command),
-            temp_file: PathBuf::from("foo.rs"),
-        };
+        let line_editor = Reedline::create()
+            .with_buffer_editor(command_from_strs(command), PathBuf::from("foo.rs"));
+        let buffer_editor = line_editor.buffer_editor.as_ref().unwrap();
 
         let line_buffer = {
             let mut line_buffer = LineBuffer::new();
