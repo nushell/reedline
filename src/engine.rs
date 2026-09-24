@@ -291,6 +291,10 @@ impl BufferEditor {
             };
         }
 
+        if let Some(dir) = self.command.get_current_dir() {
+            rendered.current_dir(dir);
+        }
+
         let file = self.temp_file.to_string_lossy();
         let line = (line_buffer.line() + 1).to_string();
         let col = (line_buffer.col() + 1).to_string();
@@ -3095,6 +3099,7 @@ mod tests {
         ListMenu, MenuBuilder, MotionTarget, PromptHelixMode, PromptViMode, Span, Suggestion,
     };
     use rstest::rstest;
+    use std::path::Path;
 
     fn seam_engine(edit_mode: Box<dyn EditMode>) -> Reedline {
         let mut rl = Reedline::create().with_edit_mode(edit_mode);
@@ -7769,10 +7774,11 @@ mod tests {
         assert_eq!(rl.editor.insertion_point(), 3);
     }
 
-    fn command_from_strs(command: &[&str]) -> Command {
+    fn command_from_strs(command: &[&str], current_dir: impl AsRef<Path>) -> Command {
         let (program, args) = command.split_first().unwrap();
         let mut command = Command::new(program);
         command.args(args);
+        command.current_dir(current_dir);
         command
     }
 
@@ -7802,8 +7808,12 @@ mod tests {
         #[case] expected: &str,
         #[case] is_template: bool,
     ) {
-        let line_editor = Reedline::create()
-            .with_buffer_editor(command_from_strs(command), PathBuf::from("foo.rs"));
+        let current_dir = "test-dir";
+
+        let line_editor = Reedline::create().with_buffer_editor(
+            command_from_strs(command, current_dir),
+            PathBuf::from("foo.rs"),
+        );
         let buffer_editor = line_editor.buffer_editor.as_ref().unwrap();
 
         assert_eq!(buffer_editor.is_template, is_template);
@@ -7821,6 +7831,10 @@ mod tests {
         };
 
         let actual = buffer_editor.render_command(&line_buffer);
+
+        let current_dir = current_dir.as_ref();
+        assert_eq!(actual.get_current_dir(), Some(current_dir));
+
         assert_eq!(command_into_string(actual), expected);
     }
 }
