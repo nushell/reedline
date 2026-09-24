@@ -4653,7 +4653,7 @@ mod test {
         TextObjectType::Brackets(TextObjectBracket::Parenthesis),
         "text1 {text2} text3"
     )]
-    // anchor outside, head outside (left) TODO: Bug here, see https://github.com/nushell/reedline/issues/1195
+    // anchor outside, head outside (left)
     #[case(
         "text1 {text2} text3",
         Cursor::new(16, 2),
@@ -4661,7 +4661,7 @@ mod test {
         TextObjectType::Brackets(TextObjectBracket::Parenthesis),
         "text1 {text2} text3"
     )]
-    // anchor outside (right), head outside (left) TODO: Bug here, see https://github.com/nushell/reedline/issues/1195
+    // anchor outside (right), head outside (left)
     #[case(
         "text1 {text2} text3",
         Cursor::new(18, 16),
