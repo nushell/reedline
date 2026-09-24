@@ -153,6 +153,7 @@ pub struct TextObject {
     /// The type of text object
     pub object_type: TextObjectType,
     /// check the next text object if no text object found around the cursor
+    #[serde(default)]
     pub check_next: bool,
 }
 
@@ -161,7 +162,7 @@ impl Default for TextObject {
         Self {
             scope: TextObjectScope::Inner,
             object_type: TextObjectType::Word,
-            check_next: false,
+            check_next: true,
         }
     }
 }

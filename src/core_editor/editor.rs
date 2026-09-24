@@ -3844,7 +3844,7 @@ mod test {
         editor.cut_text_object(TextObject {
             scope: TextObjectScope::Inner,
             object_type: TextObjectType::Word,
-            check_next: false,
+            ..Default::default()
         });
         assert_eq!(editor.get_buffer(), expected_buffer);
         assert_eq!(editor.insertion_point(), expected_cursor);
@@ -3865,7 +3865,7 @@ mod test {
         editor.copy_text_object(TextObject {
             scope: TextObjectScope::Inner,
             object_type: TextObjectType::Word,
-            check_next: false,
+            ..Default::default()
         });
         assert_eq!(editor.get_buffer(), input); // Buffer shouldn't change
         assert_eq!(editor.insertion_point(), cursor_pos); // Cursor should return to original position
@@ -3898,7 +3898,7 @@ mod test {
         editor.cut_text_object(TextObject {
             scope: TextObjectScope::Around,
             object_type: TextObjectType::Word,
-            check_next: false,
+            ..Default::default()
         });
         assert_eq!(editor.get_buffer(), expected_buffer);
         assert_eq!(editor.insertion_point(), expected_cursor);
@@ -3919,7 +3919,7 @@ mod test {
         editor.copy_text_object(TextObject {
             scope: TextObjectScope::Around,
             object_type: TextObjectType::Word,
-            check_next: false,
+            ..Default::default()
         });
         assert_eq!(editor.get_buffer(), input); // Buffer shouldn't change
         assert_eq!(editor.insertion_point(), cursor_pos); // Cursor should return to original position
@@ -3943,7 +3943,7 @@ mod test {
         editor.cut_text_object(TextObject {
             scope: TextObjectScope::Inner,
             object_type: TextObjectType::BigWord,
-            check_next: false,
+            ..Default::default()
         });
 
         assert_eq!(editor.get_buffer(), expected_buffer);
@@ -3969,7 +3969,7 @@ mod test {
         editor.cut_text_object(TextObject {
             scope: TextObjectScope::Inner,
             object_type: TextObjectType::Word,
-            check_next: false,
+            ..Default::default()
         });
         assert_eq!(editor.get_buffer(), expected_buffer);
         assert_eq!(editor.insertion_point(), expected_cursor);
@@ -4001,10 +4001,10 @@ mod test {
     }
 
     #[rstest]
-    #[case("hello-world test", 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, check_next: false }, "-world test", "hello")] // small word gets just "hello"
-    #[case("hello-world test", 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::BigWord, check_next: false }, " test", "hello-world")] // big word gets "hello-word"
-    #[case("test@example.com", 6, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, check_next: false }, "test@", "example.com")] // small word in email (UAX#29 extends across punct)
-    #[case("test@example.com", 6, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::BigWord, check_next: false }, "", "test@example.com")] // big word gets entire email
+    #[case("hello-world test", 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, ..Default::default() }, "-world test", "hello")] // small word gets just "hello"
+    #[case("hello-world test", 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::BigWord, ..Default::default() }, " test", "hello-world")] // big word gets "hello-word"
+    #[case("test@example.com", 6, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, ..Default::default() }, "test@", "example.com")] // small word in email (UAX#29 extends across punct)
+    #[case("test@example.com", 6, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::BigWord, ..Default::default() }, "", "test@example.com")] // big word gets entire email
     fn test_word_vs_big_word_comparison(
         #[case] input: &str,
         #[case] cursor_pos: usize,
@@ -4039,7 +4039,7 @@ mod test {
         editor.cut_text_object(TextObject {
             scope: TextObjectScope::Inner,
             object_type: TextObjectType::Word,
-            check_next: false,
+            ..Default::default()
         });
         assert_eq!(editor.cut_buffer.get().0, expected_cut);
     }
@@ -4063,7 +4063,7 @@ mod test {
         editor.cut_text_object(TextObject {
             scope: TextObjectScope::Around,
             object_type: TextObjectType::Word,
-            check_next: false,
+            ..Default::default()
         });
         assert_eq!(editor.cut_buffer.get().0, expected_cut);
     }
@@ -4077,7 +4077,7 @@ mod test {
         editor.cut_text_object(TextObject {
             scope: TextObjectScope::Inner,
             object_type: TextObjectType::Word,
-            check_next: false,
+            ..Default::default()
         }); // Cut the emoji
 
         assert!(editor.line_buffer.is_valid()); // Should not panic or be invalid
@@ -4085,19 +4085,19 @@ mod test {
 
     #[rstest]
     // Test operations when cursor is IN WHITESPACE (middle of spaces)
-    #[case("hello world test", 5, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, check_next: false }, "helloworld test", 5, " ")] // single space
-    #[case("hello  world", 6, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, check_next: false }, "helloworld", 5, "  ")] // multiple spaces, cursor on second
-    #[case("hello   world", 7, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, check_next: false }, "helloworld", 5, "   ")] // multiple spaces, cursor on middle
-    #[case("   hello", 1, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, check_next: false }, "hello", 0, "   ")] // leading spaces, cursor on middle
-    #[case("hello   ", 7, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, check_next: false }, "hello", 5, "   ")] // trailing spaces, cursor on middle
-    #[case("hello\tworld", 5, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, check_next: false }, "helloworld", 5, "\t")] // tab character
-    #[case("hello\nworld", 5, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, check_next: false }, "helloworld", 5, "\n")] // newline character
-    #[case("hello world test", 5, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::BigWord, check_next: false }, "helloworld test", 5, " ")] // single space (big word)
-    #[case("hello  world", 6, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::BigWord, check_next: false }, "helloworld", 5, "  ")] // multiple spaces (big word)
-    #[case("  ", 0, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, check_next: false }, "", 0, "  ")] // only whitespace at start
-    #[case("  ", 1, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, check_next: false }, "", 0, "  ")] // only whitespace at end
-    #[case("hello  ", 5, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, check_next: false }, "hello", 5, "  ")] // trailing whitespace at string end
-    #[case("  hello", 0, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, check_next: false }, "hello", 0, "  ")] // leading whitespace at string start
+    #[case("hello world test", 5, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, ..Default::default() }, "helloworld test", 5, " ")] // single space
+    #[case("hello  world", 6, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, ..Default::default() }, "helloworld", 5, "  ")] // multiple spaces, cursor on second
+    #[case("hello   world", 7, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, ..Default::default() }, "helloworld", 5, "   ")] // multiple spaces, cursor on middle
+    #[case("   hello", 1, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, ..Default::default() }, "hello", 0, "   ")] // leading spaces, cursor on middle
+    #[case("hello   ", 7, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, ..Default::default() }, "hello", 5, "   ")] // trailing spaces, cursor on middle
+    #[case("hello\tworld", 5, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, ..Default::default() }, "helloworld", 5, "\t")] // tab character
+    #[case("hello\nworld", 5, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, ..Default::default() }, "helloworld", 5, "\n")] // newline character
+    #[case("hello world test", 5, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::BigWord, ..Default::default() }, "helloworld test", 5, " ")] // single space (big word)
+    #[case("hello  world", 6, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::BigWord, ..Default::default() }, "helloworld", 5, "  ")] // multiple spaces (big word)
+    #[case("  ", 0, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, ..Default::default() }, "", 0, "  ")] // only whitespace at start
+    #[case("  ", 1, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, ..Default::default() }, "", 0, "  ")] // only whitespace at end
+    #[case("hello  ", 5, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, ..Default::default() }, "hello", 5, "  ")] // trailing whitespace at string end
+    #[case("  hello", 0, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, ..Default::default() }, "hello", 0, "  ")] // leading whitespace at string start
     fn test_text_object_in_whitespace(
         #[case] input: &str,
         #[case] cursor_pos: usize,
@@ -4117,19 +4117,19 @@ mod test {
     #[rstest]
     // Test text object jumping behavior in various scenarios
     // Cursor inside empty pairs should operate on current pair (cursor stays, nothing cut)
-    #[case(r#"foo()bar"#, 4, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets(TextObjectBracket::All), check_next: true }, "foo()bar", 4, "")] // inside empty brackets
-    #[case(r#"foo""bar"#, 4, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quotes(TextObjectQuote::All), check_next: true }, "foo\"\"bar", 4, "")] // inside empty quotes
+    #[case(r#"foo()bar"#, 4, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets(TextObjectBracket::All), ..Default::default() }, "foo()bar", 4, "")] // inside empty brackets
+    #[case(r#"foo""bar"#, 4, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quotes(TextObjectQuote::All), ..Default::default() }, "foo\"\"bar", 4, "")] // inside empty quotes
     // Cursor outside pairs should jump to next pair (even if empty)
-    #[case(r#"foo ()bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets(TextObjectBracket::All), check_next: true }, "foo ()bar", 5, "")] // jump to empty brackets
-    #[case(r#"foo ""bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quotes(TextObjectQuote::All), check_next: true }, "foo \"\"bar", 5, "")] // jump to empty quote
-    #[case(r#"foo (content)bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets(TextObjectBracket::All), check_next: true }, "foo ()bar", 5, "content")] // jump to non-empty brackets
-    #[case(r#"foo "content"bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quotes(TextObjectQuote::All), check_next: true }, "foo \"\"bar", 5, "content")] // jump to non-empty quotes
+    #[case(r#"foo ()bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets(TextObjectBracket::All), ..Default::default() }, "foo ()bar", 5, "")] // jump to empty brackets
+    #[case(r#"foo ""bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quotes(TextObjectQuote::All), ..Default::default() }, "foo \"\"bar", 5, "")] // jump to empty quote
+    #[case(r#"foo (content)bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets(TextObjectBracket::All), ..Default::default() }, "foo ()bar", 5, "content")] // jump to non-empty brackets
+    #[case(r#"foo "content"bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quotes(TextObjectQuote::All), ..Default::default() }, "foo \"\"bar", 5, "content")] // jump to non-empty quotes
     // Cursor between pairs should jump to next pair
-    #[case(r#"(first) (second)"#, 8, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets(TextObjectBracket::All), check_next: true }, "(first) ()", 9, "second")] // between brackets
-    #[case(r#""first" "second""#, 8, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quotes(TextObjectQuote::All), check_next: true }, "\"first\"\"second\"", 7, " ")] // between quotes
+    #[case(r#"(first) (second)"#, 8, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets(TextObjectBracket::All), ..Default::default() }, "(first) ()", 9, "second")] // between brackets
+    #[case(r#""first" "second""#, 8, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quotes(TextObjectQuote::All), ..Default::default() }, "\"first\"\"second\"", 7, " ")] // between quotes
     // Around scope should include the pair characters
-    #[case(r#"foo (bar)"#, 2, TextObject { scope: TextObjectScope::Around, object_type: TextObjectType::Brackets(TextObjectBracket::All), check_next: true }, "foo ", 4, "(bar)")] // around includes parentheses
-    #[case(r#"foo "bar""#, 2, TextObject { scope: TextObjectScope::Around, object_type: TextObjectType::Quotes(TextObjectQuote::All), check_next: true }, "foo ", 4, "\"bar\"")] // around includes quotes
+    #[case(r#"foo (bar)"#, 2, TextObject { scope: TextObjectScope::Around, object_type: TextObjectType::Brackets(TextObjectBracket::All), ..Default::default() }, "foo ", 4, "(bar)")] // around includes parentheses
+    #[case(r#"foo "bar""#, 2, TextObject { scope: TextObjectScope::Around, object_type: TextObjectType::Quotes(TextObjectQuote::All), ..Default::default() }, "foo ", 4, "\"bar\"")] // around includes quotes
     fn test_text_object_jumping_behavior(
         #[case] input: &str,
         #[case] cursor_pos: usize,
