@@ -5,7 +5,7 @@ use crate::enums::{
 use crate::{Direction, EditCommand, Granularity, MotionTarget, ReedlineEvent, Vi};
 use std::iter::Peekable;
 
-pub fn parse_command<'iter, I>(mode: ViMode, input: &mut Peekable<I>) -> Option<Command>
+pub(super) fn parse_command<'iter, I>(mode: ViMode, input: &mut Peekable<I>) -> Option<Command>
 where
     I: Iterator<Item = &'iter char>,
 {
@@ -129,7 +129,7 @@ where
     }
 }
 
-pub fn text_object_to_command<'iter, I, F>(
+pub(super) fn text_object_to_command<'iter, I, F>(
     input: &mut Peekable<I>,
     incomplete_command: Command,
     command_generator: F,
@@ -151,7 +151,7 @@ where
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum Command {
+pub(super) enum Command {
     Incomplete,
     Delete,
     DeleteChar,
