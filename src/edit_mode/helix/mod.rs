@@ -720,7 +720,7 @@ fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::ReedlineRawEvent;
+    use crate::{ReedlineRawEvent, TextObjectBracket};
     use pretty_assertions::assert_eq;
     use rstest::rstest;
 
@@ -822,6 +822,34 @@ mod test {
         assert_eq!(
             helix.parse_event(chr(c)),
             ReedlineEvent::Edit(vec![EditCommand::Select(word(kind, edge, direction))])
+        );
+    }
+
+    #[rstest]
+    #[case("mi(", EditCommand::SelectTextObject(TextObject {
+        scope: TextObjectScope::Inner,
+        object_type: TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        check_next: false,
+    }))]
+    #[case("ma(", EditCommand::SelectTextObject(TextObject {
+        scope: TextObjectScope::Around,
+        object_type: TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        check_next: false,
+    }))]
+    #[case("ms(", EditCommand::AddTextObject{text_object: TextObjectType::Brackets(TextObjectBracket::Parenthesis)})]
+    #[case("md(", EditCommand::RemoveTextObject{text_object: TextObjectType::Brackets(TextObjectBracket::Parenthesis)})]
+    #[case("mr([", EditCommand::ReplaceTextObject{old: TextObjectType::Brackets(TextObjectBracket::Parenthesis), new: TextObjectType::Brackets(TextObjectBracket::SquareBracket)})]
+    fn match_in_normal_mode(#[case] inputs: &str, #[case] expected_event: EditCommand) {
+        let mut helix = normal();
+        for c in inputs[0..inputs.len() - 1].chars() {
+            assert_eq!(helix.parse_event(chr(c)), ReedlineEvent::None);
+        }
+        let Some(c) = inputs.chars().last() else {
+            unreachable!();
+        };
+        assert_eq!(
+            helix.parse_event(chr(c)),
+            ReedlineEvent::Edit(vec![expected_event])
         );
     }
 
