@@ -244,6 +244,7 @@ pub struct Reedline {
 struct BufferEditor {
     command: Command,
     temp_file: PathBuf,
+    is_template: bool,
 }
 
 impl BufferEditor {
@@ -253,16 +254,29 @@ impl BufferEditor {
 
     fn new(mut command: Command, temp_file: PathBuf) -> BufferEditor {
         let mut has_file_arg = false;
+        let mut is_template = false;
 
         for arg in command.get_args() {
             has_file_arg |= arg == temp_file.as_os_str();
+
+            if let Some(arg) = arg.to_str() {
+                has_file_arg |= arg.contains(BufferEditor::FILE);
+
+                is_template |= arg.contains(BufferEditor::FILE)
+                    || arg.contains(BufferEditor::LINE)
+                    || arg.contains(BufferEditor::COL);
+            }
         }
 
         if !has_file_arg {
             command.arg(&temp_file);
         }
 
-        BufferEditor { command, temp_file }
+        BufferEditor {
+            command,
+            temp_file,
+            is_template,
+        }
     }
 
     /// renders the editor command template,
@@ -2688,9 +2702,14 @@ impl Reedline {
         // below the old one.
         let suspended_state = self.painter.state_before_suspension();
         {
-            let mut child = buffer_editor
-                .render_command(self.editor.line_buffer())
-                .spawn()?;
+            let mut child = if buffer_editor.is_template {
+                buffer_editor
+                    .render_command(self.editor.line_buffer())
+                    .spawn()?
+            } else {
+                buffer_editor.command.spawn()?
+            };
+
             // The child owns the tty now; invalidate eagerly so
             // any `?` early-return below still leaves the
             // painter in a safe state.
@@ -7768,19 +7787,26 @@ mod tests {
     }
 
     #[rstest]
-    #[case(&["nano"], "nano foo.rs")]
-    #[case(&["vim", "foo.rs"], "vim foo.rs")]
-    #[case(&["code", "--goto", "{file}:{line}:{col}"], "code --goto foo.rs:2:4")]
-    #[case(&["hx", "{file}:{line}:{col}"], "hx foo.rs:2:4")]
-    #[case(&["nvim", "{file}", "\"call cursor({line}, {col})\""], "nvim foo.rs \"call cursor(2, 4)\"")]
-    #[case(&["vim", "+{line}", "{file}"], "vim +2 foo.rs")]
-    #[case(&["emacs", "+{line}:{col}", "{file}"], "emacs +2:4 foo.rs")]
-    #[case(&["emacs", "+{line}:{col}"], "emacs +2:4 foo.rs")]
-    #[case(&["emacs", "+{line}:{col}", "foo.rs"], "emacs +2:4 foo.rs")]
-    fn render_editor_command_with_pattern(#[case] command: &[&str], #[case] expected: &str) {
+    #[case(&["nano"], "nano foo.rs", false)]
+    #[case(&["nano", "file.rs"], "nano file.rs foo.rs", false)]
+    #[case(&["vim", "foo.rs"], "vim foo.rs", false)]
+    #[case(&["code", "--goto", "{file}:{line}:{col}"], "code --goto foo.rs:2:4", true)]
+    #[case(&["hx", "{file}:{line}:{col}"], "hx foo.rs:2:4", true)]
+    #[case(&["nvim", "{file}", "\"call cursor({line}, {col})\""], "nvim foo.rs \"call cursor(2, 4)\"", true)]
+    #[case(&["vim", "+{line}", "{file}"], "vim +2 foo.rs", true)]
+    #[case(&["emacs", "+{line}:{col}", "{file}"], "emacs +2:4 foo.rs", true)]
+    #[case(&["emacs", "+{line}:{col}"], "emacs +2:4 foo.rs", true)]
+    #[case(&["emacs", "+{line}:{col}", "foo.rs"], "emacs +2:4 foo.rs", true)]
+    fn render_editor_command_with_template(
+        #[case] command: &[&str],
+        #[case] expected: &str,
+        #[case] is_template: bool,
+    ) {
         let line_editor = Reedline::create()
             .with_buffer_editor(command_from_strs(command), PathBuf::from("foo.rs"));
         let buffer_editor = line_editor.buffer_editor.as_ref().unwrap();
+
+        assert_eq!(buffer_editor.is_template, is_template);
 
         let line_buffer = {
             let mut line_buffer = LineBuffer::new();
