@@ -4419,8 +4419,20 @@ mod test {
         "text1 text2 text3"
     )]
     // anchor outside (right), head inside
-    // #[case("text1 {text2} text3", Cursor::new(0, 2), TextObjectType::Brackets(TextObjectBracket::CurlyBracket), "text1 text2 text3")] // anchor outside, head outside (left) TODO: Bug here, see https://github.com/nushell/reedline/issues/1195
-    // #[case("text1 {text2} text3", Cursor::new(16, 2), TextObjectType::Brackets(TextObjectBracket::CurlyBracket), "text1 {text2} text3")] // anchor outside (right), head outside (left) TODO: Bug here, see https://github.com/nushell/reedline/issues/1195
+    #[case(
+        "text1 {text2} text3",
+        Cursor::new(0, 2),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        "text1 {text2} text3"
+    )]
+    // anchor outside, head outside (left)
+    #[case(
+        "text1 {text2} text3",
+        Cursor::new(16, 2),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        "text1 {text2} text3"
+    )]
+    // anchor outside (right), head outside (left)
     #[case(
         "text1 {text2} text3",
         Cursor::new(18, 16),
@@ -4451,47 +4463,48 @@ mod test {
 
     #[rstest]
     // `[]` => `[]`
-    #[case("", Cursor::new(0, 0), Cursor::new(0, 0))]
+    #[case("", Cursor::new(0, 0), "", Cursor::new(0, 0))]
     // Quick test of commit_cursor
-    #[case("", Cursor::new(0, 1), Cursor::new(0, 0))]
+    #[case("", Cursor::new(0, 1), "", Cursor::new(0, 0))]
     // `[{}]` => `[]`
-    #[case("{}", Cursor::new(0, 1), Cursor::new(0, 0))]
+    #[case("{}", Cursor::new(0, 1), "", Cursor::new(0, 0))]
     // `]{}[` => `[]`
-    #[case("{}", Cursor::new(1, 0), Cursor::new(0, 0))]
+    #[case("{}", Cursor::new(1, 0), "", Cursor::new(0, 0))]
     // `abc[{}]def` => `ab[c]def`
-    #[case("abc{}def", Cursor::new(3, 4), Cursor::new(2, 2))]
+    #[case("abc{}def", Cursor::new(3, 4), "abcdef", Cursor::new(2, 2))]
     // `[abc]` => `[abc]`
-    #[case("abc", Cursor::new(0, 2), Cursor::new(0, 2))]
+    #[case("abc", Cursor::new(0, 2), "abc", Cursor::new(0, 2))]
     // `]abc[` => `]abc[`
-    #[case("abc", Cursor::new(2, 0), Cursor::new(2, 0))]
+    #[case("abc", Cursor::new(2, 0), "abc", Cursor::new(2, 0))]
     // `{[abc]}` => `[abc]`
-    #[case("{abc}", Cursor::new(1, 3), Cursor::new(0, 2))]
+    #[case("{abc}", Cursor::new(1, 3), "abc", Cursor::new(0, 2))]
     // `[{abc}]` => `[abc]`
-    #[case("{abc}", Cursor::new(0, 4), Cursor::new(0, 3))]
+    #[case("{abc}", Cursor::new(0, 4), "abc", Cursor::new(0, 3))]
     // `[abc]{def}ghi` => `[abc]{def}ghi`
-    #[case("abc{def}ghi", Cursor::new(0, 2), Cursor::new(0, 2))]
+    #[case("abc{def}ghi", Cursor::new(0, 2), "abc{def}ghi", Cursor::new(0, 2))]
     // `abc{[def]}ghi` => `abc[def]ghi`
-    #[case("abc{def}ghi", Cursor::new(4, 6), Cursor::new(3, 5))]
+    #[case("abc{def}ghi", Cursor::new(4, 6), "abcdefghi", Cursor::new(3, 5))]
     // `abc{]def[}ghi` => `abc]def[ghi`
-    #[case("abc{def}ghi", Cursor::new(6, 4), Cursor::new(5, 3))]
+    #[case("abc{def}ghi", Cursor::new(6, 4), "abcdefghi", Cursor::new(5, 3))]
     // `abc{def}[ghi]` => `abc{def}[ghi]`
-    #[case("abc{def}ghi", Cursor::new(8, 10), Cursor::new(8, 10))]
+    #[case("abc{def}ghi", Cursor::new(8, 10), "abc{def}ghi", Cursor::new(8, 10))]
     // `[abc{def}ghi]` => `[abc{def}ghi]`
-    #[case("abc{def}ghi", Cursor::new(0, 10), Cursor::new(0, 10))]
+    #[case("abc{def}ghi", Cursor::new(0, 10), "abc{def}ghi", Cursor::new(0, 10))]
     // `]abc{def}ghi[` => `]abc{def}ghi[`
-    #[case("abc{def}ghi", Cursor::new(10, 0), Cursor::new(10, 0))]
+    #[case("abc{def}ghi", Cursor::new(10, 0), "abc{def}ghi", Cursor::new(10, 0))]
     // `abc[{def}]ghi` => `abc[def]ghi`
-    #[case("abc{def}ghi", Cursor::new(3, 7), Cursor::new(3, 6))]
+    #[case("abc{def}ghi", Cursor::new(3, 7), "abcdefghi", Cursor::new(3, 6))]
     // `abc{d[ef}gh]i` => `abc{d[ef}gh]i`
     // Note : only the head inside a text object can remove the text object
-    #[case("abc{def}ghi", Cursor::new(5, 9), Cursor::new(5, 9))]
+    #[case("abc{def}ghi", Cursor::new(5, 9), "abc{def}ghi", Cursor::new(5, 9))]
     // `a[bc{de]f}ghi` => `a[bcde]fghi`
-    #[case("abc{def}ghi", Cursor::new(1, 5), Cursor::new(1, 4))]
+    #[case("abc{def}ghi", Cursor::new(1, 5), "abcdefghi", Cursor::new(1, 4))]
     // `abc{de]f}gh[i` => `abcde]fgh[i`
-    #[case("abc{def}ghi", Cursor::new(9, 5), Cursor::new(7, 4))]
+    #[case("abc{def}ghi", Cursor::new(9, 5), "abcdefghi", Cursor::new(7, 4))]
     fn test_selection_after_removing_text_object(
         #[case] input: &str,
         #[case] input_cursor: Cursor,
+        #[case] expected_buffer: &str,
         #[case] expected_cursor: Cursor,
     ) {
         let mut editor = editor_with(input);
@@ -4500,19 +4513,20 @@ mod test {
         editor.run_edit_command(&EditCommand::RemoveTextObject {
             text_object: TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
         });
-        let result = editor.line_buffer().cursor();
-        assert_eq!(result, expected_cursor);
+        assert_eq!(editor.line_buffer().cursor(), expected_cursor);
+        assert_eq!(editor.get_buffer(), expected_buffer);
     }
 
     #[rstest]
-    #[case("", Cursor::new(0, 0), Cursor::new(1, 1))]
-    #[case("abc", Cursor::new(0, 2), Cursor::new(1, 3))]
-    #[case("abc", Cursor::new(2, 0), Cursor::new(3, 1))]
-    #[case("abc def ghi", Cursor::new(4, 6), Cursor::new(5, 7))]
-    #[case("abc def ghi", Cursor::new(6, 4), Cursor::new(7, 5))]
+    #[case("", Cursor::new(0, 0), "{}", Cursor::new(1, 1))]
+    #[case("abc", Cursor::new(0, 3), "{abc}", Cursor::new(1, 4))]
+    #[case("abc", Cursor::new(3, 0), "{abc}", Cursor::new(4, 1))]
+    #[case("abc def ghi", Cursor::new(4, 7), "abc {def} ghi", Cursor::new(5, 8))]
+    #[case("abc def ghi", Cursor::new(7, 4), "abc {def} ghi", Cursor::new(8, 5))]
     fn test_selection_after_adding_text_object(
         #[case] input: &str,
         #[case] input_cursor: Cursor,
+        #[case] expected_buffer: &str,
         #[case] expected_cursor: Cursor,
     ) {
         let mut editor = editor_with(input);
@@ -4521,22 +4535,23 @@ mod test {
         editor.run_edit_command(&EditCommand::AddTextObject {
             text_object: TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
         });
-        let result = editor.line_buffer().cursor();
-        assert_eq!(result, expected_cursor);
+        assert_eq!(editor.line_buffer().cursor(), expected_cursor);
+        assert_eq!(editor.get_buffer(), expected_buffer);
     }
 
     #[rstest]
-    #[case("", Cursor::new(0, 0), Cursor::new(0, 0))]
-    #[case("abc", Cursor::new(0, 2), Cursor::new(0, 2))]
-    #[case("[abc]", Cursor::new(1, 3), Cursor::new(1, 3))]
-    #[case("[abc]", Cursor::new(3, 1), Cursor::new(3, 1))]
-    #[case("abc def ghi", Cursor::new(4, 6), Cursor::new(4, 6))]
-    #[case("abc def ghi", Cursor::new(6, 4), Cursor::new(6, 4))]
-    #[case("abc [def] ghi", Cursor::new(5, 7), Cursor::new(5, 7))]
-    #[case("abc [def] ghi", Cursor::new(7, 5), Cursor::new(7, 5))]
+    #[case("", Cursor::new(0, 0), "", Cursor::new(0, 0))]
+    #[case("abc", Cursor::new(0, 2), "abc", Cursor::new(0, 2))]
+    #[case("[abc]", Cursor::new(1, 3), "{abc}", Cursor::new(1, 3))]
+    #[case("[abc]", Cursor::new(3, 1), "{abc}", Cursor::new(3, 1))]
+    #[case("abc def ghi", Cursor::new(4, 6), "abc def ghi", Cursor::new(4, 6))]
+    #[case("abc def ghi", Cursor::new(6, 4), "abc def ghi", Cursor::new(6, 4))]
+    #[case("abc [def] ghi", Cursor::new(5, 7), "abc {def} ghi", Cursor::new(5, 7))]
+    #[case("abc [def] ghi", Cursor::new(7, 5), "abc {def} ghi", Cursor::new(7, 5))]
     fn test_selection_after_replacing_text_object(
         #[case] input: &str,
         #[case] input_cursor: Cursor,
+        #[case] expected_buffer: &str,
         #[case] expected_cursor: Cursor,
     ) {
         let mut editor = editor_with(input);
@@ -4546,8 +4561,8 @@ mod test {
             old: TextObjectType::Brackets(TextObjectBracket::SquareBracket),
             new: TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
         });
-        let result = editor.line_buffer().cursor();
-        assert_eq!(result, expected_cursor);
+        assert_eq!(editor.line_buffer().cursor(), expected_cursor);
+        assert_eq!(editor.get_buffer(), expected_buffer);
     }
 
     #[rstest]
@@ -4631,8 +4646,22 @@ mod test {
         "text1 (text2) text3"
     )]
     // anchor outside (right), head inside
-    // #[case("text1 {text2} text3", Cursor::new(0, 2), (TextObjectType::Brackets(TextObjectBracket::CurlyBracket), TextObjectType::Brackets(TextObjectBracket::Parenthesis)), "text1 {text2} text3")] // anchor outside, head outside (left) TODO: Bug here, see https://github.com/nushell/reedline/issues/1195
-    // #[case("text1 {text2} text3", Cursor::new(16, 2), TextObjectType::Brackets(TextObjectBracket::CurlyBracket), TextObjectType::Brackets(TextObjectBracket::Parenthesis), "text1 {text2} text3")] // anchor outside (right), head outside (left) TODO: Bug here, see https://github.com/nushell/reedline/issues/1195
+    #[case(
+        "text1 {text2} text3",
+        Cursor::new(0, 2),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        "text1 {text2} text3"
+    )]
+    // anchor outside, head outside (left) TODO: Bug here, see https://github.com/nushell/reedline/issues/1195
+    #[case(
+        "text1 {text2} text3",
+        Cursor::new(16, 2),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        "text1 {text2} text3"
+    )]
+    // anchor outside (right), head outside (left) TODO: Bug here, see https://github.com/nushell/reedline/issues/1195
     #[case(
         "text1 {text2} text3",
         Cursor::new(18, 16),
