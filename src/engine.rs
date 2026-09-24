@@ -17,7 +17,7 @@ use {
 use {
     crate::{
         completion::{Completer, CompletionOrigin, CompletionStatus, DefaultCompleter},
-        core_editor::Editor,
+        core_editor::{EditCommandStatus, Editor},
         edit_mode::{EditMode, Emacs},
         enums::{EventStatus, ReedlineEvent},
         highlighter::SimpleMatchHighlighter,
@@ -35,9 +35,9 @@ use {
             semantic_prompt::{Osc133ClickEventsMarkers, SemanticPromptMarkers},
         },
         utils::text_manipulation,
-        AbbrExpandContext, Direction, EditCommand, ExampleHighlighter, Highlighter, LineBuffer,
-        Menu, MenuEvent, MouseButton, Prompt, PromptHistorySearch, ReedlineMenu, Signal,
-        UndoBehavior, ValidationResult, Validator,
+        AbbrExpandContext, AutoPairAction, AutoPairContext, AutoPairs, EditCommand,
+        ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, MouseButton, Prompt,
+        PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult, Validator,
     },
     crossterm::{
         cursor::{SetCursorStyle, Show},
@@ -162,6 +162,9 @@ pub struct Reedline {
 
     // Edit Mode: Vi, Emacs
     edit_mode: Box<dyn EditMode>,
+    /// Standbys: machines a [`ReedlineEvent::SwitchMode`] can swap into
+    /// `edit_mode`, offered a target in registration order.
+    standby_edit_modes: Vec<Box<dyn EditMode>>,
 
     // Provides the tab completions
     completer: Box<dyn Completer + Send>,
@@ -186,6 +189,9 @@ pub struct Reedline {
 
     // Use ansi coloring or not
     use_ansi_coloring: bool,
+
+    // Automatically insert and manage configured character pairs.
+    auto_pairs: Option<AutoPairs>,
 
     // Whether to enable mouse click-to-cursor functionality
     mouse_click_mode: MouseClickMode,
@@ -419,6 +425,7 @@ impl Reedline {
             painter,
             transient_prompt: None,
             edit_mode,
+            standby_edit_modes: Vec::new(),
             completer,
             quick_completions: false,
             partial_completions: false,
@@ -431,6 +438,7 @@ impl Reedline {
             hide_hints: false,
             validator,
             use_ansi_coloring: true,
+            auto_pairs: None,
             mouse_click_mode: MouseClickMode::default(),
             cwd: None,
             menus: Vec::new(),
@@ -597,11 +605,61 @@ impl Reedline {
         self
     }
 
+    /// Whether ANSI coloring should be used for the current terminal.
+    ///
+    /// ANSI coloring requires both the Reedline configuration to enable it and
+    /// terminal support; `TERM=dumb` takes precedence over `with_ansi_colors(true)`.
+    /// The painter holds the terminal policy, so the colors and the escapes it
+    /// skips cannot disagree.
+    fn effective_ansi_coloring(&self) -> bool {
+        self.use_ansi_coloring && !self.painter.term_is_dumb()
+    }
+
     /// A builder which enables or disables the use of ansi coloring in the prompt
     /// and in the command line syntax highlighting.
     #[must_use]
     pub fn with_ansi_colors(mut self, use_ansi_coloring: bool) -> Self {
         self.use_ansi_coloring = use_ansi_coloring;
+        self
+    }
+
+    /// A builder that configures automatic pair insertion for the Reedline engine.
+    ///
+    /// By default, auto-pairing applies at every position for the configured pairs.
+    /// To suppress it in certain syntactic positions (e.g. string literals, or in the
+    /// middle of a word), override [`Highlighter::should_auto_pair`].
+    ///
+    /// For `InsertChar`, the closer is looked up before the opener. A character that
+    /// is registered as both a closer of one pair and an opener of another therefore
+    /// resolves based on whether that closer currently sits at the cursor, not on the
+    /// order the pairs were passed to [`AutoPairs::new`].
+    ///
+    /// This builder does not touch the terminal's bracketed paste setting.
+    /// If bracketed paste is enabled (see [`Self::use_bracketed_paste`]), a paste is
+    /// delivered as [`EditCommand::InsertString`](crate::EditCommand::InsertString),
+    /// which never goes through auto-pairing. If bracketed paste is disabled, pasted
+    /// characters arrive the same way as typed ones and are auto-paired like typing:
+    /// pasting text that has an opener without its closer (e.g. `foo(bar`) inserts a
+    /// closing character that was never in the clipboard content. For this reason it
+    /// is recommended to combine `with_auto_pairs` with
+    /// `use_bracketed_paste(cfg!(not(target_os = "windows")))`. On Windows,
+    /// stock crossterm reads console input through
+    /// the Win32 console API and has no ANSI input parser, so there is no
+    /// `Event::Paste` path to enable there (see crossterm-rs/crossterm#737).
+    ///
+    /// Auto-pairing applies to edits in the regular line buffer. Reverse-history
+    /// search edits a separate search query and are not passed through the
+    /// auto-pairing machinery.
+    #[must_use]
+    pub fn with_auto_pairs(mut self, auto_pairs: AutoPairs) -> Self {
+        self.auto_pairs = Some(auto_pairs);
+        self
+    }
+
+    /// Disable automatic pair insertion.
+    #[must_use]
+    pub fn disable_auto_pairs(mut self) -> Self {
+        self.auto_pairs = None;
         self
     }
 
@@ -759,6 +817,10 @@ impl Reedline {
     /// ```
     #[must_use]
     pub fn with_buffer_editor(mut self, editor: Command, temp_file: PathBuf) -> Self {
+        let mut editor = editor;
+        if !editor.get_args().any(|arg| arg == temp_file.as_os_str()) {
+            editor.arg(&temp_file);
+        }
         self.buffer_editor = Some(BufferEditor {
             command: editor,
             temp_file,
@@ -798,6 +860,28 @@ impl Reedline {
     #[must_use]
     pub fn with_edit_mode(mut self, edit_mode: Box<dyn EditMode>) -> Self {
         self.edit_mode = edit_mode;
+        self
+    }
+
+    /// A builder that registers another edit mode as a standby, which a
+    /// [`ReedlineEvent::SwitchMode`] can activate. The mode given to
+    /// [`with_edit_mode`](Self::with_edit_mode) stays active until then, and
+    /// the mode a switch replaces becomes a standby in turn.
+    ///
+    /// Registering appends, so a host that rebuilds its modes on every prompt
+    /// clears them with [`clear_edit_modes`](Self::clear_edit_modes) first.
+    #[must_use]
+    pub fn with_additional_edit_mode(mut self, edit_mode: Box<dyn EditMode>) -> Self {
+        self.standby_edit_modes.push(edit_mode);
+        self
+    }
+
+    /// A builder that clears the standby edit modes registered with
+    /// [`with_additional_edit_mode`](Self::with_additional_edit_mode), leaving
+    /// the active one alone.
+    #[must_use]
+    pub fn clear_edit_modes(mut self) -> Self {
+        self.standby_edit_modes.clear();
         self
     }
 
@@ -991,6 +1075,11 @@ impl Reedline {
     /// Returns the current contents of the input buffer.
     pub fn current_buffer_contents(&self) -> &str {
         self.editor.get_buffer()
+    }
+
+    /// Returns the current selection range of the input buffer, otherwise None.
+    pub fn current_selection(&self) -> Option<(usize, usize)> {
+        self.editor.get_selection()
     }
 
     /// Writes `msg` to the terminal with a following carriage return and newline
@@ -1458,6 +1547,7 @@ impl Reedline {
             | ReedlineEvent::HistoryHintWordComplete
             | ReedlineEvent::OpenEditor
             | ReedlineEvent::Menu(_)
+            | ReedlineEvent::MenuAccept
             | ReedlineEvent::MenuNext
             | ReedlineEvent::MenuPrevious
             | ReedlineEvent::MenuUp
@@ -1466,8 +1556,7 @@ impl Reedline {
             | ReedlineEvent::MenuRight
             | ReedlineEvent::MenuPageNext
             | ReedlineEvent::MenuPagePrevious
-            | ReedlineEvent::ViChangeMode(_) => Ok(EventStatus::Inapplicable),
-            ReedlineEvent::HelixChangeMode(_) => Ok(EventStatus::Inapplicable),
+            | ReedlineEvent::SwitchMode(_) => Ok(EventStatus::Inapplicable),
         }
     }
 
@@ -1505,6 +1594,26 @@ impl Reedline {
                     }
                 }
                 Ok(EventStatus::Inapplicable)
+            }
+            ReedlineEvent::MenuAccept => {
+                // Where a menu's claim on a keypress is decided, for the submit
+                // events that offer it one as much as for a binding that wants
+                // the accept alone. A menu declines the keypress unless it can
+                // splice something: with no suggestions there is nothing to
+                // take, and a *stale* value is refused downstream because its
+                // span belongs to another line, so accepting one would close
+                // the menu over a completion that never happened. Declining
+                // leaves the key to reach the line instead of appearing dead.
+                match self.menus.iter_mut().find(|menu| menu.is_active()) {
+                    Some(menu)
+                        if !menu.get_values().is_empty() && !menu.results_are_provisional() =>
+                    {
+                        menu.replace_in_buffer(&mut self.editor);
+                        menu.menu_event(MenuEvent::Deactivate);
+                        Ok(EventStatus::Handled)
+                    }
+                    _ => Ok(EventStatus::Inapplicable),
+                }
             }
             ReedlineEvent::MenuNext => {
                 if let Some(menu) = self.menus.iter_mut().find(|menu| menu.is_active()) {
@@ -1630,18 +1739,10 @@ impl Reedline {
                 self.painter.clear_scrollback()?;
                 Ok(EventStatus::Handled)
             }
-            ReedlineEvent::Enter | ReedlineEvent::Submit | ReedlineEvent::SubmitOrNewline
-                if self.menus.iter().any(|menu| menu.is_active()) =>
-            {
-                if let Some(menu) = self.menus.iter_mut().find(|menu| menu.is_active()) {
-                    menu.replace_in_buffer(&mut self.editor);
-                    menu.menu_event(MenuEvent::Deactivate);
-                    Ok(EventStatus::Handled)
-                } else {
-                    Ok(EventStatus::Inapplicable)
-                }
-            }
             ReedlineEvent::Enter => {
+                if self.menu_took_the_key(prompt)? {
+                    return Ok(EventStatus::Handled);
+                }
                 #[cfg(feature = "bashisms")]
                 if let Some(event) = self.parse_bang_command() {
                     return self.handle_editor_event(prompt, event);
@@ -1661,6 +1762,9 @@ impl Reedline {
                 }
             }
             ReedlineEvent::Submit => {
+                if self.menu_took_the_key(prompt)? {
+                    return Ok(EventStatus::Handled);
+                }
                 #[cfg(feature = "bashisms")]
                 if let Some(event) = self.parse_bang_command() {
                     return self.handle_editor_event(prompt, event);
@@ -1672,6 +1776,9 @@ impl Reedline {
                 Ok(self.submit_buffer(prompt)?)
             }
             ReedlineEvent::SubmitOrNewline => {
+                if self.menu_took_the_key(prompt)? {
+                    return Ok(EventStatus::Handled);
+                }
                 #[cfg(feature = "bashisms")]
                 if let Some(event) = self.parse_bang_command() {
                     return self.handle_editor_event(prompt, event);
@@ -1701,46 +1808,62 @@ impl Reedline {
                 Ok(EventStatus::Exits(Signal::HostCommand(host_command)))
             }
             ReedlineEvent::Edit(commands) => {
-                self.run_edit_commands(&commands);
+                let status = self.run_edit_commands_with_status(&commands);
+
+                // Ahead of everything below, which would otherwise ask a
+                // completer about a word the user has already left, or return
+                // through the abbreviation expansion without ever looking.
+                if status == EditCommandStatus::Applied {
+                    self.close_a_menu_past_its_word(&commands);
+                }
+
                 // Check if a space was just inserted and try to expand abbreviations
-                if let Some(EditCommand::InsertChar(' ')) = commands.first() {
+                if status == EditCommandStatus::Applied
+                    && matches!(commands.first(), Some(EditCommand::InsertChar(' ')))
+                {
                     if let Some(event) = self.try_expand_abbreviation_at_cursor(false) {
                         return self.handle_editor_event(prompt, event);
                     }
                 }
-                if let Some(menu) = self.menus.iter_mut().find(|men| men.is_active()) {
-                    if self.quick_completions && menu.can_quick_complete() {
-                        match commands.first() {
-                            Some(&EditCommand::Backspace)
-                            | Some(&EditCommand::BackspaceWord)
-                            | Some(&EditCommand::MoveToLineStart { select: false })
-                                if !self.persistent_menus =>
-                            {
-                                menu.menu_event(MenuEvent::Deactivate)
-                            }
-                            _ => {
-                                menu.menu_event(MenuEvent::Edit(self.quick_completions));
-                                invalidate_anchor_if_host_completer_runs(menu, &mut self.painter);
-                                menu.update_values(
+
+                if let Some(menu) = self.menus.iter_mut().find(|menu| menu.is_active()) {
+                    let quick_complete = self.quick_completions && menu.can_quick_complete();
+                    // Dismissing a menu handles the event even when the cursor didn't move.
+                    if quick_complete
+                        && !self.persistent_menus
+                        && matches!(
+                            commands.first(),
+                            Some(EditCommand::Backspace)
+                                | Some(EditCommand::BackspaceWord)
+                                | Some(EditCommand::MoveToLineStart { select: false })
+                        )
+                    {
+                        menu.menu_event(MenuEvent::Deactivate);
+                        return Ok(EventStatus::Handled);
+                    }
+                    if status == EditCommandStatus::Inapplicable {
+                        return Ok(EventStatus::Inapplicable);
+                    }
+                    if quick_complete {
+                        menu.menu_event(MenuEvent::Edit(self.quick_completions));
+                        invalidate_anchor_if_host_completer_runs(menu, &mut self.painter);
+                        menu.update_values(
+                            &mut self.editor,
+                            self.completer.as_mut(),
+                            self.history.as_ref(),
+                        );
+                        if let Some(&EditCommand::Complete) = commands.first() {
+                            if menu.get_values().len() == 1 {
+                                return self.handle_editor_event(prompt, ReedlineEvent::Enter);
+                            } else if self.partial_completions
+                                && menu.can_partially_complete(
+                                    self.quick_completions,
                                     &mut self.editor,
                                     self.completer.as_mut(),
                                     self.history.as_ref(),
-                                );
-                                if let Some(&EditCommand::Complete) = commands.first() {
-                                    if menu.get_values().len() == 1 {
-                                        return self
-                                            .handle_editor_event(prompt, ReedlineEvent::Enter);
-                                    } else if self.partial_completions
-                                        && menu.can_partially_complete(
-                                            self.quick_completions,
-                                            &mut self.editor,
-                                            self.completer.as_mut(),
-                                            self.history.as_ref(),
-                                        )
-                                    {
-                                        return Ok(EventStatus::Handled);
-                                    }
-                                }
+                                )
+                            {
+                                return Ok(EventStatus::Handled);
                             }
                         }
                     }
@@ -1751,7 +1874,7 @@ impl Reedline {
                         invalidate_anchor_if_host_completer_runs(menu, &mut self.painter);
                     }
                 }
-                Ok(EventStatus::Handled)
+                Ok(status.into())
             }
             ReedlineEvent::OpenEditor => self.open_editor().map(|_| EventStatus::Handled),
             ReedlineEvent::Resize(width, height) => {
@@ -1771,33 +1894,33 @@ impl Reedline {
                 self.next_history()?;
                 Ok(EventStatus::Handled)
             }
-            ReedlineEvent::Up => {
-                self.up_command()?;
-                Ok(EventStatus::Handled)
+            ReedlineEvent::Up => self.up_command(),
+            ReedlineEvent::Down => self.down_command(),
+            ReedlineEvent::Left | ReedlineEvent::Right => {
+                let command = if event == ReedlineEvent::Left {
+                    EditCommand::MoveLeft { select: false }
+                } else {
+                    EditCommand::MoveRight { select: false }
+                };
+                Ok(self.run_edit_commands_with_status(&[command]).into())
             }
-            ReedlineEvent::Down => {
-                self.down_command()?;
-                Ok(EventStatus::Handled)
-            }
-            ReedlineEvent::Left => {
-                self.run_edit_commands(&[EditCommand::MoveLeft { select: false }]);
-                Ok(EventStatus::Handled)
-            }
-            ReedlineEvent::Right => {
-                self.run_edit_commands(&[EditCommand::MoveRight { select: false }]);
-                Ok(EventStatus::Handled)
-            }
-            ReedlineEvent::ToStart => {
-                self.editor.move_to_start(false);
+            ReedlineEvent::ToStart | ReedlineEvent::ToEnd => {
+                let initial_cursor = self.editor.line_buffer().cursor();
+                // Keep these aliases outside the edit-command path: they do not
+                // create undo points or end history traversal.
+                if event == ReedlineEvent::ToStart {
+                    self.editor.move_to_start(false);
+                } else {
+                    self.editor.move_to_end(false);
+                }
+                // Compare after settling under the rest policy, including vi's
+                // block caret resting on the last grapheme rather than past it.
                 self.editor.commit_cursor();
-                Ok(EventStatus::Handled)
-            }
-            ReedlineEvent::ToEnd => {
-                self.editor.move_to_end(false);
-                // Settle under the rest policy: `Alt+>` is bound in vi normal too,
-                // where the block caret must not rest past the last grapheme.
-                self.editor.commit_cursor();
-                Ok(EventStatus::Handled)
+                Ok(if self.editor.line_buffer().cursor() == initial_cursor {
+                    EventStatus::Inapplicable
+                } else {
+                    EventStatus::Handled
+                })
             }
             ReedlineEvent::SearchHistory => {
                 self.enter_history_search();
@@ -1839,8 +1962,7 @@ impl Reedline {
                 // also lets an enclosing `UntilFound` keep trying.
                 Ok(EventStatus::Inapplicable)
             }
-            ReedlineEvent::ViChangeMode(_) => Ok(self.change_edit_mode(event)),
-            ReedlineEvent::HelixChangeMode(_) => Ok(self.change_edit_mode(event)),
+            ReedlineEvent::SwitchMode(_) => Ok(self.change_edit_mode(event)),
             ReedlineEvent::Mouse {
                 column,
                 row,
@@ -1855,30 +1977,58 @@ impl Reedline {
         }
     }
 
-    /// Route a mode-switch event to the active edit mode, then repair the cursor
-    /// the flip left behind.
+    /// Route a `SwitchMode` event to the machine that accepts it, make that
+    /// machine the active one, then repair the cursor the flip left behind.
     ///
-    /// A machine's own transitions emit their repairs as events, the way `i`
+    /// Routing: a target naming the state the active machine already reports
+    /// is not a move, so it is declined before any machine is asked. Otherwise
+    /// the active machine is offered the target first, then the standbys in
+    /// registration order; the first to accept is swapped in. When none
+    /// accepts nothing changes either. Both `Inapplicable` answers let an
+    /// enclosing `UntilFound` keep trying, which is what makes
+    /// `UntilFound([SwitchMode(A), SwitchMode(B)])` a toggle.
+    ///
+    /// Repair: a machine's own transitions emit their repairs as events, the way `i`
     /// collapses the selection on the way into helix insert. An event-driven
-    /// flip never reaches that path, so the repair has to happen here. The one
-    /// that bites is leaving a block caret for a bar caret: a block policy rests
-    /// as a min-width-1 selection, and `insert_char` deletes the selection
-    /// before inserting, so the first keystroke would replace the covered
-    /// grapheme.
+    /// flip never reaches that path, so the repair has to happen here. What
+    /// bites is a selection arriving in a mode that has none: a block policy
+    /// rests as a min-width-1 selection and a bar caret can carry a
+    /// shift-selection, and either way `insert_char` and every vi operator
+    /// consume a live selection, so the first keystroke would eat text. It
+    /// collapses onto the caret, where the machines' own `Esc` leaves it.
     ///
-    /// Stated over the `RestPolicy` rather than per machine, so helix
-    /// normal/select and vi visual are one rule instead of three cases, and a
-    /// future machine inherits it.
+    /// Stated over the `RestPolicy` being entered rather than per machine, so
+    /// emacs, both insert modes and vi normal are one rule instead of four
+    /// cases, and a future machine inherits it.
     fn change_edit_mode(&mut self, event: ReedlineEvent) -> EventStatus {
-        let before = self.edit_mode.edit_mode().rest_policy();
-        let status = self.edit_mode.handle_mode_specific_event(event);
-        let after = self.edit_mode.edit_mode().rest_policy();
-        if before.is_block() && !after.is_block() {
-            // `run_edit_commands` re-syncs the policy from the mode the machine
-            // now reports, so this resolves under `after`. Collapsing under the
-            // block policy being left would re-widen the cursor and undo it.
-            // Backward is the edge `i` lands on.
-            self.run_edit_commands(&[EditCommand::CollapseSelection(Direction::Backward)]);
+        if let ReedlineEvent::SwitchMode(target) = &event {
+            if *target == self.edit_mode.edit_mode() {
+                return EventStatus::Inapplicable;
+            }
+        }
+
+        let mut status = self.edit_mode.handle_mode_specific_event(event.clone());
+        if matches!(status, EventStatus::Inapplicable) {
+            // Offering is not a query: the standby that accepts has already
+            // moved into the target state, and `EditMode` asks the ones that
+            // decline to stay as they were.
+            for standby in &mut self.standby_edit_modes {
+                if let EventStatus::Handled = standby.handle_mode_specific_event(event.clone()) {
+                    std::mem::swap(&mut self.edit_mode, standby);
+                    status = EventStatus::Handled;
+                    break;
+                }
+            }
+        }
+
+        let after = self.edit_mode.edit_mode();
+        if matches!(status, EventStatus::Handled) && !after.rest_policy().is_block() {
+            // Collapse first, while the editor still holds the mode being left
+            // and so knows where its caret shows. Adopting the new policy
+            // afterwards leaves the settle to the pre-paint commit; a commit
+            // under the block policy being left would re-widen the point.
+            self.editor.clear_selection();
+            self.editor.sync_edit_mode(after);
         }
         status
     }
@@ -2089,15 +2239,20 @@ impl Reedline {
 
     /// Executes [`EditCommand`] actions by modifying the internal state appropriately. Does not output itself.
     pub fn run_edit_commands(&mut self, commands: &[EditCommand]) {
-        if self.input_mode == InputMode::HistoryTraversal {
+        self.run_edit_commands_with_status(commands);
+    }
+
+    fn run_edit_commands_with_status(&mut self, commands: &[EditCommand]) -> EditCommandStatus {
+        let status = self.apply_edit_commands(commands);
+        if status == EditCommandStatus::Applied && self.input_mode == InputMode::HistoryTraversal {
             self.input_mode = InputMode::Regular;
         }
-        self.apply_edit_commands(commands);
+        status
     }
 
     /// [`run_edit_commands`](Self::run_edit_commands) without ending history
     /// traversal, for the engine's own line moves inside a recalled entry.
-    fn apply_edit_commands(&mut self, commands: &[EditCommand]) {
+    fn apply_edit_commands(&mut self, commands: &[EditCommand]) -> EditCommandStatus {
         // Adopt the current edit mode's rest policy so these commands resolve
         // under it (e.g. block-caret selection geometry) — but *without*
         // committing the cursor first. A commit here would apply the policy's
@@ -2107,36 +2262,145 @@ impl Reedline {
         // and the pre-paint `set_edit_mode` makes the final commit.
         self.editor.sync_edit_mode(self.edit_mode.edit_mode());
 
-        // Run the commands over the edit buffer
+        // Run every command, but report the edit as applied if any command applied.
+        // This mirrors `Multiple`, where any handled event wins.
+        let mut status = EditCommandStatus::Inapplicable;
+
         for command in commands {
-            self.editor.run_edit_command(command);
+            if let Some(command) = self.auto_pair_command(command) {
+                if self.editor.run_edit_command(&command) == EditCommandStatus::Applied {
+                    status = EditCommandStatus::Applied;
+                }
+                continue;
+            }
+
+            if self.editor.run_edit_command(command) == EditCommandStatus::Applied {
+                status = EditCommandStatus::Applied;
+            }
+        }
+
+        status
+    }
+
+    fn auto_pair_command(&self, command: &EditCommand) -> Option<EditCommand> {
+        let auto_pairs = self.auto_pairs.as_ref()?;
+
+        // Resolve which auto-pair action (if any) `command` would trigger, along
+        // with the pair it acts on and the `EditCommand` that would replace it.
+        // The search order matters: for `InsertChar`, closers are checked before
+        // openers, so a character that is configured as both a closer of one pair
+        // and an opener of another resolves based on whether the cursor currently
+        // sits on the closer, not on the order pairs were registered in.
+        let (pair, action, converted) = match command {
+            EditCommand::InsertChar(ch) => {
+                let closer_at_cursor = auto_pairs
+                    .closing_pair(*ch)
+                    .filter(|(_, close)| self.editor.is_auto_pair_closer_at_cursor(*close));
+
+                if let Some(pair) = closer_at_cursor {
+                    (
+                        pair,
+                        AutoPairAction::SkipExistingCloser,
+                        EditCommand::MoveRight { select: false },
+                    )
+                } else if let Some((open, close)) = auto_pairs.opening_pair(*ch) {
+                    (
+                        (open, close),
+                        AutoPairAction::Open,
+                        EditCommand::InsertPair { open, close },
+                    )
+                } else {
+                    return None;
+                }
+            }
+            EditCommand::Backspace => {
+                let pair = auto_pairs.pairs().find(|(open, close)| {
+                    self.editor.is_empty_auto_pair_at_cursor(*open, *close)
+                })?;
+                (
+                    pair,
+                    AutoPairAction::BackspacePair,
+                    EditCommand::BackspacePair {
+                        open: pair.0,
+                        close: pair.1,
+                    },
+                )
+            }
+            _ => return None,
+        };
+
+        // Give the highlighter a chance to veto the action before committing to
+        // it. All three actions pass through this same gate: returning `false`
+        // means "run the original command verbatim", handled by the caller
+        // treating `None` from this function as a pass-through.
+        let buffer = self.editor.get_buffer();
+        let insertion_point = self.editor.insertion_point();
+        let selection = self.editor.get_selection().map(|(start, end)| start..end);
+        let context = AutoPairContext::new(buffer, insertion_point, pair, selection, action);
+
+        if self.highlighter.should_auto_pair(&context) {
+            Some(converted)
+        } else {
+            None
         }
     }
 
-    fn up_command(&mut self) -> io::Result<()> {
+    /// Move the cursor up a line, or from the first line walk back into
+    /// history. Reports `Inapplicable` when there was nowhere to go: the
+    /// cursor on the first line and history already at its oldest entry, or
+    /// empty. An honest report is what lets a binding built on
+    /// [`ReedlineEvent::UntilFound`] fall through to its next event, as
+    /// `Left` and `Right` already do at the edges of the line.
+    fn up_command(&mut self) -> io::Result<EventStatus> {
         // If we're at the top, then:
         if self.editor.is_cursor_at_first_line() {
             // If we're at the top, move to previous history
-            self.previous_history()
+            self.walk_and_report(Self::previous_history)
         } else {
             // Through `apply_edit_commands` so the cursor settles under the mode's
             // rest policy — a bare `editor.move_line_up` skips the commit boundary,
             // leaving a vi-normal caret past the last grapheme on a short line.
-            self.apply_edit_commands(&[EditCommand::MoveLineUp { select: false }]);
-            Ok(())
+            Ok(self
+                .apply_edit_commands(&[EditCommand::MoveLineUp { select: false }])
+                .into())
         }
     }
 
-    fn down_command(&mut self) -> io::Result<()> {
-        // If we're at the top, then:
+    /// Move the cursor down a line, or from the last line walk forward through
+    /// history. Reports `Inapplicable` when there was nowhere to go: the cursor
+    /// on the last line of the line being typed, with nothing newer below it.
+    /// See [`up_command`](Self::up_command).
+    fn down_command(&mut self) -> io::Result<EventStatus> {
+        // If we're at the bottom, then:
         if self.editor.is_cursor_at_last_line() {
-            // If we're at the top, move to previous history
-            self.next_history()
+            // If we're at the bottom, move to next history
+            self.walk_and_report(Self::next_history)
         } else {
             // See `up_command`: settle under the rest policy via the commit boundary.
-            self.apply_edit_commands(&[EditCommand::MoveLineDown { select: false }]);
-            Ok(())
+            Ok(self
+                .apply_edit_commands(&[EditCommand::MoveLineDown { select: false }])
+                .into())
         }
+    }
+
+    /// Run a history walk and report whether it moved anything: the buffer's
+    /// text, or the cursor within it. The walk itself says nothing, since at
+    /// either end of history it is a no-op by design, so the answer is read
+    /// off the editor before and after.
+    fn walk_and_report(
+        &mut self,
+        walk: fn(&mut Self) -> io::Result<()>,
+    ) -> io::Result<EventStatus> {
+        let text_before = self.editor.get_buffer().to_string();
+        let cursor_before = self.editor.insertion_point();
+        walk(self)?;
+        let unmoved = self.editor.get_buffer() == text_before
+            && self.editor.insertion_point() == cursor_before;
+        Ok(if unmoved {
+            EventStatus::Inapplicable
+        } else {
+            EventStatus::Handled
+        })
     }
 
     /// Checks if hints should be displayed and are able to be completed
@@ -2454,6 +2718,7 @@ impl Reedline {
     /// Overwrites the prompt indicator and highlights the search string
     /// separately from the result buffer.
     fn history_search_paint(&mut self, prompt: &dyn Prompt) -> Result<()> {
+        let use_ansi_coloring = self.effective_ansi_coloring();
         let navigation = self.history_cursor.get_navigation();
 
         if let HistoryNavigationQuery::SubstringSearch(substring) = navigation {
@@ -2469,7 +2734,7 @@ impl Reedline {
             let res_string = self.history_cursor.string_at_cursor().unwrap_or_default();
 
             // Highlight matches
-            let res_string = if self.use_ansi_coloring {
+            let res_string = if use_ansi_coloring {
                 let match_highlighter = SimpleMatchHighlighter::new(substring);
                 let styled = match_highlighter.highlight(&res_string, 0);
                 styled.render_simple()
@@ -2491,7 +2756,7 @@ impl Reedline {
                 &lines,
                 self.prompt_edit_mode(),
                 None,
-                self.use_ansi_coloring,
+                use_ansi_coloring,
                 &self.cursor_shapes,
             )?;
         }
@@ -2503,6 +2768,7 @@ impl Reedline {
     ///
     /// Includes the highlighting and hinting calls.
     fn buffer_paint(&mut self, prompt: &dyn Prompt) -> Result<()> {
+        let use_ansi_coloring = self.effective_ansi_coloring();
         let cursor_position_in_buffer = self.editor.insertion_point();
         let buffer_to_paint = self.editor.get_buffer();
 
@@ -2532,7 +2798,7 @@ impl Reedline {
         let (before_cursor, after_cursor) = styled_text.render_around_insertion_point(
             cursor_position_in_buffer,
             prompt,
-            self.use_ansi_coloring,
+            use_ansi_coloring,
             self.painter.semantic_markers(),
         );
 
@@ -2542,7 +2808,7 @@ impl Reedline {
                     buffer_to_paint,
                     cursor_position_in_buffer,
                     self.history.as_ref(),
-                    self.use_ansi_coloring,
+                    use_ansi_coloring,
                     &self.cwd.clone().unwrap_or_else(|| {
                         std::env::current_dir()
                             .unwrap_or_default()
@@ -2605,7 +2871,7 @@ impl Reedline {
             &lines,
             self.prompt_edit_mode(),
             menu,
-            self.use_ansi_coloring,
+            use_ansi_coloring,
             &self.cursor_shapes,
         )?;
 
@@ -2708,7 +2974,45 @@ impl Reedline {
         Ok(messages)
     }
 
+    /// Offer an open menu first refusal on a keypress that would otherwise
+    /// submit, and report whether it took it.
+    fn menu_took_the_key(&mut self, prompt: &dyn Prompt) -> io::Result<bool> {
+        Ok(matches!(
+            self.handle_editor_event(prompt, ReedlineEvent::MenuAccept)?,
+            EventStatus::Handled
+        ))
+    }
+
+    /// Close an active menu when a typed character ends the word it was opened
+    /// for. Menus without word characters, and persistent menus, live on as
+    /// they always have.
+    ///
+    /// Every command in the batch is read, not just the first: a burst of
+    /// typing arrives as one `Edit` with several `InsertChar`s, and the word
+    /// can end anywhere in it. A newline ends the word too, whether it came
+    /// as `InsertChar('\n')` or as `InsertNewline`, the command the default
+    /// `Alt+Enter` and `Shift+Enter` bindings emit.
+    fn close_a_menu_past_its_word(&mut self, commands: &[EditCommand]) {
+        if self.persistent_menus {
+            return;
+        }
+        let Some(menu) = self.menus.iter_mut().find(|menu| menu.is_active()) else {
+            return;
+        };
+        let word_ended = commands.iter().any(|command| match command {
+            EditCommand::InsertChar(c) => menu.settings().word_ends_at(*c),
+            EditCommand::InsertNewline => menu.settings().word_ends_at('\n'),
+            _ => false,
+        });
+        if word_ended {
+            menu.menu_event(MenuEvent::Deactivate);
+        }
+    }
+
     fn submit_buffer(&mut self, prompt: &dyn Prompt) -> io::Result<EventStatus> {
+        // A menu that let the submit through (no suggestions to accept) must
+        // not stay active into the next line's editing.
+        self.deactivate_menus();
         let buffer = self.editor.get_buffer().to_string();
         self.hide_hints = true;
         // Additional repaint to show the content without hints etc.
@@ -2765,16 +3069,53 @@ mod tests {
     use super::*;
     use crate::terminal_extensions::semantic_prompt::PromptKind;
     use crate::{
-        ColumnarMenu, CompletionOrigin, CompletionResult, DefaultPrompt, MenuBuilder, PromptViMode,
-        Span, Suggestion,
+        ColumnarMenu, CompletionOrigin, CompletionResult, DefaultPrompt, Direction, FindStop,
+        ListMenu, MenuBuilder, MotionTarget, PromptHelixMode, PromptViMode, Span, Suggestion,
     };
-    use itertools::Itertools;
     use rstest::rstest;
 
     fn seam_engine(edit_mode: Box<dyn EditMode>) -> Reedline {
         let mut rl = Reedline::create().with_edit_mode(edit_mode);
         rl.painter.force_prompt_anchored_for_test(0);
         rl
+    }
+
+    /// Emacs with one binding added to its default table.
+    fn emacs_with(
+        modifiers: KeyModifiers,
+        code: KeyCode,
+        event: ReedlineEvent,
+    ) -> Box<dyn EditMode> {
+        let mut emacs = crate::default_emacs_keybindings();
+        emacs.add_binding(modifiers, code, event);
+        Box::new(crate::Emacs::new(emacs))
+    }
+
+    /// A vi or helix machine with `Alt-<c>` bound to `SwitchMode(target)` in
+    /// every table, so the switch fires from whichever state a test lands in.
+    fn machine_switching_on_alt(helix: bool, c: char, target: PromptEditMode) -> Box<dyn EditMode> {
+        let bind = |mut table: crate::Keybindings| {
+            table.add_binding(
+                KeyModifiers::ALT,
+                KeyCode::Char(c),
+                ReedlineEvent::SwitchMode(target.clone()),
+            );
+            table
+        };
+        if helix {
+            Box::new(
+                crate::Helix::default()
+                    .with_insert_keybindings(bind(crate::default_helix_insert_keybindings()))
+                    .with_normal_keybindings(bind(crate::default_helix_normal_keybindings()))
+                    .with_select_keybindings(bind(crate::default_helix_select_keybindings())),
+            )
+        } else {
+            Box::new(crate::Vi::new(
+                bind(crate::default_vi_insert_keybindings()),
+                bind(crate::default_vi_normal_keybindings()),
+                bind(crate::default_vi_visual_keybindings()),
+            ))
+        }
     }
 
     fn drive(rl: &mut Reedline, keys: &[KeyEvent]) {
@@ -2797,6 +3138,732 @@ mod tests {
         for k in keys {
             drive(rl, &[*k]);
         }
+    }
+
+    fn auto_pair_engine(pairs: &[(char, char)]) -> Reedline {
+        Reedline::create().with_auto_pairs(AutoPairs::new(pairs.iter().copied()))
+    }
+
+    #[test]
+    fn auto_pairs_disabled_keeps_literal_typing() {
+        let mut rl = Reedline::create();
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+
+        assert_eq!(rl.editor.get_buffer(), "(");
+        assert_eq!(rl.editor.insertion_point(), 1);
+    }
+
+    #[test]
+    fn auto_pairs_ignore_unconfigured_openers() {
+        let mut rl = auto_pair_engine(&[('[', ']')]);
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+
+        assert_eq!(rl.editor.get_buffer(), "(");
+        assert_eq!(rl.editor.insertion_point(), 1);
+    }
+
+    #[test]
+    fn auto_pairs_insert_pair_and_continue_inside() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 1);
+
+        rl.run_edit_commands(&[EditCommand::InsertChar('a')]);
+
+        assert_eq!(rl.editor.get_buffer(), "(a)");
+        assert_eq!(rl.editor.insertion_point(), 2);
+    }
+
+    #[test]
+    fn auto_pairs_skip_existing_closer() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.run_edit_commands(&[EditCommand::InsertChar('('), EditCommand::InsertChar(')')]);
+
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 2);
+    }
+
+    #[test]
+    fn auto_pairs_backspace_removes_empty_pair_as_one_undo_step() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+
+        rl.run_edit_commands(&[EditCommand::Backspace]);
+
+        assert_eq!(rl.editor.get_buffer(), "");
+        assert_eq!(rl.editor.insertion_point(), 0);
+
+        rl.run_edit_commands(&[EditCommand::Undo]);
+
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 1);
+    }
+
+    #[test]
+    fn auto_pairs_backspace_after_buffer_replacement_removes_empty_pair() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+
+        // A history/menu replacement bypasses the key event that originally
+        // created the pair. Backspace must still inspect the live buffer and
+        // remove the empty pair as one operation.
+        rl.run_edit_commands(&[
+            EditCommand::InsertString("stale input".into()),
+            EditCommand::Clear,
+            EditCommand::InsertString("()".into()),
+            EditCommand::MoveLeft { select: false },
+        ]);
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 1);
+
+        rl.run_edit_commands(&[EditCommand::Backspace]);
+
+        assert_eq!(rl.editor.get_buffer(), "");
+        assert_eq!(rl.editor.insertion_point(), 0);
+    }
+
+    #[test]
+    fn auto_pairs_backspace_after_pair_newline_keeps_closer() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 1);
+
+        // The newline separates the pair, so Backspace must remove only the
+        // newline rather than treating the surrounding characters as an empty
+        // pair.
+        rl.run_edit_commands(&[EditCommand::InsertNewline]);
+        assert_eq!(rl.editor.get_buffer(), "(\n)");
+        assert_eq!(rl.editor.insertion_point(), 2);
+
+        rl.run_edit_commands(&[EditCommand::Backspace]);
+
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 1);
+    }
+
+    #[test]
+    fn auto_pairs_wrap_selection_with_opener() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.run_edit_commands(&[
+            EditCommand::InsertString("abc".into()),
+            EditCommand::MoveToStart { select: false },
+            EditCommand::MoveRight { select: true },
+            EditCommand::MoveRight { select: true },
+            EditCommand::MoveRight { select: true },
+            EditCommand::InsertChar('('),
+        ]);
+
+        assert_eq!(rl.editor.get_buffer(), "(abc)");
+        assert_eq!(rl.editor.get_selection(), None);
+        assert_eq!(rl.editor.insertion_point(), 5);
+    }
+
+    #[test]
+    fn auto_pairs_do_not_rewrite_insert_string() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.run_edit_commands(&[EditCommand::InsertString("()".into())]);
+
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 2);
+    }
+
+    #[test]
+    fn auto_pairs_support_same_character_pairs() {
+        let mut rl = auto_pair_engine(&[('"', '"')]);
+        rl.run_edit_commands(&[EditCommand::InsertChar('"')]);
+
+        assert_eq!(rl.editor.get_buffer(), "\"\"");
+        assert_eq!(rl.editor.insertion_point(), 1);
+
+        rl.run_edit_commands(&[EditCommand::InsertChar('"')]);
+
+        assert_eq!(rl.editor.get_buffer(), "\"\"");
+        assert_eq!(rl.editor.insertion_point(), 2);
+
+        rl.run_edit_commands(&[
+            EditCommand::MoveLeft { select: false },
+            EditCommand::Backspace,
+        ]);
+
+        assert_eq!(rl.editor.get_buffer(), "");
+        assert_eq!(rl.editor.insertion_point(), 0);
+    }
+
+    // --- `Highlighter::should_auto_pair` veto -------------------------------
+
+    /// Vetoes exactly one [`AutoPairAction`], letting the other two proceed
+    /// unmodified — used to prove the three actions are gated independently.
+    struct VetoActionHighlighter(AutoPairAction);
+
+    impl Highlighter for VetoActionHighlighter {
+        fn highlight(&self, _line: &str, _cursor: usize) -> crate::StyledText {
+            crate::StyledText::new()
+        }
+
+        fn should_auto_pair(&self, context: &AutoPairContext<'_>) -> bool {
+            context.action() != self.0
+        }
+    }
+
+    fn auto_pair_engine_with_veto(pairs: &[(char, char)], vetoed: AutoPairAction) -> Reedline {
+        auto_pair_engine(pairs).with_highlighter(Box::new(VetoActionHighlighter(vetoed)))
+    }
+
+    #[test]
+    fn auto_pairs_veto_open_falls_back_to_literal_insert_char() {
+        let mut rl = auto_pair_engine_with_veto(&[('(', ')')], AutoPairAction::Open);
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+
+        // Fallback must be exactly `InsertChar('(')`, not `InsertPair`.
+        assert_eq!(rl.editor.get_buffer(), "(");
+        assert_eq!(rl.editor.insertion_point(), 1);
+    }
+
+    #[test]
+    fn auto_pairs_veto_open_does_not_affect_skip_over_or_backspace_pair() {
+        let mut rl = auto_pair_engine_with_veto(&[('(', ')')], AutoPairAction::Open);
+
+        // Build "(a)" directly (bypassing the vetoed `Open` action) and place
+        // the cursor right before the closer.
+        rl.run_edit_commands(&[
+            EditCommand::InsertString("(a)".into()),
+            EditCommand::MoveLeft { select: false },
+        ]);
+        assert_eq!(rl.editor.insertion_point(), 2);
+
+        // `SkipExistingCloser` is not vetoed here, so it must still fire.
+        rl.run_edit_commands(&[EditCommand::InsertChar(')')]);
+        assert_eq!(rl.editor.get_buffer(), "(a)");
+        assert_eq!(rl.editor.insertion_point(), 3);
+
+        // Rebuild an empty pair the same way and confirm `BackspacePair` still
+        // collapses it as one step even though `Open` is vetoed.
+        rl.run_edit_commands(&[
+            EditCommand::Clear,
+            EditCommand::InsertString("()".into()),
+            EditCommand::MoveLeft { select: false },
+            EditCommand::Backspace,
+        ]);
+        assert_eq!(rl.editor.get_buffer(), "");
+        assert_eq!(rl.editor.insertion_point(), 0);
+    }
+
+    #[test]
+    fn auto_pairs_veto_skip_existing_closer_falls_back_to_literal_insert_char() {
+        let mut rl = auto_pair_engine_with_veto(&[('(', ')')], AutoPairAction::SkipExistingCloser);
+
+        rl.run_edit_commands(&[
+            EditCommand::InsertString("(a)".into()),
+            EditCommand::MoveLeft { select: false },
+        ]);
+        assert_eq!(rl.editor.insertion_point(), 2);
+
+        // Decision order: even though the cursor sits on an existing closer
+        // (which would normally win unconditionally), the veto is consulted
+        // and a literal `)` is inserted instead of skipping over.
+        rl.run_edit_commands(&[EditCommand::InsertChar(')')]);
+        assert_eq!(rl.editor.get_buffer(), "(a))");
+        assert_eq!(rl.editor.insertion_point(), 3);
+
+        // `Open` is unaffected by this veto.
+        rl.run_edit_commands(&[EditCommand::Clear, EditCommand::InsertChar('(')]);
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 1);
+    }
+
+    #[test]
+    fn auto_pairs_veto_backspace_pair_falls_back_to_plain_backspace() {
+        let mut rl = auto_pair_engine_with_veto(&[('(', ')')], AutoPairAction::BackspacePair);
+
+        // `Open` is not vetoed, so this still produces a real empty pair.
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 1);
+
+        // `BackspacePair` is vetoed: fallback is a plain `Backspace`, deleting
+        // only the grapheme to the left of the cursor.
+        rl.run_edit_commands(&[EditCommand::Backspace]);
+        assert_eq!(rl.editor.get_buffer(), ")");
+        assert_eq!(rl.editor.insertion_point(), 0);
+    }
+
+    #[test]
+    fn auto_pairs_veto_open_with_selection_replaces_selection_literally() {
+        let mut rl = auto_pair_engine_with_veto(&[('(', ')')], AutoPairAction::Open);
+        rl.run_edit_commands(&[
+            EditCommand::InsertString("abc".into()),
+            EditCommand::MoveToStart { select: false },
+            EditCommand::MoveRight { select: true },
+            EditCommand::MoveRight { select: true },
+            EditCommand::MoveRight { select: true },
+            EditCommand::InsertChar('('),
+        ]);
+
+        // Contrast with `auto_pairs_wrap_selection_with_opener` (no veto),
+        // which produces "(abc)" with the cursor at 5: vetoing `Open` must
+        // instead replace the selection with a literal '(', same as ordinary
+        // typing over a selection.
+        assert_eq!(rl.editor.get_buffer(), "(");
+        assert_eq!(rl.editor.get_selection(), None);
+        assert_eq!(rl.editor.insertion_point(), 1);
+    }
+
+    #[test]
+    fn auto_pairs_veto_sees_buffer_and_cursor_after_preceding_commands_in_batch() {
+        // The context passed to `should_auto_pair` must reflect live state —
+        // not a stale snapshot taken before other commands in the same batch
+        // (e.g. a history navigation or completion insert) ran.
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<(String, usize, AutoPairAction)>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        struct RecordingHighlighter {
+            seen: std::sync::Arc<std::sync::Mutex<Vec<(String, usize, AutoPairAction)>>>,
+        }
+
+        impl Highlighter for RecordingHighlighter {
+            fn highlight(&self, _line: &str, _cursor: usize) -> crate::StyledText {
+                crate::StyledText::new()
+            }
+
+            fn should_auto_pair(&self, context: &AutoPairContext<'_>) -> bool {
+                self.seen.lock().unwrap().push((
+                    context.buffer().to_string(),
+                    context.insertion_point(),
+                    context.action(),
+                ));
+                true
+            }
+        }
+
+        let mut rl = auto_pair_engine(&[('(', ')')])
+            .with_highlighter(Box::new(RecordingHighlighter { seen: seen.clone() }));
+
+        // Replace the whole buffer (as a history navigation or menu accept
+        // would) and immediately type an opener in the same batch.
+        rl.run_edit_commands(&[
+            EditCommand::Clear,
+            EditCommand::InsertString("echo hi".into()),
+            EditCommand::InsertChar('('),
+        ]);
+
+        let recorded = seen.lock().unwrap();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].0, "echo hi");
+        assert_eq!(recorded[0].1, "echo hi".len());
+        assert_eq!(recorded[0].2, AutoPairAction::Open);
+    }
+
+    // Regression: `auto_pair_command` used to derive the context's selection
+    // by comparing `selection_anchor()` against `insertion_point()` directly.
+    // Under a forward vi-normal (block) selection those two disagree with the
+    // actual selected range: `insertion_point()` is the *caret*, one grapheme
+    // back from the cursor's `head` (see `Editor::insertion_point` /
+    // `Cursor::caret`), while `Editor::get_selection()` — the range
+    // `insert_pair` (and thus the real `InsertPair` wrap) actually uses —
+    // reports `cursor.start()..cursor.end()` with `end()` at the widened
+    // `head`. The old code silently dropped the selection's last grapheme
+    // from the context it handed to `should_auto_pair`.
+    //
+    // This mirrors the exact selection shape pinned by
+    // `vi_normal_selection_cut_is_inclusive` in `core_editor::editor`'s own
+    // tests: from "hello" at position 0, two forward `MoveRight { select:
+    // true }` steps land the head on 'l' (byte 2) but widen the selection to
+    // byte 3 to cover it.
+    #[test]
+    fn auto_pairs_context_selection_matches_vi_block_forward_selection() {
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<std::ops::Range<usize>>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        struct RecordingSelectionHighlighter {
+            seen: std::sync::Arc<std::sync::Mutex<Vec<std::ops::Range<usize>>>>,
+        }
+
+        impl Highlighter for RecordingSelectionHighlighter {
+            fn highlight(&self, _line: &str, _cursor: usize) -> crate::StyledText {
+                crate::StyledText::new()
+            }
+
+            fn should_auto_pair(&self, context: &AutoPairContext<'_>) -> bool {
+                if let Some(selection) = context.selection() {
+                    self.seen.lock().unwrap().push(selection);
+                }
+                true
+            }
+        }
+
+        // A fixed `EditMode` that always reports Vi-normal, so `run_edit_commands`'s
+        // `sync_edit_mode` (which re-adopts `Reedline`'s own edit mode on every
+        // call, independent of whatever `Editor::set_edit_mode` was last told)
+        // does not flip the block-caret rest policy back to `Bar` behind our
+        // back between the selection setup below and the `InsertChar` that
+        // exercises `auto_pair_command`.
+        struct AlwaysViNormal;
+        impl EditMode for AlwaysViNormal {
+            fn parse_event(&mut self, _e: ReedlineRawEvent) -> ReedlineEvent {
+                ReedlineEvent::None
+            }
+            fn edit_mode(&self) -> PromptEditMode {
+                PromptEditMode::Vi(PromptViMode::Normal)
+            }
+        }
+
+        let mut rl = auto_pair_engine(&[('(', ')')])
+            .with_highlighter(Box::new(RecordingSelectionHighlighter {
+                seen: seen.clone(),
+            }))
+            .with_edit_mode(Box::new(AlwaysViNormal));
+
+        rl.run_edit_commands(&[EditCommand::InsertString("hello".into())]);
+        rl.editor.run_edit_command(&EditCommand::MoveToPosition {
+            position: 0,
+            select: false,
+        });
+        rl.editor
+            .run_edit_command(&EditCommand::MoveRight { select: true });
+        rl.editor
+            .run_edit_command(&EditCommand::MoveRight { select: true });
+
+        // Sanity-check the premise: a forward block selection whose head sits
+        // one grapheme past what `insertion_point()` alone would suggest.
+        assert_eq!(rl.editor.insertion_point(), 2);
+        let expected_selection = rl.editor.get_selection().expect("selection active");
+        assert_eq!(expected_selection, (0, 3));
+
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+
+        let recorded = seen.lock().unwrap();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(
+            recorded[0],
+            expected_selection.0..expected_selection.1,
+            "context selection must match Editor::get_selection(), not a range \
+             derived from insertion_point()"
+        );
+
+        // `insert_pair` wraps the exact same range `get_selection()` reported,
+        // so the buffer confirms the context wasn't merely coincidentally
+        // correct: 'l' at byte 2 must be inside the pair.
+        assert_eq!(rl.editor.get_buffer(), "(hel)lo");
+    }
+
+    /// A small context-sensitive policy used to exercise the consumer-facing
+    /// `Highlighter` hook. It demonstrates that syntax-aware consumers can
+    /// veto opening a pair while leaving the other auto-pair actions alone.
+    struct ContextAwareAutoPairHighlighter;
+
+    impl ContextAwareAutoPairHighlighter {
+        fn inside_unclosed_quote(buffer: &str, point: usize, quote: char) -> bool {
+            let mut in_quote = false;
+            let mut escaped = false;
+            for ch in buffer[..point].chars() {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                match ch {
+                    '\\' => escaped = true,
+                    c if c == quote => in_quote = !in_quote,
+                    _ => {}
+                }
+            }
+            in_quote
+        }
+    }
+
+    impl Highlighter for ContextAwareAutoPairHighlighter {
+        fn highlight(&self, _line: &str, _cursor: usize) -> crate::StyledText {
+            crate::StyledText::new()
+        }
+
+        fn should_auto_pair(&self, context: &AutoPairContext<'_>) -> bool {
+            if context.action() != AutoPairAction::Open {
+                return true;
+            }
+
+            let (open, close) = context.pair();
+            let buffer = context.buffer();
+            let point = context.insertion_point();
+
+            if open == close && Self::inside_unclosed_quote(buffer, point, open) {
+                return false;
+            }
+
+            true
+        }
+    }
+
+    fn context_aware_auto_pair_engine() -> Reedline {
+        auto_pair_engine(&[('(', ')'), ('"', '"')])
+            .with_highlighter(Box::new(ContextAwareAutoPairHighlighter))
+    }
+
+    #[test]
+    fn context_policy_allows_non_quote_pair_inside_unclosed_region() {
+        let mut rl = context_aware_auto_pair_engine();
+        rl.run_edit_commands(&[EditCommand::InsertString("\"abc".into())]);
+
+        // A non-quote pair is allowed even inside an unclosed region.
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+        assert_eq!(rl.editor.get_buffer(), "\"abc()");
+        assert_eq!(rl.editor.insertion_point(), 5);
+    }
+
+    #[test]
+    fn context_policy_vetoes_same_delimiter_inside_unclosed_region() {
+        let mut rl = context_aware_auto_pair_engine();
+        rl.run_edit_commands(&[EditCommand::InsertString("\"".into())]);
+        assert_eq!(rl.editor.insertion_point(), 1);
+
+        // Typing the same quote again would normally open a new pair (cursor
+        // is at the end of the buffer), but we are inside an unclosed string
+        // of that same quote kind, so it must close it literally instead.
+        rl.run_edit_commands(&[EditCommand::InsertChar('"')]);
+        assert_eq!(rl.editor.get_buffer(), "\"\"");
+        assert_eq!(rl.editor.insertion_point(), 2, "literal insert advances past the closing quote, unlike a paired insert which would leave the cursor at 1");
+    }
+
+    // --- undo granularity across all six action x veto combinations --------
+
+    #[test]
+    fn auto_pairs_undo_granularity_open_not_vetoed() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+        assert_eq!(rl.editor.get_buffer(), "()");
+
+        rl.run_edit_commands(&[EditCommand::Undo]);
+        assert_eq!(rl.editor.get_buffer(), "");
+        assert_eq!(rl.editor.insertion_point(), 0);
+    }
+
+    #[test]
+    fn auto_pairs_undo_granularity_open_vetoed() {
+        let mut rl = auto_pair_engine_with_veto(&[('(', ')')], AutoPairAction::Open);
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+        assert_eq!(rl.editor.get_buffer(), "(");
+
+        rl.run_edit_commands(&[EditCommand::Undo]);
+        assert_eq!(rl.editor.get_buffer(), "");
+        assert_eq!(rl.editor.insertion_point(), 0);
+    }
+
+    #[test]
+    fn auto_pairs_undo_granularity_skip_existing_closer_not_vetoed() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+        rl.run_edit_commands(&[EditCommand::InsertChar(')')]);
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 2);
+
+        // The skip-over is a plain cursor move (`MoveRight`), and cursor
+        // moves never open their own undo boundary in reedline — they merge
+        // into whatever edit precedes them (verified directly against plain
+        // `InsertChar` + `MoveLeft` with no auto-pairing involved). So one
+        // `Undo` here reverts the *pair insertion* too, landing back at the
+        // pre-`Open` empty buffer, not at the interim "()" state.
+        rl.run_edit_commands(&[EditCommand::Undo]);
+        assert_eq!(rl.editor.get_buffer(), "");
+        assert_eq!(rl.editor.insertion_point(), 0);
+    }
+
+    #[test]
+    fn auto_pairs_undo_granularity_skip_existing_closer_vetoed() {
+        let mut rl = auto_pair_engine_with_veto(&[('(', ')')], AutoPairAction::SkipExistingCloser);
+        rl.run_edit_commands(&[
+            EditCommand::InsertString("(a)".into()),
+            EditCommand::MoveLeft { select: false },
+        ]);
+        rl.run_edit_commands(&[EditCommand::InsertChar(')')]);
+        assert_eq!(rl.editor.get_buffer(), "(a))");
+
+        rl.run_edit_commands(&[EditCommand::Undo]);
+        assert_eq!(rl.editor.get_buffer(), "(a)");
+        assert_eq!(rl.editor.insertion_point(), 2);
+    }
+
+    #[test]
+    fn auto_pairs_undo_granularity_backspace_pair_not_vetoed() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+        rl.run_edit_commands(&[EditCommand::Backspace]);
+        assert_eq!(rl.editor.get_buffer(), "");
+
+        rl.run_edit_commands(&[EditCommand::Undo]);
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 1);
+    }
+
+    #[test]
+    fn auto_pairs_undo_granularity_backspace_pair_vetoed() {
+        let mut rl = auto_pair_engine_with_veto(&[('(', ')')], AutoPairAction::BackspacePair);
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+        rl.run_edit_commands(&[EditCommand::Backspace]);
+        assert_eq!(rl.editor.get_buffer(), ")");
+
+        rl.run_edit_commands(&[EditCommand::Undo]);
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 1);
+    }
+
+    // --- edge cases: same-char pairs, overlaps, multi-line, grapheme -------
+
+    #[test]
+    fn auto_pairs_overlapping_pair_definitions_resolve_by_search_order() {
+        // 'b' is both a closer (of `a`/`b`) and an opener (of `b`/`c`).
+        // Closers are searched before openers, but only the cursor-at-closer
+        // check short-circuits to a skip; otherwise the opener check runs.
+        let mut rl = auto_pair_engine(&[('a', 'b'), ('b', 'c')]);
+
+        // Not sitting on an existing 'b' closer (buffer is empty), so 'b' is
+        // treated as an opener of the second pair.
+        rl.run_edit_commands(&[EditCommand::InsertChar('b')]);
+        assert_eq!(rl.editor.get_buffer(), "bc");
+        assert_eq!(rl.editor.insertion_point(), 1);
+
+        // Now place the cursor right before an existing 'b', which is also
+        // configured as the closer of the first pair — skip-over wins.
+        rl.run_edit_commands(&[
+            EditCommand::Clear,
+            EditCommand::InsertString("ab".into()),
+            EditCommand::MoveLeft { select: false },
+        ]);
+        assert_eq!(rl.editor.insertion_point(), 1);
+
+        rl.run_edit_commands(&[EditCommand::InsertChar('b')]);
+        assert_eq!(rl.editor.get_buffer(), "ab");
+        assert_eq!(rl.editor.insertion_point(), 2);
+    }
+
+    #[test]
+    fn auto_pairs_multiline_and_crlf_buffer() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.run_edit_commands(&[EditCommand::InsertString("line1\r\nline2".into())]);
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+
+        assert_eq!(rl.editor.get_buffer(), "line1\r\nline2()");
+        assert_eq!(rl.editor.insertion_point(), "line1\r\nline2(".len());
+    }
+
+    #[test]
+    fn auto_pairs_skip_over_grapheme_with_combining_mark_after_closer() {
+        // The adjacency check (`grapheme_right().starts_with(close)`) is
+        // exercised here with the closer immediately followed by a combining
+        // mark, so `close` and the mark form a single grapheme cluster.
+        // This pins current behaviour; see written report for whether this
+        // is considered correct.
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        let combining_acute = '\u{0301}';
+        rl.run_edit_commands(&[EditCommand::InsertString(format!("(){combining_acute}"))]);
+        // The trailing ')' + combining mark form a single grapheme cluster,
+        // so one `MoveLeft` from the end lands right before it.
+        rl.run_edit_commands(&[EditCommand::MoveLeft { select: false }]);
+        assert_eq!(rl.editor.insertion_point(), 1);
+
+        rl.run_edit_commands(&[EditCommand::InsertChar(')')]);
+
+        // The whole grapheme cluster (closer + combining mark) is skipped
+        // over in one motion, landing the cursor at the end of the buffer.
+        assert_eq!(rl.editor.get_buffer(), format!("(){combining_acute}"));
+        assert_eq!(
+            rl.editor.insertion_point(),
+            format!("(){combining_acute}").len()
+        );
+    }
+
+    // --- vi / helix InsertChar replay ---------------------------------------
+
+    #[test]
+    fn vi_insert_mode_auto_pair_routes_through_veto() {
+        let mut rl = seam_engine(Box::<crate::Vi>::default())
+            .with_auto_pairs(AutoPairs::new([('(', ')')]))
+            .with_highlighter(Box::new(VetoActionHighlighter(AutoPairAction::Open)));
+
+        type_each(&mut rl, &[ch('(')]);
+
+        assert_eq!(rl.editor.get_buffer(), "(");
+        assert_eq!(rl.editor.insertion_point(), 1);
+    }
+
+    #[test]
+    fn vi_insert_mode_auto_pair_still_pairs_when_not_vetoed() {
+        let mut rl =
+            seam_engine(Box::<crate::Vi>::default()).with_auto_pairs(AutoPairs::new([('(', ')')]));
+
+        type_each(&mut rl, &[ch('(')]);
+
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 1);
+    }
+
+    #[test]
+    fn helix_insert_mode_auto_pair_routes_through_veto() {
+        let mut rl = seam_engine(Box::<crate::Helix>::default())
+            .with_auto_pairs(AutoPairs::new([('(', ')')]))
+            .with_highlighter(Box::new(VetoActionHighlighter(AutoPairAction::Open)));
+
+        type_each(&mut rl, &[ch('(')]);
+
+        assert_eq!(rl.editor.get_buffer(), "(");
+        assert_eq!(rl.editor.insertion_point(), 1);
+    }
+
+    #[test]
+    fn helix_insert_mode_auto_pair_still_pairs_when_not_vetoed() {
+        let mut rl = seam_engine(Box::<crate::Helix>::default())
+            .with_auto_pairs(AutoPairs::new([('(', ')')]));
+
+        type_each(&mut rl, &[ch('(')]);
+
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 1);
+    }
+
+    // --- `Event::Paste` must never be rewritten -----------------------------
+
+    #[test]
+    fn auto_pairs_balanced_paste_event_is_not_rewritten() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.painter.force_prompt_anchored_for_test(0);
+        let prompt = DefaultPrompt::default();
+        let _ = rl
+            .process_input_batch(&prompt, vec![Event::Paste("(a)".into())])
+            .expect("batch ok");
+
+        assert_eq!(rl.editor.get_buffer(), "(a)");
+        assert_eq!(rl.editor.insertion_point(), 3);
+    }
+
+    #[test]
+    fn auto_pairs_unbalanced_paste_event_is_not_rewritten() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.painter.force_prompt_anchored_for_test(0);
+        let prompt = DefaultPrompt::default();
+        let _ = rl
+            .process_input_batch(&prompt, vec![Event::Paste("(a".into())])
+            .expect("batch ok");
+
+        // Pasted text is inserted verbatim via `InsertString`, which never
+        // goes through `auto_pair_command` — even though the pasted opener
+        // has no matching closer.
+        assert_eq!(rl.editor.get_buffer(), "(a");
+        assert_eq!(rl.editor.insertion_point(), 2);
+    }
+
+    #[test]
+    fn auto_pairs_do_not_rewrite_reverse_history_search_query() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.enter_history_search();
+
+        rl.handle_history_search_event(ReedlineEvent::Edit(vec![EditCommand::InsertChar('(')]))
+            .expect("history search event handled");
+
+        assert_eq!(rl.input_mode, InputMode::HistorySearch);
+        assert_eq!(rl.editor.get_buffer(), "");
+        assert_eq!(
+            rl.history_cursor.get_navigation(),
+            HistoryNavigationQuery::SubstringSearch("(".into())
+        );
     }
 
     // FLIP SAFETY NET (Group C) — visual operability at the engine seam.
@@ -2863,6 +3930,7 @@ mod tests {
             .edit_buffer(|b| b.set_insertion_point(2), UndoBehavior::MoveCursor); // at len, legal under Between
         drive(&mut rl, &[ch('x')]); // flipts to OnGrapheme, emits nothing
         assert_eq!(rl.current_insertion_point(), 1);
+        assert_eq!(rl.current_selection(), None);
     }
 
     #[test]
@@ -2873,6 +3941,23 @@ mod tests {
         drive(&mut rl, &[ch('h'), ch('i')]);
         assert_eq!(rl.editor.get_buffer(), "hi");
         assert_eq!(rl.current_insertion_point(), 2);
+        assert_eq!(rl.current_selection(), None);
+    }
+
+    #[test]
+    fn test_current_selection() {
+        let mut rl = seam_engine(Box::<crate::Emacs>::default());
+        drive(
+            &mut rl,
+            &[
+                ch('h'),
+                ch('i'),
+                KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT),
+            ],
+        );
+        assert_eq!(rl.editor.get_buffer(), "hi");
+        assert_eq!(rl.current_insertion_point(), 1);
+        assert_eq!(rl.current_selection(), Some((1, 2)));
     }
 
     #[test]
@@ -2997,6 +4082,148 @@ mod tests {
             "older",
             "from the first line, Up walks back to the older entry"
         );
+    }
+
+    // --- Up and Down report what they did ---
+
+    /// What an event reports when the engine handles it.
+    fn status_of(rl: &mut Reedline, event: ReedlineEvent) -> EventStatus {
+        rl.handle_editor_event(&DefaultPrompt::default(), event)
+            .expect("event ok")
+    }
+
+    /// On the line being typed, with nothing newer below it, Down has nowhere
+    /// to go. It says so, and a binding built on `UntilFound` gets to try its
+    /// next event — the way `Left` and `Right` already report at the edges.
+    #[test]
+    fn down_on_the_line_being_typed_is_inapplicable() {
+        let mut rl = two_entry_history_engine();
+        rl.run_edit_commands(&[EditCommand::InsertString("typed".into())]);
+        assert!(matches!(
+            status_of(&mut rl, ReedlineEvent::Down),
+            EventStatus::Inapplicable
+        ));
+        assert_eq!(rl.editor.get_buffer(), "typed", "and nothing moved");
+    }
+
+    /// With history to walk, Down is handled: forward an entry, then to the
+    /// draft, and only then inapplicable — and it stays so.
+    #[test]
+    fn down_walks_forward_through_history_and_is_handled_until_it_cannot() {
+        let mut rl = two_entry_history_engine();
+        drive(&mut rl, &[key(KeyCode::Up), key(KeyCode::Up)]);
+        assert_eq!(rl.editor.get_buffer(), "older", "setup");
+        assert!(matches!(
+            status_of(&mut rl, ReedlineEvent::Down),
+            EventStatus::Handled
+        ));
+        assert_eq!(rl.editor.get_buffer(), "one\ntwo", "forward one entry");
+        assert!(
+            matches!(
+                status_of(&mut rl, ReedlineEvent::Down),
+                EventStatus::Handled
+            ),
+            "to the draft"
+        );
+        assert_eq!(rl.editor.get_buffer(), "");
+        assert!(
+            matches!(
+                status_of(&mut rl, ReedlineEvent::Down),
+                EventStatus::Inapplicable
+            ),
+            "nothing below the draft"
+        );
+        assert!(
+            matches!(
+                status_of(&mut rl, ReedlineEvent::Down),
+                EventStatus::Inapplicable
+            ),
+            "and it stays that way"
+        );
+    }
+
+    /// Inside a multi-line buffer, Down is handled while it moves the cursor:
+    /// down a line, then to the end of the last one. Only then, with the
+    /// cursor at the end of the line being typed, has it nowhere to go.
+    #[test]
+    fn down_inside_a_multiline_buffer_is_handled_while_the_cursor_moves() {
+        let mut rl = seam_engine(Box::<Emacs>::default());
+        rl.run_edit_commands(&[
+            EditCommand::InsertString("one\ntwo".into()),
+            EditCommand::MoveToStart { select: false },
+        ]);
+        assert!(
+            matches!(
+                status_of(&mut rl, ReedlineEvent::Down),
+                EventStatus::Handled
+            ),
+            "to line 2"
+        );
+        assert!(
+            matches!(
+                status_of(&mut rl, ReedlineEvent::Down),
+                EventStatus::Handled
+            ),
+            "to its end"
+        );
+        assert_eq!(rl.editor.insertion_point(), 7);
+        assert!(matches!(
+            status_of(&mut rl, ReedlineEvent::Down),
+            EventStatus::Inapplicable
+        ));
+    }
+
+    /// Up mirrors Down: handled while there is an older entry, inapplicable
+    /// at the oldest, and with no history at all.
+    #[test]
+    fn up_is_inapplicable_once_history_is_exhausted() {
+        let mut rl = two_entry_history_engine();
+        assert!(matches!(
+            status_of(&mut rl, ReedlineEvent::Up),
+            EventStatus::Handled
+        ));
+        assert_eq!(rl.editor.get_buffer(), "one\ntwo", "the newest entry");
+        assert!(
+            matches!(status_of(&mut rl, ReedlineEvent::Up), EventStatus::Handled),
+            "to the oldest"
+        );
+        assert_eq!(rl.editor.get_buffer(), "older");
+        assert!(
+            matches!(
+                status_of(&mut rl, ReedlineEvent::Up),
+                EventStatus::Inapplicable
+            ),
+            "nothing older"
+        );
+        assert_eq!(rl.editor.get_buffer(), "older", "and nothing moved");
+
+        let mut empty = seam_engine(Box::<Emacs>::default());
+        assert!(
+            matches!(
+                status_of(&mut empty, ReedlineEvent::Up),
+                EventStatus::Inapplicable
+            ),
+            "no history at all"
+        );
+    }
+
+    /// The report is what `UntilFound` consults: Down on the line being typed
+    /// falls through to the next event in the binding.
+    #[test]
+    fn until_found_falls_through_down_on_the_line_being_typed() {
+        let mut rl = two_entry_history_engine();
+        rl.run_edit_commands(&[EditCommand::InsertString("typed".into())]);
+        let status = rl
+            .handle_editor_event(
+                &DefaultPrompt::default(),
+                ReedlineEvent::UntilFound(vec![
+                    ReedlineEvent::Down,
+                    ReedlineEvent::Edit(vec![EditCommand::InsertString("!".into())]),
+                ]),
+            )
+            .expect("event ok");
+        assert!(matches!(status, EventStatus::Handled));
+        assert_eq!(rl.editor.get_buffer(), "typed!", "the second event ran");
     }
 
     // --- a history that refuses to save ---
@@ -3274,12 +4501,12 @@ mod tests {
     /// selection, and `insert_char` deletes the selection before inserting, so
     /// without the collapse the first keystroke replaces the covered grapheme.
     #[test]
-    fn helix_change_mode_into_insert_keeps_the_covered_grapheme() {
+    fn switch_mode_into_insert_keeps_the_covered_grapheme() {
         let mut bindings = crate::default_helix_normal_keybindings();
         bindings.add_binding(
             KeyModifiers::NONE,
             KeyCode::Char('z'),
-            ReedlineEvent::HelixChangeMode("insert".into()),
+            ReedlineEvent::SwitchMode(PromptEditMode::Helix(PromptHelixMode::Insert)),
         );
         let mut rl = Reedline::create()
             .with_edit_mode(Box::new(
@@ -3310,20 +4537,22 @@ mod tests {
     }
 
     /// Vi visual rests min-width-1 under `RestPolicy::Block` just as helix does,
-    /// so the same rule has to cover a `ViChangeMode` flip out of it. Without the
+    /// so the same rule has to cover a `SwitchMode` flip out of it. Without the
     /// collapse the visual selection is still live and the first keystroke
-    /// replaces it.
+    /// replaces it. The binding sits in the visual table, the one consulted
+    /// once `v` has been pressed.
     #[test]
-    fn vi_change_mode_out_of_visual_keeps_the_covered_grapheme() {
-        let mut bindings = crate::default_vi_normal_keybindings();
+    fn switch_mode_out_of_vi_visual_keeps_the_covered_grapheme() {
+        let mut bindings = crate::default_vi_visual_keybindings();
         bindings.add_binding(
             KeyModifiers::NONE,
             KeyCode::Char('z'),
-            ReedlineEvent::ViChangeMode("insert".into()),
+            ReedlineEvent::SwitchMode(PromptEditMode::Vi(PromptViMode::Insert)),
         );
         let mut rl = Reedline::create()
             .with_edit_mode(Box::new(crate::Vi::new(
                 crate::default_vi_insert_keybindings(),
+                crate::default_vi_normal_keybindings(),
                 bindings,
             )))
             .with_validator(Box::new(crate::DefaultValidator));
@@ -3346,6 +4575,618 @@ mod tests {
         );
         assert!(signal.is_none(), "incomplete input must not submit");
         assert_eq!(rl.editor.get_buffer(), "\"Xabc");
+    }
+
+    fn ctrl(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+
+    /// Registering a standby machine does not activate it.
+    #[test]
+    fn additional_edit_mode_stays_inactive_until_switched() {
+        let rl = Reedline::create()
+            .with_edit_mode(Box::<crate::Vi>::default())
+            .with_additional_edit_mode(Box::<crate::Helix>::default());
+        assert_eq!(
+            rl.prompt_edit_mode(),
+            PromptEditMode::Vi(PromptViMode::Insert)
+        );
+    }
+
+    /// A `SwitchMode` whose target names a standby machine activates it: the
+    /// emacs binding fires, and the following keys are read by helix normal,
+    /// where `h` is a motion rather than text.
+    #[test]
+    fn switch_mode_activates_a_standby_machine() {
+        let mut rl = seam_engine(emacs_with(
+            KeyModifiers::CONTROL,
+            KeyCode::Char('h'),
+            ReedlineEvent::SwitchMode(PromptEditMode::Helix(PromptHelixMode::Normal)),
+        ))
+        .with_additional_edit_mode(Box::<crate::Helix>::default())
+        .with_validator(Box::new(crate::DefaultValidator));
+
+        drive_until_signal(&mut rl, &[ch('a'), ch('b'), ch('c'), ctrl('h')]);
+        assert_eq!(
+            rl.prompt_edit_mode(),
+            PromptEditMode::Helix(PromptHelixMode::Normal)
+        );
+        // The block caret has nothing to the right at the buffer end, so the
+        // commit covers the last grapheme `c`. `h` steps onto `b`, `i`
+        // collapses in front of it, and `X` lands there.
+        drive_until_signal(&mut rl, &[ch('h'), ch('i'), ch('X')]);
+        assert_eq!(rl.editor.get_buffer(), "aXbc");
+    }
+
+    /// The block-caret repair is stated over the rest policy, so it covers a
+    /// switch *between* machines too: leaving helix normal for emacs must not
+    /// hand emacs a live one-grapheme selection to overwrite.
+    #[test]
+    fn switch_mode_between_machines_keeps_the_covered_grapheme() {
+        let mut normal = crate::default_helix_normal_keybindings();
+        normal.add_binding(
+            KeyModifiers::NONE,
+            KeyCode::Char('z'),
+            ReedlineEvent::SwitchMode(PromptEditMode::Emacs),
+        );
+        let mut rl = seam_engine(Box::new(
+            crate::Helix::default().with_normal_keybindings(normal),
+        ))
+        .with_additional_edit_mode(Box::<crate::Emacs>::default())
+        .with_validator(Box::new(crate::DefaultValidator));
+
+        let signal = drive_until_signal(
+            &mut rl,
+            &[
+                ch('"'),
+                ch('a'),
+                ch('b'),
+                ch('c'),
+                key(KeyCode::Esc),
+                ch('h'),
+                ch('h'),
+                ch('z'),
+                ch('X'),
+            ],
+        );
+        assert!(signal.is_none(), "incomplete input must not submit");
+        assert_eq!(rl.prompt_edit_mode(), PromptEditMode::Emacs);
+        assert_eq!(rl.editor.get_buffer(), "\"Xabc");
+    }
+
+    /// The target names the state, not just the machine: coming back to vi
+    /// lands in the state the binding asked for, not where vi was left.
+    #[test]
+    fn switch_mode_lands_in_the_named_state() {
+        let mut vi_insert = crate::default_vi_insert_keybindings();
+        vi_insert.add_binding(
+            KeyModifiers::CONTROL,
+            KeyCode::Char('h'),
+            ReedlineEvent::SwitchMode(PromptEditMode::Helix(PromptHelixMode::Normal)),
+        );
+        let mut helix_normal = crate::default_helix_normal_keybindings();
+        helix_normal.add_binding(
+            KeyModifiers::CONTROL,
+            KeyCode::Char('v'),
+            ReedlineEvent::SwitchMode(PromptEditMode::Vi(PromptViMode::Normal)),
+        );
+        let mut rl = seam_engine(Box::new(crate::Vi::new(
+            vi_insert,
+            crate::default_vi_normal_keybindings(),
+            crate::default_vi_visual_keybindings(),
+        )))
+        .with_additional_edit_mode(Box::new(
+            crate::Helix::default().with_normal_keybindings(helix_normal),
+        ));
+
+        drive_until_signal(&mut rl, &[ch('a'), ctrl('h')]);
+        assert_eq!(
+            rl.prompt_edit_mode(),
+            PromptEditMode::Helix(PromptHelixMode::Normal)
+        );
+        drive_until_signal(&mut rl, &[ctrl('v')]);
+        assert_eq!(
+            rl.prompt_edit_mode(),
+            PromptEditMode::Vi(PromptViMode::Normal)
+        );
+    }
+
+    fn alt(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::ALT)
+    }
+
+    /// Switching into emacs from any state leaves the cursor where it was: a
+    /// bar caret stays put, a block caret collapses onto the grapheme it covers.
+    /// `setup` walks the caret from the end of `abcd` back to between `b` and
+    /// `c` (or onto `c` for a block) before Alt-e fires from that table.
+    #[rstest]
+    #[case::vi_insert(&[key(KeyCode::Left), key(KeyCode::Left)], false)]
+    #[case::vi_normal(&[key(KeyCode::Esc), ch('h')], false)]
+    #[case::vi_visual(&[key(KeyCode::Esc), ch('h'), ch('v')], false)]
+    #[case::helix_insert(&[key(KeyCode::Left), key(KeyCode::Left)], true)]
+    #[case::helix_normal(&[key(KeyCode::Esc), ch('h')], true)]
+    #[case::helix_select(&[key(KeyCode::Esc), ch('h'), ch('v')], true)]
+    fn switch_mode_into_emacs_keeps_the_cursor_in_place(
+        #[case] setup: &[KeyEvent],
+        #[case] helix: bool,
+    ) {
+        let mut rl = seam_engine(machine_switching_on_alt(helix, 'e', PromptEditMode::Emacs))
+            .with_additional_edit_mode(Box::<crate::Emacs>::default())
+            .with_validator(Box::new(crate::DefaultValidator));
+
+        drive_until_signal(&mut rl, &[ch('a'), ch('b'), ch('c'), ch('d')]);
+        drive_until_signal(&mut rl, setup);
+        drive_until_signal(&mut rl, &[alt('e')]);
+        assert_eq!(rl.prompt_edit_mode(), PromptEditMode::Emacs);
+        assert_eq!(rl.editor.insertion_point(), 2);
+        drive_until_signal(&mut rl, &[ch('X')]);
+        assert_eq!(rl.editor.get_buffer(), "abXcd");
+    }
+
+    fn shift(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::SHIFT)
+    }
+
+    /// The visual table's navigation keys grow the selection they are pressed
+    /// in, so the operator that follows takes all of it. Starts from `abcde`
+    /// with `v` on `a`.
+    #[rstest]
+    #[case::right_then_d(&[key(KeyCode::Right), ch('d')], "cde")]
+    #[case::end_then_d(&[key(KeyCode::End), ch('d')], "")]
+    #[case::right_then_delete(&[key(KeyCode::Right), key(KeyCode::Delete)], "cde")]
+    fn vi_visual_navigation_keys_feed_the_operator(
+        #[case] keys: &[KeyEvent],
+        #[case] left_over: &str,
+    ) {
+        let mut rl = seam_engine(Box::<crate::Vi>::default())
+            .with_validator(Box::new(crate::DefaultValidator));
+
+        drive_until_signal(&mut rl, &[ch('a'), ch('b'), ch('c'), ch('d'), ch('e')]);
+        drive_until_signal(&mut rl, &[key(KeyCode::Esc), ch('0'), ch('v')]);
+        drive_until_signal(&mut rl, keys);
+
+        assert_eq!(rl.editor.get_buffer(), left_over);
+        assert_eq!(
+            rl.prompt_edit_mode(),
+            PromptEditMode::Vi(PromptViMode::Normal)
+        );
+    }
+
+    /// `Esc` drops a selection without moving the caret. Under a bar caret the
+    /// caret is the head on either side of the anchor; reading a forward head
+    /// as a block's far edge would step it back a grapheme.
+    #[rstest]
+    #[case::selected_leftward(&[shift(KeyCode::Left), shift(KeyCode::Left)], 2)]
+    #[case::selected_rightward(
+        &[key(KeyCode::Home), key(KeyCode::Right), shift(KeyCode::Right), shift(KeyCode::Right)],
+        3
+    )]
+    fn esc_clears_a_bar_selection_without_moving_the_caret(
+        #[case] select: &[KeyEvent],
+        #[case] caret: usize,
+    ) {
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_validator(Box::new(crate::DefaultValidator));
+
+        drive_until_signal(&mut rl, &[ch('a'), ch('b'), ch('c'), ch('d'), ch('e')]);
+        drive_until_signal(&mut rl, &[key(KeyCode::Left)]);
+        drive_until_signal(&mut rl, select);
+        assert!(
+            rl.editor.get_selection().is_some(),
+            "setup: a live selection"
+        );
+        assert_eq!(rl.editor.insertion_point(), caret);
+
+        drive_until_signal(&mut rl, &[key(KeyCode::Esc)]);
+        assert_eq!(rl.editor.get_selection(), None);
+        assert_eq!(rl.editor.insertion_point(), caret);
+    }
+
+    /// Vi normal has no notion of a selection, so one carried in from a bar
+    /// caret must not survive the switch: every operator would read it as its
+    /// range and the first keystroke would delete text. Both directions are
+    /// covered since the head sits on a different edge in each, and either way
+    /// the caret stays where the user left it.
+    #[rstest]
+    #[case::selected_leftward(&[shift(KeyCode::Left), shift(KeyCode::Left), shift(KeyCode::Left)], 1)]
+    #[case::selected_rightward(
+        &[key(KeyCode::Home), key(KeyCode::Right), shift(KeyCode::Right), shift(KeyCode::Right)],
+        3
+    )]
+    fn switch_mode_into_vi_normal_drops_a_bar_selection(
+        #[case] select: &[KeyEvent],
+        #[case] caret: usize,
+    ) {
+        let mut rl = seam_engine(emacs_with(
+            KeyModifiers::ALT,
+            KeyCode::Char('n'),
+            ReedlineEvent::SwitchMode(PromptEditMode::Vi(PromptViMode::Normal)),
+        ))
+        .with_additional_edit_mode(Box::<crate::Vi>::default())
+        .with_validator(Box::new(crate::DefaultValidator));
+
+        drive_until_signal(&mut rl, &[ch('a'), ch('b'), ch('c'), ch('d'), ch('e')]);
+        drive_until_signal(&mut rl, &[key(KeyCode::Left)]);
+        drive_until_signal(&mut rl, select);
+        assert!(
+            rl.editor.get_selection().is_some(),
+            "setup: a live selection"
+        );
+
+        drive_until_signal(&mut rl, &[alt('n')]);
+        assert_eq!(
+            rl.prompt_edit_mode(),
+            PromptEditMode::Vi(PromptViMode::Normal)
+        );
+        assert_eq!(rl.editor.get_selection(), None);
+        assert_eq!(rl.editor.insertion_point(), caret);
+        // `x` takes the one grapheme under the caret, not the old selection.
+        drive_until_signal(&mut rl, &[ch('x')]);
+        assert_eq!(rl.editor.get_buffer().len(), 4);
+    }
+
+    /// A selection wider than one grapheme collapses onto the caret, where the
+    /// machine's own `Esc` leaves it, rather than onto the selection's start.
+    /// `setup` selects `abc` forward from the start of `abcd`, caret on `c`.
+    #[rstest]
+    #[case::vi_visual_into_vi_normal(
+        false,
+        &[key(KeyCode::Esc), ch('0'), ch('v'), ch('l'), ch('l')],
+        PromptEditMode::Vi(PromptViMode::Normal)
+    )]
+    #[case::vi_visual_into_emacs(
+        false,
+        &[key(KeyCode::Esc), ch('0'), ch('v'), ch('l'), ch('l')],
+        PromptEditMode::Emacs
+    )]
+    #[case::helix_select_into_emacs(
+        true,
+        &[key(KeyCode::Esc), ch('g'), ch('h'), ch('v'), ch('l'), ch('l')],
+        PromptEditMode::Emacs
+    )]
+    #[case::helix_select_into_helix_insert(
+        true,
+        &[key(KeyCode::Esc), ch('g'), ch('h'), ch('v'), ch('l'), ch('l')],
+        PromptEditMode::Helix(PromptHelixMode::Insert)
+    )]
+    fn switch_mode_collapses_a_wide_selection_onto_the_caret(
+        #[case] helix: bool,
+        #[case] setup: &[KeyEvent],
+        #[case] target: PromptEditMode,
+    ) {
+        let mut rl = seam_engine(machine_switching_on_alt(helix, 't', target.clone()))
+            .with_additional_edit_mode(Box::<crate::Emacs>::default())
+            .with_validator(Box::new(crate::DefaultValidator));
+
+        drive_until_signal(&mut rl, &[ch('a'), ch('b'), ch('c'), ch('d')]);
+        drive_until_signal(&mut rl, setup);
+        assert_eq!(rl.editor.insertion_point(), 2, "setup: caret on `c`");
+
+        drive_until_signal(&mut rl, &[alt('t')]);
+        assert_eq!(rl.prompt_edit_mode(), target);
+        assert_eq!(rl.editor.get_selection(), None);
+        assert_eq!(rl.editor.insertion_point(), 2);
+    }
+
+    /// A target naming the state the active machine is already in is not a
+    /// move: the engine declines it before any machine is asked, so nothing is
+    /// repaired and a live selection survives.
+    #[test]
+    fn switch_mode_into_the_active_state_is_inapplicable() {
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_additional_edit_mode(Box::<crate::Vi>::default());
+        drive_until_signal(&mut rl, &[ch('a'), ch('b'), ch('c'), ch('d'), ch('e')]);
+        drive_until_signal(&mut rl, &[shift(KeyCode::Left), shift(KeyCode::Left)]);
+        assert_eq!(
+            rl.editor.get_selection(),
+            Some((3, 5)),
+            "setup: a live selection"
+        );
+
+        assert!(matches!(
+            status_of(&mut rl, ReedlineEvent::SwitchMode(PromptEditMode::Emacs)),
+            EventStatus::Inapplicable
+        ));
+        assert_eq!(rl.prompt_edit_mode(), PromptEditMode::Emacs);
+        assert_eq!(
+            rl.editor.get_selection(),
+            Some((3, 5)),
+            "and nothing was repaired"
+        );
+
+        // The same rule inside a machine with several states: only a move
+        // between them is handled.
+        let mut vi = seam_engine(Box::<crate::Vi>::default());
+        drive_until_signal(&mut vi, &[ch('a'), key(KeyCode::Esc)]);
+        assert!(matches!(
+            status_of(
+                &mut vi,
+                ReedlineEvent::SwitchMode(PromptEditMode::Vi(PromptViMode::Normal))
+            ),
+            EventStatus::Inapplicable
+        ));
+        assert!(matches!(
+            status_of(
+                &mut vi,
+                ReedlineEvent::SwitchMode(PromptEditMode::Vi(PromptViMode::Insert))
+            ),
+            EventStatus::Handled
+        ));
+    }
+
+    /// The honest answer is what makes a toggle: with both targets in one
+    /// `UntilFound`, the one already active falls through to the other.
+    #[test]
+    fn until_found_toggles_between_two_switch_targets() {
+        let toggle = ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::SwitchMode(PromptEditMode::Vi(PromptViMode::Normal)),
+            ReedlineEvent::SwitchMode(PromptEditMode::Emacs),
+        ]);
+        let mut vi_normal = crate::default_vi_normal_keybindings();
+        vi_normal.add_binding(KeyModifiers::ALT, KeyCode::Char('t'), toggle.clone());
+        let mut rl = seam_engine(emacs_with(KeyModifiers::ALT, KeyCode::Char('t'), toggle))
+            .with_additional_edit_mode(Box::new(crate::Vi::new(
+                crate::default_vi_insert_keybindings(),
+                vi_normal,
+                crate::default_vi_visual_keybindings(),
+            )));
+
+        drive_until_signal(&mut rl, &[alt('t')]);
+        assert_eq!(
+            rl.prompt_edit_mode(),
+            PromptEditMode::Vi(PromptViMode::Normal)
+        );
+        drive_until_signal(&mut rl, &[alt('t')]);
+        assert_eq!(rl.prompt_edit_mode(), PromptEditMode::Emacs);
+        drive_until_signal(&mut rl, &[alt('t')]);
+        assert_eq!(
+            rl.prompt_edit_mode(),
+            PromptEditMode::Vi(PromptViMode::Normal)
+        );
+    }
+
+    /// A bar selection carried into a block mode keeps the text it covers.
+    /// Emacs holds `bc` of `abcde` as the span `(1, 3)` with the caret after
+    /// `c`; a block mode reads the same span as `v` on `b` then `l`, caret on
+    /// `c`, so the operator that follows takes exactly what was shown. A
+    /// backward span already has its caret on a grapheme and moves nothing.
+    #[rstest]
+    #[case::forward_into_vi_visual(
+        &[key(KeyCode::Home), key(KeyCode::Right), shift(KeyCode::Right), shift(KeyCode::Right)],
+        PromptEditMode::Vi(PromptViMode::Visual),
+        (1, 3),
+        2,
+        "ade"
+    )]
+    #[case::forward_into_helix_select(
+        &[key(KeyCode::Home), key(KeyCode::Right), shift(KeyCode::Right), shift(KeyCode::Right)],
+        PromptEditMode::Helix(PromptHelixMode::Select),
+        (1, 3),
+        2,
+        "ade"
+    )]
+    #[case::forward_into_helix_normal(
+        &[key(KeyCode::Home), key(KeyCode::Right), shift(KeyCode::Right), shift(KeyCode::Right)],
+        PromptEditMode::Helix(PromptHelixMode::Normal),
+        (1, 3),
+        2,
+        "ade"
+    )]
+    #[case::backward_into_vi_visual(
+        &[shift(KeyCode::Left), shift(KeyCode::Left)],
+        PromptEditMode::Vi(PromptViMode::Visual),
+        (3, 5),
+        3,
+        "abc"
+    )]
+    #[case::backward_into_helix_select(
+        &[shift(KeyCode::Left), shift(KeyCode::Left)],
+        PromptEditMode::Helix(PromptHelixMode::Select),
+        (3, 5),
+        3,
+        "abc"
+    )]
+    #[case::backward_into_helix_normal(
+        &[shift(KeyCode::Left), shift(KeyCode::Left)],
+        PromptEditMode::Helix(PromptHelixMode::Normal),
+        (3, 5),
+        3,
+        "abc"
+    )]
+    fn switch_mode_into_a_block_mode_keeps_the_selected_text(
+        #[case] select: &[KeyEvent],
+        #[case] target: PromptEditMode,
+        #[case] selection: (usize, usize),
+        #[case] caret: usize,
+        #[case] after_d: &str,
+    ) {
+        let mut rl = seam_engine(emacs_with(
+            KeyModifiers::ALT,
+            KeyCode::Char('b'),
+            ReedlineEvent::SwitchMode(target.clone()),
+        ))
+        .with_additional_edit_mode(Box::<crate::Vi>::default())
+        .with_additional_edit_mode(Box::<crate::Helix>::default())
+        .with_validator(Box::new(crate::DefaultValidator));
+
+        drive_until_signal(&mut rl, &[ch('a'), ch('b'), ch('c'), ch('d'), ch('e')]);
+        drive_until_signal(&mut rl, select);
+        assert_eq!(rl.editor.get_selection(), Some(selection), "setup");
+
+        drive_until_signal(&mut rl, &[alt('b')]);
+        assert_eq!(rl.prompt_edit_mode(), target);
+        assert_eq!(rl.editor.get_selection(), Some(selection));
+        assert_eq!(rl.editor.insertion_point(), caret);
+        drive_until_signal(&mut rl, &[ch('d')]);
+        assert_eq!(rl.editor.get_buffer(), after_d);
+    }
+
+    /// The demo's bindings, driven as the keys a terminal sends: a function
+    /// key into the active machine changes nothing, one into helix normal
+    /// carries the selection over.
+    #[test]
+    fn function_key_switches_through_the_emacs_parser_keep_an_emacs_selection() {
+        let mut emacs = crate::default_emacs_keybindings();
+        emacs.add_binding(
+            KeyModifiers::NONE,
+            KeyCode::F(5),
+            ReedlineEvent::SwitchMode(PromptEditMode::Emacs),
+        );
+        emacs.add_binding(
+            KeyModifiers::NONE,
+            KeyCode::F(7),
+            ReedlineEvent::SwitchMode(PromptEditMode::Helix(PromptHelixMode::Normal)),
+        );
+        let mut rl = seam_engine(Box::new(crate::Emacs::new(emacs)))
+            .with_additional_edit_mode(Box::<crate::Vi>::default())
+            .with_additional_edit_mode(Box::<crate::Helix>::default())
+            .with_validator(Box::new(crate::DefaultValidator));
+
+        drive_until_signal(&mut rl, &[ch('a'), ch('b'), ch('c'), ch('d'), ch('e')]);
+        drive_until_signal(&mut rl, &[shift(KeyCode::Left), shift(KeyCode::Left)]);
+        assert_eq!(rl.editor.get_selection(), Some((3, 5)), "setup");
+
+        drive_until_signal(&mut rl, &[key(KeyCode::F(5))]);
+        assert_eq!(rl.prompt_edit_mode(), PromptEditMode::Emacs);
+        assert_eq!(rl.editor.get_selection(), Some((3, 5)), "F5 in emacs");
+
+        drive_until_signal(&mut rl, &[key(KeyCode::F(7))]);
+        assert_eq!(
+            rl.prompt_edit_mode(),
+            PromptEditMode::Helix(PromptHelixMode::Normal)
+        );
+        assert_eq!(rl.editor.get_selection(), Some((3, 5)), "F7 into helix");
+    }
+
+    /// A switch while the history menu is open neither moves the cursor nor
+    /// touches the buffer the menu is querying with.
+    #[test]
+    fn switch_mode_under_an_open_history_menu_keeps_the_cursor() {
+        let mut normal = crate::default_helix_normal_keybindings();
+        normal.add_binding(
+            KeyModifiers::ALT,
+            KeyCode::Char('e'),
+            ReedlineEvent::SwitchMode(PromptEditMode::Emacs),
+        );
+        let mut rl = seam_engine(Box::new(
+            crate::Helix::default().with_normal_keybindings(normal),
+        ))
+        .with_additional_edit_mode(Box::<crate::Emacs>::default())
+        .with_menu(ReedlineMenu::HistoryMenu(Box::new(
+            crate::ListMenu::default().with_name("history_menu"),
+        )));
+        rl.history
+            .save(HistoryItem::from_command_line("abcd x"))
+            .expect("history ok");
+        let prompt = DefaultPrompt::default();
+
+        // Caret on `c`, then open the menu over that buffer.
+        drive_until_signal(
+            &mut rl,
+            &[
+                ch('a'),
+                ch('b'),
+                ch('c'),
+                ch('d'),
+                key(KeyCode::Esc),
+                ch('h'),
+            ],
+        );
+        rl.handle_event(&prompt, ReedlineEvent::Menu("history_menu".into()))
+            .expect("menu opens");
+        assert!(menu_is_active(&rl), "setup: history menu is open");
+
+        drive_until_signal(&mut rl, &[alt('e')]);
+        assert_eq!(rl.prompt_edit_mode(), PromptEditMode::Emacs);
+        assert_eq!(rl.editor.get_buffer(), "abcd");
+        assert_eq!(rl.editor.insertion_point(), 2);
+        assert!(menu_is_active(&rl), "the menu outlives the switch");
+    }
+
+    /// No registered machine accepts the target: nothing changes, and the
+    /// `Inapplicable` lets `UntilFound` fall through to the next candidate.
+    #[test]
+    fn switch_mode_to_an_unregistered_machine_falls_through() {
+        let mut rl = seam_engine(emacs_with(
+            KeyModifiers::CONTROL,
+            KeyCode::Char('h'),
+            ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::SwitchMode(PromptEditMode::Helix(PromptHelixMode::Normal)),
+                ReedlineEvent::Edit(vec![EditCommand::InsertString("!".into())]),
+            ]),
+        ));
+
+        drive_until_signal(&mut rl, &[ctrl('h')]);
+        assert_eq!(rl.prompt_edit_mode(), PromptEditMode::Emacs);
+        assert_eq!(rl.editor.get_buffer(), "!");
+    }
+
+    /// `clear_edit_modes` drops the standbys and leaves the active machine, so
+    /// a host that rebuilds its set every prompt does not accumulate one.
+    #[test]
+    fn clear_edit_modes_drops_the_standbys_and_keeps_the_active_machine() {
+        let mut rl = seam_engine(emacs_with(
+            KeyModifiers::CONTROL,
+            KeyCode::Char('h'),
+            ReedlineEvent::SwitchMode(PromptEditMode::Helix(PromptHelixMode::Normal)),
+        ))
+        .with_additional_edit_mode(Box::<crate::Helix>::default())
+        .clear_edit_modes();
+
+        assert!(rl.standby_edit_modes.is_empty());
+        drive_until_signal(&mut rl, &[ctrl('h')]);
+        assert_eq!(rl.prompt_edit_mode(), PromptEditMode::Emacs);
+    }
+
+    /// A host-defined machine is reached through the name it reports, so two
+    /// custom machines are told apart by `PromptEditMode::Custom`.
+    #[test]
+    fn switch_mode_reaches_a_custom_machine_by_name() {
+        struct Named(&'static str);
+        impl EditMode for Named {
+            fn parse_event(&mut self, _e: ReedlineRawEvent) -> ReedlineEvent {
+                ReedlineEvent::None
+            }
+            fn edit_mode(&self) -> PromptEditMode {
+                PromptEditMode::Custom(self.0.into())
+            }
+            fn handle_mode_specific_event(&mut self, event: ReedlineEvent) -> EventStatus {
+                match event {
+                    ReedlineEvent::SwitchMode(PromptEditMode::Custom(name)) if name == self.0 => {
+                        EventStatus::Handled
+                    }
+                    _ => EventStatus::Inapplicable,
+                }
+            }
+        }
+        let prompt = DefaultPrompt::default();
+        let mut rl = Reedline::create()
+            .with_edit_mode(Box::new(Named("fish")))
+            .with_additional_edit_mode(Box::new(Named("shark")));
+
+        let status = rl
+            .handle_event(
+                &prompt,
+                ReedlineEvent::SwitchMode(PromptEditMode::Custom("shark".into())),
+            )
+            .expect("switching does not touch the terminal");
+        assert!(matches!(status, EventStatus::Handled));
+        assert_eq!(
+            rl.prompt_edit_mode(),
+            PromptEditMode::Custom("shark".into())
+        );
+
+        let status = rl
+            .handle_event(
+                &prompt,
+                ReedlineEvent::SwitchMode(PromptEditMode::Custom("eel".into())),
+            )
+            .expect("switching does not touch the terminal");
+        assert!(matches!(status, EventStatus::Inapplicable));
+        assert_eq!(
+            rl.prompt_edit_mode(),
+            PromptEditMode::Custom("shark".into())
+        );
     }
 
     /// The submitted path cannot assert on the buffer (`submit_buffer` clears
@@ -3528,6 +5369,47 @@ mod tests {
             &[ch('a'), ch('b'), ch('c'), key(KeyCode::Esc), ch('%')],
         );
         assert_eq!(rl.editor.get_selection(), Some((0, 3)));
+    }
+
+    /// `#1190`: `%` and `x` both leave a forward selection wider than one
+    /// grapheme, and a backward extend from one used to move the caret two
+    /// cells per press.
+    #[rstest]
+    #[case::select_all_h(ch('%'), ch('h'))]
+    #[case::select_all_left(ch('%'), key(KeyCode::Left))]
+    #[case::select_line_h(ch('x'), ch('h'))]
+    #[case::select_line_left(ch('x'), key(KeyCode::Left))]
+    fn helix_select_left_walks_one_cell_after_a_wide_selection(
+        #[case] select: KeyEvent,
+        #[case] left: KeyEvent,
+    ) {
+        let mut rl = seam_engine(Box::<crate::Helix>::default());
+        drive_until_signal(
+            &mut rl,
+            &[
+                ch('a'),
+                ch('b'),
+                ch('c'),
+                ch('d'),
+                key(KeyCode::Esc),
+                select,
+                ch('v'),
+            ],
+        );
+        assert_eq!(rl.editor.get_selection(), Some((0, 4)));
+        assert_eq!(
+            rl.editor.insertion_point(),
+            3,
+            "caret rests on the final `d`"
+        );
+        for expected in [2, 1, 0] {
+            drive_until_signal(&mut rl, &[left]);
+            assert_eq!(
+                rl.editor.insertion_point(),
+                expected,
+                "one cell per press, not two"
+            );
+        }
     }
 
     /// Appending has to land *past* the last grapheme: the block cursor rests on
@@ -4570,6 +6452,423 @@ mod tests {
         reedline
     }
 
+    /// The menu maintenance the paint cycle runs between keystrokes — value
+    /// refresh only, no layout (the headless test painter has no width) — so
+    /// an assertion after a typed character sees what a user would on screen.
+    fn apply_menu_maintenance(reedline: &mut Reedline) {
+        for menu in reedline.menus.iter_mut() {
+            if menu.is_active() {
+                menu.update_values(
+                    &mut reedline.editor,
+                    reedline.completer.as_mut(),
+                    reedline.history.as_ref(),
+                );
+            }
+        }
+    }
+
+    // --- a stale menu must not intercept Enter ---
+    //
+    // The completion menu stays active while the user types past it, and any
+    // Enter while a menu is active is routed to the menu. Left unguarded that
+    // turns Enter into a dead key (empty menu) or an insertion of whatever the
+    // menu last highlighted (non-empty menu) at the end of a finished line.
+
+    /// `Enter`, `Submit` and `SubmitOrNewline` all reach the line through
+    /// `MenuAccept`, so an open menu takes all three the same way.
+    #[rstest]
+    #[case::enter(ReedlineEvent::Enter)]
+    #[case::submit(ReedlineEvent::Submit)]
+    #[case::submit_or_newline(ReedlineEvent::SubmitOrNewline)]
+    fn every_submit_event_accepts_an_open_menu(#[case] event: ReedlineEvent) {
+        let mut reedline = engine_with_active_menu(false, false);
+        reedline.painter.force_prompt_anchored_for_test(0);
+        apply_menu_maintenance(&mut reedline);
+        let prompt = DefaultPrompt::default();
+
+        let status = reedline.handle_event(&prompt, event).unwrap();
+
+        assert!(
+            matches!(status, EventStatus::Handled),
+            "the menu takes the keypress"
+        );
+        assert!(!menu_is_active(&reedline), "and closes behind the accept");
+        assert_ne!(
+            reedline.editor.get_buffer(),
+            "th",
+            "the selection reached the buffer"
+        );
+    }
+
+    /// And once the menu declines, all three mean what they always meant.
+    #[rstest]
+    #[case::enter(ReedlineEvent::Enter)]
+    #[case::submit(ReedlineEvent::Submit)]
+    #[case::submit_or_newline(ReedlineEvent::SubmitOrNewline)]
+    fn every_submit_event_passes_an_empty_menu(#[case] event: ReedlineEvent) {
+        let mut reedline = engine_with_active_menu(false, false);
+        reedline.painter.force_prompt_anchored_for_test(0);
+        let prompt = DefaultPrompt::default();
+        // "thz" matches nothing; the menu refilters to empty but stays active.
+        reedline
+            .handle_event(
+                &prompt,
+                ReedlineEvent::Edit(vec![EditCommand::InsertChar('z')]),
+            )
+            .unwrap();
+        apply_menu_maintenance(&mut reedline);
+        assert!(menu_is_active(&reedline));
+
+        let status = reedline.handle_event(&prompt, event).unwrap();
+
+        assert!(
+            matches!(status, EventStatus::Exits(Signal::Success(ref s)) if s == "thz"),
+            "the line ran"
+        );
+    }
+
+    /// A menu whose filtered suggestions are empty has nothing to accept:
+    /// Enter must close it and submit the line, not be swallowed.
+    #[test]
+    fn enter_with_an_empty_menu_submits_the_line() {
+        let mut reedline = engine_with_active_menu(false, false);
+        reedline.painter.force_prompt_anchored_for_test(0);
+        let prompt = DefaultPrompt::default();
+        // "thz" matches nothing; the menu refilters to empty but stays active.
+        reedline
+            .handle_event(
+                &prompt,
+                ReedlineEvent::Edit(vec![EditCommand::InsertChar('z')]),
+            )
+            .unwrap();
+        apply_menu_maintenance(&mut reedline);
+        assert!(menu_is_active(&reedline));
+
+        let status = reedline
+            .handle_event(&prompt, ReedlineEvent::Enter)
+            .unwrap();
+        assert!(
+            matches!(status, EventStatus::Exits(Signal::Success(ref s)) if s == "thz"),
+            "Enter was swallowed by an empty menu"
+        );
+        assert!(!menu_is_active(&reedline));
+    }
+
+    /// The full shape of the report this fixes: Tab opens the menu mid-line,
+    /// the user types the rest of the statement and hits Enter. Before the
+    /// fix the Enter was consumed by the stale menu instead of submitting.
+    #[test]
+    fn typing_past_a_completion_then_enter_runs_the_line() {
+        let mut reedline = engine_with_active_menu(false, false);
+        reedline.painter.force_prompt_anchored_for_test(0);
+        let prompt = DefaultPrompt::default();
+        for c in " more words".chars() {
+            reedline
+                .handle_event(
+                    &prompt,
+                    ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)]),
+                )
+                .unwrap();
+        }
+        apply_menu_maintenance(&mut reedline);
+
+        let status = reedline
+            .handle_event(&prompt, ReedlineEvent::Enter)
+            .unwrap();
+        assert!(
+            matches!(status, EventStatus::Exits(Signal::Success(ref s)) if s == "th more words"),
+            "the line was not submitted intact"
+        );
+    }
+
+    /// A completion menu open over "th", closing at the end of the word for
+    /// the given word characters.
+    fn engine_with_word_bounded_menu(word_chars: &str, persistent: bool) -> Reedline {
+        let completer = Box::new(DefaultCompleter::new_with_wordlen(
+            vec![
+                String::from("test"),
+                String::from("this"),
+                String::from("that"),
+            ],
+            1,
+        ));
+        let completion_menu = ReedlineMenu::EngineCompleter(Box::new(
+            ColumnarMenu::default()
+                .with_name("completion_menu")
+                .with_word_chars(word_chars),
+        ));
+        let mut reedline = Reedline::create()
+            .with_completer(completer)
+            .with_menu(completion_menu)
+            .with_persistent_menus(persistent);
+
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("th"))]);
+        reedline
+            .handle_event(
+                &DefaultPrompt::default(),
+                ReedlineEvent::Menu(String::from("completion_menu")),
+            )
+            .unwrap();
+        assert!(menu_is_active(&reedline));
+        reedline
+    }
+
+    fn insert(reedline: &mut Reedline, c: char) {
+        reedline
+            .handle_event(
+                &DefaultPrompt::default(),
+                ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)]),
+            )
+            .unwrap();
+    }
+
+    /// A character that cannot extend the word ends the menu opened for it;
+    /// one that can leaves the menu to refilter.
+    #[rstest]
+    #[case::space(' ', true)]
+    #[case::statement_end(';', true)]
+    #[case::close_paren(')', true)]
+    #[case::letter('e', false)]
+    #[case::underscore('_', false)]
+    #[case::qualifier('.', false)]
+    fn a_word_boundary_closes_the_menu(#[case] typed: char, #[case] closes: bool) {
+        let mut reedline = engine_with_word_bounded_menu("_.", false);
+        insert(&mut reedline, typed);
+        assert_eq!(!menu_is_active(&reedline), closes, "inserting {typed:?}");
+    }
+
+    /// A newline ends the word however it arrives: the default `Alt+Enter`
+    /// and `Shift+Enter` bindings emit `InsertNewline`, not `InsertChar`, and
+    /// a menu that outlived it would hold `Enter` on the next line of a
+    /// multi-line statement.
+    #[test]
+    fn a_newline_command_closes_the_menu() {
+        let mut reedline = engine_with_word_bounded_menu("_.", false);
+        reedline
+            .handle_event(
+                &DefaultPrompt::default(),
+                ReedlineEvent::Edit(vec![EditCommand::InsertNewline]),
+            )
+            .unwrap();
+        assert!(!menu_is_active(&reedline));
+    }
+
+    /// The word characters are the caller's to choose: a path completer keeps
+    /// its menu across the separators an identifier completer ends on.
+    #[rstest]
+    #[case::path_separator('/', false)]
+    #[case::dash('-', false)]
+    #[case::space(' ', true)]
+    fn word_chars_decide_where_the_word_ends(#[case] typed: char, #[case] closes: bool) {
+        let mut reedline = engine_with_word_bounded_menu("_-./", false);
+        insert(&mut reedline, typed);
+        assert_eq!(!menu_is_active(&reedline), closes, "inserting {typed:?}");
+    }
+
+    /// Left unset, a menu still lives for the rest of the line.
+    #[rstest]
+    #[case::space(' ')]
+    #[case::statement_end(';')]
+    fn a_menu_without_word_chars_outlives_the_word(#[case] typed: char) {
+        let mut reedline = engine_with_active_menu(false, false);
+        insert(&mut reedline, typed);
+        assert!(menu_is_active(&reedline), "inserting {typed:?}");
+    }
+
+    /// A persistent menu is persistent: the word ending does not close it.
+    #[test]
+    fn a_persistent_menu_survives_the_end_of_the_word() {
+        let mut reedline = engine_with_word_bounded_menu("_.", true);
+        insert(&mut reedline, ';');
+        assert!(menu_is_active(&reedline));
+    }
+
+    /// Only typing ends a word. Text arriving whole — a paste, a macro — is
+    /// not the user walking off the end of the completion.
+    #[test]
+    fn inserted_text_does_not_end_the_word() {
+        let mut reedline = engine_with_word_bounded_menu("_.", false);
+        reedline
+            .handle_event(
+                &DefaultPrompt::default(),
+                ReedlineEvent::Edit(vec![EditCommand::InsertString(String::from("is; "))]),
+            )
+            .unwrap();
+        assert!(menu_is_active(&reedline));
+    }
+
+    /// A menu that filters on whole command lines rather than a word — the
+    /// history menu `examples/demo.rs` pairs with the completion menu — has no
+    /// word to end, and is left alone while its neighbour closes.
+    #[test]
+    fn a_menu_without_word_chars_is_left_alone() {
+        let mut reedline = Reedline::create()
+            .with_menu(ReedlineMenu::EngineCompleter(Box::new(
+                ColumnarMenu::default()
+                    .with_name("completion_menu")
+                    .with_word_chars("_."),
+            )))
+            .with_menu(ReedlineMenu::HistoryMenu(Box::new(
+                ListMenu::default().with_name("history_menu"),
+            )));
+        let prompt = DefaultPrompt::default();
+
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("git"))]);
+        reedline
+            .handle_event(&prompt, ReedlineEvent::Menu(String::from("history_menu")))
+            .unwrap();
+        assert!(menu_is_active(&reedline));
+
+        insert(&mut reedline, ' ');
+
+        assert!(
+            menu_is_active(&reedline),
+            "a history search is a line, not a word"
+        );
+    }
+
+    /// The space that ends a word also triggers abbreviation expansion, which
+    /// returns out of the edit before the menu is looked at again. The word
+    /// ends first, so the menu does not outlive the expansion.
+    #[test]
+    fn an_abbreviation_expanded_on_the_space_still_ends_the_word() {
+        let mut reedline = engine_with_word_bounded_menu("_.", false)
+            .with_abbreviations(HashMap::from([(String::from("th"), String::from("there"))]));
+
+        insert(&mut reedline, ' ');
+
+        assert_eq!(reedline.editor.get_buffer(), "there ");
+        assert!(!menu_is_active(&reedline), "the space ended the word");
+    }
+
+    /// A completer that counts how often it is asked.
+    struct CountingCompleter {
+        calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl Completer for CountingCompleter {
+        fn complete(&mut self, _line: &str, _pos: usize) -> CompletionResult {
+            self.calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            CompletionResult::fresh(Vec::new())
+        }
+    }
+
+    /// The character that ends the word closes the menu before anything asks
+    /// the completer to refilter it: the answer would be thrown away.
+    #[test]
+    fn the_completer_is_not_asked_about_a_word_that_has_ended() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let completion_menu = ReedlineMenu::EngineCompleter(Box::new(
+            ColumnarMenu::default()
+                .with_name("completion_menu")
+                .with_word_chars("_."),
+        ));
+        let mut reedline = Reedline::create()
+            .with_completer(Box::new(CountingCompleter {
+                calls: Arc::clone(&calls),
+            }))
+            .with_menu(completion_menu)
+            .with_quick_completions(true);
+        let prompt = DefaultPrompt::default();
+
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("th"))]);
+        reedline
+            .handle_event(
+                &prompt,
+                ReedlineEvent::Menu(String::from("completion_menu")),
+            )
+            .unwrap();
+        calls.store(0, Ordering::Relaxed);
+
+        insert(&mut reedline, ' ');
+
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+        assert!(!menu_is_active(&reedline));
+    }
+
+    /// Typed fast enough, the rest of a statement arrives as one `Edit` of
+    /// several `InsertChar`s. The word still ends inside it.
+    #[test]
+    fn a_word_ends_inside_a_burst_of_typing() {
+        let mut reedline = engine_with_word_bounded_menu("_.", false);
+
+        reedline
+            .handle_event(
+                &DefaultPrompt::default(),
+                ReedlineEvent::Edit(vec![
+                    EditCommand::InsertChar('i'),
+                    EditCommand::InsertChar('s'),
+                    EditCommand::InsertChar(';'),
+                    EditCommand::InsertChar(' '),
+                ]),
+            )
+            .unwrap();
+
+        assert!(!menu_is_active(&reedline), "the ';' ended the word");
+    }
+
+    /// A completer that always has something to offer, the way a grammar-driven
+    /// SQL completer suggests next-statement keywords after a ';'. A menu fed by
+    /// one of these is never empty, so nothing but the end of the word takes its
+    /// claim on `Enter` away.
+    struct AlwaysSuggests;
+
+    impl Completer for AlwaysSuggests {
+        fn complete(&mut self, _line: &str, pos: usize) -> CompletionResult {
+            CompletionResult::fresh(vec![Suggestion {
+                value: String::from("table"),
+                span: Span {
+                    start: pos,
+                    end: pos,
+                },
+                ..Default::default()
+            }])
+        }
+    }
+
+    /// The report this comes from, byte for byte: `show tab`, Tab to open the
+    /// menu, then `les;` and Enter. The ';' ends the word, so Enter runs the
+    /// statement instead of appending the highlighted "table" to it.
+    #[test]
+    fn the_end_of_a_word_returns_enter_to_the_line() {
+        let completion_menu = ReedlineMenu::EngineCompleter(Box::new(
+            ColumnarMenu::default()
+                .with_name("completion_menu")
+                .with_word_chars("_."),
+        ));
+        let mut reedline = Reedline::create()
+            .with_completer(Box::new(AlwaysSuggests))
+            .with_menu(completion_menu);
+        reedline.painter.force_prompt_anchored_for_test(0);
+        let prompt = DefaultPrompt::default();
+
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("show tab"))]);
+        reedline
+            .handle_event(
+                &prompt,
+                ReedlineEvent::Menu(String::from("completion_menu")),
+            )
+            .unwrap();
+        assert!(menu_is_active(&reedline));
+
+        for c in "les;".chars() {
+            insert(&mut reedline, c);
+        }
+        assert!(!menu_is_active(&reedline), "';' ends the word");
+
+        let status = reedline
+            .handle_event(&prompt, ReedlineEvent::Enter)
+            .unwrap();
+        assert!(
+            matches!(status, EventStatus::Exits(Signal::Success(ref s)) if s == "show tables;"),
+            "the statement runs with no stray word appended"
+        );
+    }
+
     /// Engine with a completion menu open over "th" and partial completions on, so
     /// `MenuNext` reaches the completer through `can_partially_complete`.
     fn engine_with_partial_completion_menu() -> Reedline {
@@ -4631,6 +6930,332 @@ mod tests {
     }
 
     #[rstest]
+    #[case::up_at_first_line(
+        EditCommand::MoveLineUp { select: false },
+        0,
+        "!a\nb",
+        1
+    )]
+    #[case::up_from_second_line(
+        EditCommand::MoveLineUp { select: false },
+        3,
+        "a\nb",
+        1
+    )]
+    #[case::down_at_last_line(
+        EditCommand::MoveLineDown { select: false },
+        3,
+        "a\nb!",
+        4
+    )]
+    #[case::down_from_first_line(
+        EditCommand::MoveLineDown { select: false },
+        0,
+        "a\nb",
+        2
+    )]
+    #[case::left_at_buffer_start(EditCommand::MoveLeft { select: false }, 0, "!a\nb", 1)]
+    #[case::right_from_buffer_start(EditCommand::MoveRight { select: false }, 0, "a\nb", 1)]
+    #[case::line_start_at_line_start(
+        EditCommand::MoveToLineStart { select: false },
+        2,
+        "a\n!b",
+        3
+    )]
+    #[case::line_end_from_line_start(
+        EditCommand::MoveToLineEnd { select: false },
+        0,
+        "a\nb",
+        1
+    )]
+    #[case::extend_missing_find(
+        EditCommand::Extend(MotionTarget::Find {
+            ch: 'z',
+            direction: Direction::Forward,
+            stop: FindStop::On,
+        }),
+        0,
+        "!a\nb",
+        1
+    )]
+    fn until_found_move_status(
+        #[case] command: EditCommand,
+        #[case] start: usize,
+        #[case] expected_buffer: &str,
+        #[case] expected_cursor: usize,
+    ) {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[
+            EditCommand::InsertString("a\nb".into()),
+            EditCommand::MoveToPosition {
+                position: start,
+                select: false,
+            },
+        ]);
+
+        let status = send(
+            &mut reedline,
+            ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::Edit(vec![command]),
+                ReedlineEvent::Edit(vec![EditCommand::InsertChar('!')]),
+            ]),
+        );
+
+        assert!(matches!(status, EventStatus::Handled));
+        assert_eq!(reedline.current_buffer_contents(), expected_buffer);
+        assert_eq!(reedline.editor.insertion_point(), expected_cursor);
+    }
+
+    #[rstest]
+    #[case(ReedlineEvent::Left, 0, "!a", 1)]
+    #[case(ReedlineEvent::Left, 1, "a", 0)]
+    #[case(ReedlineEvent::Right, 0, "a", 1)]
+    #[case(ReedlineEvent::Right, 1, "a!", 2)]
+    #[case(ReedlineEvent::ToStart, 0, "!a", 1)]
+    #[case(ReedlineEvent::ToStart, 1, "a", 0)]
+    #[case(ReedlineEvent::ToEnd, 0, "a", 1)]
+    #[case(ReedlineEvent::ToEnd, 1, "a!", 2)]
+    fn until_found_horizontal_alias_status(
+        #[case] event: ReedlineEvent,
+        #[case] start: usize,
+        #[case] expected: &str,
+        #[case] expected_cursor: usize,
+    ) {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[
+            EditCommand::InsertChar('a'),
+            EditCommand::MoveToPosition {
+                position: start,
+                select: false,
+            },
+        ]);
+        let status = send(
+            &mut reedline,
+            ReedlineEvent::UntilFound(vec![
+                event,
+                ReedlineEvent::Edit(vec![EditCommand::InsertChar('!')]),
+            ]),
+        );
+        assert!(matches!(status, EventStatus::Handled));
+        assert_eq!(reedline.current_buffer_contents(), expected);
+        assert_eq!(reedline.editor.insertion_point(), expected_cursor);
+    }
+
+    #[rstest]
+    #[case(ReedlineEvent::ToStart, 0)]
+    #[case(ReedlineEvent::ToEnd, 3)]
+    fn buffer_edge_alias_preserves_history_traversal(
+        #[case] event: ReedlineEvent,
+        #[case] destination: usize,
+        #[values(0, 3)] start: usize,
+    ) {
+        let mut reedline = Reedline::create();
+        reedline
+            .history
+            .save(HistoryItem::from_command_line("abc"))
+            .unwrap();
+        reedline.previous_history().unwrap();
+        reedline.editor.line_buffer_mut().set_insertion_point(start);
+
+        let status = send(&mut reedline, event);
+
+        assert_eq!(matches!(status, EventStatus::Handled), start != destination);
+        assert_eq!(reedline.editor.insertion_point(), destination);
+        assert_eq!(reedline.input_mode, InputMode::HistoryTraversal);
+    }
+
+    #[rstest]
+    #[case(ReedlineEvent::ToStart)]
+    #[case(ReedlineEvent::ToEnd)]
+    fn buffer_edge_alias_preserves_redo(
+        #[case] event: ReedlineEvent,
+        #[values(0, 3)] start: usize,
+    ) {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[
+            EditCommand::InsertString("abc".into()),
+            EditCommand::InsertString("x".into()),
+            EditCommand::Undo,
+        ]);
+        assert_eq!(reedline.current_buffer_contents(), "abc");
+        reedline.editor.line_buffer_mut().set_insertion_point(start);
+
+        send(&mut reedline, event);
+        reedline.run_edit_commands(&[EditCommand::Redo]);
+
+        assert_eq!(reedline.current_buffer_contents(), "abcx");
+    }
+
+    #[rstest]
+    #[case(ReedlineEvent::ToStart, 1, 0)]
+    #[case(ReedlineEvent::ToEnd, 0, 1)]
+    fn buffer_edge_alias_clearing_selection_is_handled(
+        #[case] event: ReedlineEvent,
+        #[case] anchor: usize,
+        #[case] head: usize,
+    ) {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[
+            EditCommand::InsertChar('a'),
+            EditCommand::MoveToPosition {
+                position: anchor,
+                select: false,
+            },
+            EditCommand::MoveToPosition {
+                position: head,
+                select: true,
+            },
+        ]);
+
+        assert!(matches!(send(&mut reedline, event), EventStatus::Handled));
+        assert_eq!(reedline.editor.insertion_point(), head);
+        assert_eq!(reedline.editor.get_selection(), None);
+    }
+
+    #[rstest]
+    #[case(EditCommand::MoveLeft { select: false })]
+    #[case(EditCommand::MoveLineUp { select: false })]
+    #[case(EditCommand::MoveLineDown { select: false })]
+    fn until_found_noop_move_preserves_redo(#[case] command: EditCommand) {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[EditCommand::InsertString("abc".into()), EditCommand::Undo]);
+        assert_eq!(reedline.current_buffer_contents(), "");
+
+        let status = send(
+            &mut reedline,
+            ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::Edit(vec![command]),
+                ReedlineEvent::Edit(vec![EditCommand::Redo]),
+            ]),
+        );
+
+        assert!(matches!(status, EventStatus::Handled));
+        assert_eq!(reedline.current_buffer_contents(), "abc");
+    }
+
+    #[test]
+    fn until_found_noop_move_preserves_history_traversal() {
+        let mut reedline = Reedline::create();
+        for entry in ["first", "second"] {
+            reedline
+                .history
+                .save(HistoryItem::from_command_line(entry))
+                .unwrap();
+        }
+
+        for (command, fallback, expected) in [
+            (
+                EditCommand::MoveLineUp { select: false },
+                ReedlineEvent::PreviousHistory,
+                ["second", "first"],
+            ),
+            (
+                EditCommand::MoveLineDown { select: false },
+                ReedlineEvent::NextHistory,
+                ["second", ""],
+            ),
+        ] {
+            for buffer in expected {
+                let status = send(
+                    &mut reedline,
+                    ReedlineEvent::UntilFound(vec![
+                        ReedlineEvent::Edit(vec![command.clone()]),
+                        fallback.clone(),
+                    ]),
+                );
+                assert!(matches!(status, EventStatus::Handled));
+                assert_eq!(reedline.current_buffer_contents(), buffer);
+            }
+        }
+    }
+
+    #[test]
+    fn until_found_noop_move_that_clears_selection_is_applied() {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[
+            EditCommand::InsertString("a\nb".into()),
+            EditCommand::MoveToPosition {
+                position: 1,
+                select: false,
+            },
+            EditCommand::MoveToStart { select: true },
+        ]);
+
+        send(
+            &mut reedline,
+            ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::Edit(vec![EditCommand::MoveLineUp { select: false }]),
+                ReedlineEvent::Edit(vec![EditCommand::InsertChar('!')]),
+            ]),
+        );
+
+        assert_eq!(reedline.current_buffer_contents(), "a\nb");
+        assert_eq!(reedline.editor.insertion_point(), 0);
+        assert_eq!(reedline.editor.get_selection(), None);
+    }
+
+    #[rstest]
+    #[case::local_without_selection(EditCommand::CopySelection, false)]
+    #[case::local_with_selection(EditCommand::CopySelection, true)]
+    #[cfg_attr(
+        feature = "system_clipboard",
+        case::system_without_selection(EditCommand::CopySelectionSystem, false)
+    )]
+    #[cfg_attr(
+        feature = "system_clipboard",
+        case::system_with_selection(EditCommand::CopySelectionSystem, true)
+    )]
+    fn until_found_copy_selection_status(
+        #[case] command: EditCommand,
+        #[case] with_selection: bool,
+    ) {
+        let mut reedline = Reedline::create();
+        let mut setup = vec![EditCommand::InsertString("abc".into())];
+
+        if with_selection {
+            setup.extend([
+                EditCommand::MoveToStart { select: false },
+                EditCommand::MoveRight { select: true },
+            ]);
+        }
+
+        reedline.run_edit_commands(&setup);
+
+        let status = send(
+            &mut reedline,
+            ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::Edit(vec![command]),
+                ReedlineEvent::CtrlC,
+            ]),
+        );
+
+        if with_selection {
+            assert!(matches!(status, EventStatus::Handled));
+        } else {
+            assert!(matches!(status, EventStatus::Exits(Signal::CtrlC)));
+        }
+    }
+
+    #[test]
+    fn edit_status_is_applied_when_any_command_applies() {
+        let mut reedline = Reedline::create();
+
+        let status = send(
+            &mut reedline,
+            ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::Edit(vec![
+                    EditCommand::InsertString("abc".into()),
+                    EditCommand::CopySelection,
+                ]),
+                ReedlineEvent::CtrlC,
+            ]),
+        );
+
+        assert!(matches!(status, EventStatus::Handled));
+        assert_eq!(reedline.current_buffer_contents(), "abc");
+    }
+
+    #[rstest]
     #[case(false, false)]
     #[case(false, true)]
     #[case(true, false)]
@@ -4660,6 +7285,192 @@ mod tests {
         }
     }
 
+    #[rstest]
+    #[case(EditCommand::MoveToLineStart { select: false }, true)]
+    #[case(EditCommand::MoveLeft { select: false }, false)]
+    #[case(EditCommand::MoveLineUp { select: false }, false)]
+    #[case(EditCommand::MoveLineDown { select: false }, false)]
+    fn noop_moves_only_dismiss_eligible_quick_menus(
+        #[case] command: EditCommand,
+        #[case] can_dismiss: bool,
+        #[values(false, true)] quick: bool,
+        #[values(false, true)] persistent: bool,
+    ) {
+        let mut reedline = engine_with_active_menu(quick, persistent);
+        reedline.run_edit_commands(&[EditCommand::MoveToLineStart { select: false }]);
+        assert!(menu_is_active(&reedline));
+
+        let status = send(&mut reedline, ReedlineEvent::Edit(vec![command]));
+
+        let dismissed = can_dismiss && quick && !persistent;
+        assert_eq!(menu_is_active(&reedline), !dismissed);
+        assert_eq!(matches!(status, EventStatus::Handled), dismissed);
+        assert_eq!(reedline.current_buffer_contents(), "th");
+        assert_eq!(reedline.editor.insertion_point(), 0);
+    }
+
+    fn send(reedline: &mut Reedline, event: ReedlineEvent) -> EventStatus {
+        reedline
+            .handle_event(&DefaultPrompt::default(), event)
+            .unwrap()
+    }
+
+    /// Engine with a completion menu opened over "th" by a completer that has no
+    /// word starting with it, so the menu is active but holds no values.
+    fn engine_with_empty_menu() -> Reedline {
+        let completer = Box::new(DefaultCompleter::new_with_wordlen(
+            vec![String::from("xylophone")],
+            1,
+        ));
+        let completion_menu = ReedlineMenu::EngineCompleter(Box::new(
+            ColumnarMenu::default().with_name("completion_menu"),
+        ));
+        let mut reedline = Reedline::create()
+            .with_completer(completer)
+            .with_menu(completion_menu)
+            .with_quick_completions(true);
+
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("th"))]);
+        send(
+            &mut reedline,
+            ReedlineEvent::Menu(String::from("completion_menu")),
+        );
+        assert!(menu_is_active(&reedline), "setup");
+        assert!(reedline.menus[0].get_values().is_empty(), "setup");
+        reedline
+    }
+
+    #[test]
+    fn menu_accept_splices_the_selection_and_closes_the_menu() {
+        let mut reedline = engine_with_active_menu(true, false);
+
+        let status = send(&mut reedline, ReedlineEvent::MenuAccept);
+
+        assert!(matches!(status, EventStatus::Handled));
+        assert_eq!(reedline.current_buffer_contents(), "that");
+        assert!(!menu_is_active(&reedline));
+    }
+
+    #[test]
+    fn menu_accept_without_an_open_menu_is_inapplicable() {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("th"))]);
+
+        let status = send(&mut reedline, ReedlineEvent::MenuAccept);
+
+        assert!(matches!(status, EventStatus::Inapplicable));
+        assert_eq!(reedline.current_buffer_contents(), "th");
+    }
+
+    /// Nothing to splice, so the keypress is not spent on closing the menu; the
+    /// event falls through to whatever the binding lists next.
+    #[test]
+    fn menu_accept_over_an_empty_menu_is_inapplicable_and_leaves_it_open() {
+        let mut reedline = engine_with_empty_menu();
+
+        let status = send(&mut reedline, ReedlineEvent::MenuAccept);
+
+        assert!(matches!(status, EventStatus::Inapplicable));
+        assert!(menu_is_active(&reedline));
+        assert_eq!(reedline.current_buffer_contents(), "th");
+    }
+
+    /// A *stale* answer is refused downstream — its span belongs to the line it
+    /// was answered from — so there is nothing to splice and the keypress is not
+    /// spent closing the menu over a completion that never happened.
+    #[test]
+    fn menu_accept_over_a_stale_menu_is_inapplicable_and_leaves_it_open() {
+        let (mut reedline, _) = activate_menu_over(
+            Box::new(DeferredCompleter::stale("console", "co", &["crates"])),
+            "cr",
+            true,
+            false,
+        );
+        assert!(menu_is_active(&reedline), "setup");
+        assert!(
+            reedline.menus[0].results_are_provisional(),
+            "setup: the answer is stale"
+        );
+
+        let status = send(&mut reedline, ReedlineEvent::MenuAccept);
+
+        assert!(matches!(status, EventStatus::Inapplicable));
+        assert!(menu_is_active(&reedline));
+        assert_eq!(reedline.current_buffer_contents(), "cr");
+    }
+
+    /// The same refusal seen from `Enter`: the line runs as typed rather than
+    /// the key dying against a menu that could not have accepted anything.
+    #[test]
+    fn enter_over_a_stale_menu_runs_the_line() {
+        let (mut reedline, _) = activate_menu_over(
+            Box::new(DeferredCompleter::stale("console", "co", &["crates"])),
+            "cr",
+            true,
+            false,
+        );
+        reedline.painter.force_prompt_anchored_for_test(0);
+
+        let status = reedline
+            .handle_event(&DefaultPrompt::default(), ReedlineEvent::Enter)
+            .unwrap();
+
+        assert!(
+            matches!(status, EventStatus::Exits(Signal::Success(ref line)) if line == "cr"),
+            "the line ran as typed, with no stale value spliced into it"
+        );
+    }
+
+    /// The binding this exists for: space accepts the highlighted completion and
+    /// then types itself, and stays a plain space when no menu is open.
+    #[test]
+    fn menu_accept_chains_with_an_edit_as_a_space_binding() {
+        let space_binding = || {
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::MenuAccept,
+                ReedlineEvent::Edit(vec![EditCommand::InsertChar(' ')]),
+            ])
+        };
+
+        let mut reedline = engine_with_active_menu(true, false);
+        send(&mut reedline, space_binding());
+        assert_eq!(reedline.current_buffer_contents(), "that ");
+        assert!(!menu_is_active(&reedline));
+
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("th"))]);
+        send(&mut reedline, space_binding());
+        assert_eq!(reedline.current_buffer_contents(), "th ");
+    }
+
+    /// The same pair under `UntilFound` is "accept, or else type a space": the
+    /// chain stops at the first event that applies, so an accepted completion is
+    /// not followed by the space, and a menu with nothing to accept is skipped
+    /// over like no menu at all.
+    #[test]
+    fn menu_accept_under_until_found_yields_to_the_next_event_only_when_inapplicable() {
+        let space_binding = || {
+            ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::MenuAccept,
+                ReedlineEvent::Edit(vec![EditCommand::InsertChar(' ')]),
+            ])
+        };
+
+        let mut reedline = engine_with_active_menu(true, false);
+        send(&mut reedline, space_binding());
+        assert_eq!(reedline.current_buffer_contents(), "that");
+        assert!(!menu_is_active(&reedline));
+
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("th"))]);
+        send(&mut reedline, space_binding());
+        assert_eq!(reedline.current_buffer_contents(), "th ");
+
+        let mut reedline = engine_with_empty_menu();
+        send(&mut reedline, space_binding());
+        assert_eq!(reedline.current_buffer_contents(), "th ");
+    }
+
     /// A hinter that always offers a fixed suggestion, so the completion flow can
     /// be driven without the paint cycle that normally refreshes the hint.
     struct FixedHinter(&'static str);
@@ -4677,6 +7488,10 @@ mod tests {
 
     fn vi_with_hint(hint: &'static str) -> Reedline {
         seam_engine(Box::<crate::Vi>::default()).with_hinter(Box::new(FixedHinter(hint)))
+    }
+
+    fn helix_with_hint(hint: &'static str) -> Reedline {
+        seam_engine(Box::<crate::Helix>::default()).with_hinter(Box::new(FixedHinter(hint)))
     }
 
     #[test]
@@ -4707,6 +7522,91 @@ mod tests {
         )
         .unwrap();
         assert_eq!(rl.editor.get_buffer(), "abc");
+    }
+
+    /// Helix normal rests as a min-width-1 block, not an empty point. The
+    /// buffer-end guard must read that as a resting caret, not a selection, or
+    /// a history hint never completes in normal mode.
+    #[test]
+    fn helix_normal_history_hint_appends_at_buffer_end() {
+        let mut rl = helix_with_hint("def");
+        type_each(&mut rl, &[ch('a'), ch('b'), ch('c'), key(KeyCode::Esc)]);
+        assert!(
+            !rl.editor.line_buffer().cursor().is_empty(),
+            "setup: the helix block caret is a one-grapheme range"
+        );
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::HistoryHintComplete,
+        )
+        .unwrap();
+        assert_eq!(rl.editor.get_buffer(), "abcdef");
+    }
+
+    /// A `v`-started helix selection is still protected, like vi visual.
+    #[test]
+    fn helix_select_selection_blocks_hint_completion() {
+        let mut rl = helix_with_hint("def");
+        type_each(
+            &mut rl,
+            &[ch('a'), ch('b'), ch('c'), key(KeyCode::Esc), ch('v')],
+        );
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::HistoryHintComplete,
+        )
+        .unwrap();
+        assert_eq!(rl.editor.get_buffer(), "abc");
+    }
+
+    /// A retained motion selection in helix *normal* (here `b` sweeping back
+    /// over the word) is multi-grapheme, so it blocks completion even though
+    /// normal is not a selection mode.
+    #[test]
+    fn helix_normal_motion_selection_blocks_hint_completion() {
+        let mut rl = helix_with_hint("def");
+        type_each(
+            &mut rl,
+            &[ch('a'), ch('b'), ch('c'), key(KeyCode::Esc), ch('b')],
+        );
+        let cursor = rl.editor.line_buffer().cursor();
+        assert!(
+            cursor.end() - cursor.start() > 1,
+            "setup: `b` leaves a multi-grapheme selection standing"
+        );
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::HistoryHintComplete,
+        )
+        .unwrap();
+        assert_eq!(rl.editor.get_buffer(), "abc");
+    }
+
+    /// The issue as filed pressed a key, not an event: `Right` reaches
+    /// `HistoryHintComplete` through the keymap's `UntilFound` chain, so this
+    /// covers the wiring the event-level tests above skip past.
+    #[test]
+    fn helix_normal_right_key_completes_the_hint() {
+        let mut rl = helix_with_hint("def");
+        type_each(&mut rl, &[ch('a'), ch('b'), ch('c'), key(KeyCode::Esc)]);
+        drive(&mut rl, &[key(KeyCode::Right)]);
+        assert_eq!(rl.editor.get_buffer(), "abcdef");
+    }
+
+    /// The prefix-search side of the same guard: helix normal's resting block
+    /// still counts as "at buffer end", so `k` prefix-searches history like vi
+    /// normal instead of walking it plainly.
+    #[test]
+    fn helix_normal_k_uses_prefix_search() {
+        let mut rl = seam_engine(Box::<crate::Helix>::default());
+        for entry in ["ls -la", "ls /tmp", "echo hi"] {
+            rl.history
+                .save(HistoryItem::from_command_line(entry))
+                .unwrap();
+        }
+        type_each(&mut rl, &[ch('l'), ch('s'), key(KeyCode::Esc)]);
+        drive(&mut rl, &[ch('k')]);
+        assert_eq!(rl.editor.get_buffer(), "ls /tmp");
     }
 
     #[test]
@@ -4752,6 +7652,10 @@ mod tests {
             &[KeyEvent::new(KeyCode::Char('>'), KeyModifiers::ALT)],
         );
         assert_eq!(rl.editor.insertion_point(), 2); // 'c', not 3 (past it)
+        assert!(matches!(
+            send(&mut rl, ReedlineEvent::ToEnd),
+            EventStatus::Inapplicable
+        ));
     }
 
     #[test]
@@ -4856,6 +7760,7 @@ mod tests {
         once(command.get_program())
             .chain(command.get_args())
             .map(|os_str| os_str.to_str().unwrap())
+            .collect::<Vec<_>>()
             .join(" ")
     }
 

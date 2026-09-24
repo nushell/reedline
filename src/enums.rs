@@ -1,3 +1,5 @@
+use crate::core_editor::EditCommandStatus;
+use crate::PromptEditMode;
 use crossterm::event::{Event, KeyEvent, KeyEventKind};
 use serde::{Deserialize, Serialize};
 use strum::{EnumDiscriminants, EnumIter, EnumString, VariantArray};
@@ -417,6 +419,14 @@ pub enum EditCommand {
     /// Insert a string at the current insertion point
     InsertString(String),
 
+    /// Insert a character pair around the selection or insertion point
+    InsertPair {
+        /// Opening character of the pair
+        open: char,
+        /// Closing character of the pair
+        close: char,
+    },
+
     /// Inserts the system specific new line character
     ///
     /// - On Unix systems LF (`"\n"`)
@@ -443,6 +453,14 @@ pub enum EditCommand {
 
     /// Backspace delete from the current insertion point
     Backspace,
+
+    /// Backspace delete an empty character pair
+    BackspacePair {
+        /// Opening character of the pair
+        open: char,
+        /// Closing character of the pair
+        close: char,
+    },
 
     /// Delete in-place from the current insertion point
     Delete,
@@ -535,7 +553,7 @@ pub enum EditCommand {
     /// Paste the cut buffer in front of the insertion point (Emacs, vi `P`)
     PasteCutBufferBefore,
 
-    /// Paste the cut buffer in front of the insertion point (vi `p`)
+    /// Paste the cut buffer after the insertion point (vi `p`)
     PasteCutBufferAfter,
 
     /// Paste the cut buffer at the selection edge in the given `direction` and
@@ -814,10 +832,12 @@ impl EditCommand {
             // Text edits
             EditCommand::InsertChar(_)
             | EditCommand::Backspace
+            | EditCommand::BackspacePair { .. }
             | EditCommand::Delete
             | EditCommand::CutChar
             | EditCommand::CutCharLeft
             | EditCommand::InsertString(_)
+            | EditCommand::InsertPair { .. }
             | EditCommand::InsertNewline
             | EditCommand::InsertNewlineAbove
             | EditCommand::InsertNewlineBelow
@@ -1090,6 +1110,15 @@ pub enum ReedlineEvent {
     /// Trigger a menu event. It activates a menu with the event name
     Menu(String),
 
+    /// Accept the highlighted menu item without submitting the line.
+    ///
+    /// Splices the selection into the buffer and closes the menu, as `Enter` does while
+    /// a menu is open, but stops there. Inapplicable when no menu is active or the
+    /// active one has nothing to accept, so it composes: `UntilFound` falls through to
+    /// the next event, and `Multiple` can follow it with an edit, e.g. a space that
+    /// accepts the completion and keeps typing.
+    MenuAccept,
+
     /// Next element in the menu
     MenuNext,
 
@@ -1125,29 +1154,41 @@ pub enum ReedlineEvent {
     /// Open text editor
     OpenEditor,
 
-    /// Switch the vi state machine to a named mode (vi mode only).
+    /// Switch the line editor to the named edit mode.
     ///
-    /// Accepts `normal`, `insert` or `visual`, matched case-insensitively. Any
-    /// other name leaves the mode alone and reports the event inapplicable. On
-    /// its own that is a keybinding that does nothing; inside an
-    /// [`UntilFound`](ReedlineEvent::UntilFound) it hands the key to the next
-    /// event in the list instead.
-    ViChangeMode(String),
-
-    /// Switch the helix state machine to a named mode (helix mode only).
+    /// The target names both the machine and the state to land in, so
+    /// `SwitchMode(PromptEditMode::Helix(PromptHelixMode::Normal))` reaches
+    /// helix normal from anywhere: from another helix state, from vi, or from
+    /// emacs. The engine offers the target to the active machine first and
+    /// then to every machine registered with
+    /// [`Reedline::with_additional_edit_mode`](crate::Reedline::with_additional_edit_mode);
+    /// the first to accept it becomes active. A host-defined machine is reached
+    /// through the name it reports as [`PromptEditMode::Custom`].
     ///
-    /// Accepts `normal`, `insert` or `select`, matched case-insensitively. Any
-    /// other name leaves the mode alone and reports the event inapplicable. On
-    /// its own that is a keybinding that does nothing; inside an
-    /// [`UntilFound`](ReedlineEvent::UntilFound) it hands the key to the next
-    /// event in the list instead.
-    HelixChangeMode(String),
+    /// A target no machine accepts leaves everything alone and reports the
+    /// event inapplicable. On its own that is a keybinding that does nothing;
+    /// inside an [`UntilFound`](ReedlineEvent::UntilFound) it hands the key to
+    /// the next event in the list instead. A target naming the mode already
+    /// active is declined the same way, so a binding built as
+    /// `UntilFound([SwitchMode(A), SwitchMode(B)])` toggles between the two.
+    SwitchMode(PromptEditMode),
 }
 
 pub enum EventStatus {
     Handled,
     Inapplicable,
     Exits(Signal),
+}
+
+/// An edit that applied is a handled event, and one that had nothing to do
+/// is an inapplicable one, so a binding can fall through it.
+impl From<EditCommandStatus> for EventStatus {
+    fn from(status: EditCommandStatus) -> Self {
+        match status {
+            EditCommandStatus::Applied => EventStatus::Handled,
+            EditCommandStatus::Inapplicable => EventStatus::Inapplicable,
+        }
+    }
 }
 
 /// A wrapper for [crossterm::event::Event].

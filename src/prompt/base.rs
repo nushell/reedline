@@ -95,6 +95,24 @@ impl PromptEditMode {
         }
     }
 
+    /// Whether a non-empty cursor in this mode is an *intentional selection*
+    /// rather than the resting caret.
+    ///
+    /// A block mode rests one grapheme wide, so cursor shape alone cannot tell
+    /// vi visual's `v`-started selection from helix normal's resting block;
+    /// the mode has to answer.
+    pub(crate) fn is_selection_mode(&self) -> bool {
+        match self {
+            PromptEditMode::Vi(PromptViMode::Visual)
+            | PromptEditMode::Helix(PromptHelixMode::Select) => true,
+            PromptEditMode::Vi(PromptViMode::Normal | PromptViMode::Insert)
+            | PromptEditMode::Helix(PromptHelixMode::Normal | PromptHelixMode::Insert)
+            | PromptEditMode::Default
+            | PromptEditMode::Emacs
+            | PromptEditMode::Custom(_) => false,
+        }
+    }
+
     /// Whether an operation *on* the selection leaves it standing.
     ///
     /// Helix keeps it, so a yank or a case change can be followed by another
@@ -179,6 +197,10 @@ pub enum PromptEditModeDiscriminants {
     #[strum(serialize = "ViInsert", serialize = "vi_insert")]
     ViInsert,
 
+    /// Vi visual mode
+    #[strum(serialize = "ViVisual", serialize = "vi_visual")]
+    ViVisual,
+
     /// Helix normal mode
     #[strum(serialize = "HelixNormal", serialize = "helix_normal")]
     HelixNormal,
@@ -228,11 +250,9 @@ impl IntoDiscriminant for PromptEditMode {
         match self {
             Self::Default => Self::Discriminant::Default,
             Self::Emacs => Self::Discriminant::Emacs,
-            // Vi visual still shares Normal's discriminant: it uses the
-            // normal-mode keybindings, differing only in selection geometry.
-            // Splitting that pair is its own change.
-            Self::Vi(Vi::Normal | Vi::Visual) => Self::Discriminant::ViNormal,
+            Self::Vi(Vi::Normal) => Self::Discriminant::ViNormal,
             Self::Vi(Vi::Insert) => Self::Discriminant::ViInsert,
+            Self::Vi(Vi::Visual) => Self::Discriminant::ViVisual,
             Self::Helix(Helix::Normal) => Self::Discriminant::HelixNormal,
             Self::Helix(Helix::Insert) => Self::Discriminant::HelixInsert,
             Self::Helix(Helix::Select) => Self::Discriminant::HelixSelect,
@@ -328,17 +348,19 @@ mod test {
     }
 
     #[test]
-    fn vi_visual_still_shares_the_normal_discriminant() {
-        // Pinned so splitting the vi pair stays a conscious edit.
+    fn each_vi_mode_gets_its_own_discriminant() {
+        // Visual used to share normal's discriminant because it shared the
+        // normal keybinding table. It has its own table now, so a host can
+        // address it (`mode: vi_visual`) like any other state.
         use PromptEditModeDiscriminants as D;
-        assert_eq!(
-            PromptEditMode::Vi(PromptViMode::Visual).discriminant(),
-            D::ViNormal,
-        );
-        assert_eq!(
-            PromptEditMode::Vi(PromptViMode::Normal).discriminant(),
-            D::ViNormal,
-        );
+        use PromptViMode::{Insert, Normal, Visual};
+        for (mode, expected) in [
+            (Normal, D::ViNormal),
+            (Insert, D::ViInsert),
+            (Visual, D::ViVisual),
+        ] {
+            assert_eq!(PromptEditMode::Vi(mode).discriminant(), expected);
+        }
     }
 
     #[test]

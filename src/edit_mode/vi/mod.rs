@@ -3,32 +3,47 @@ mod motion;
 mod parser;
 mod vi_keybindings;
 
-use std::str::FromStr;
-
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use strum::EnumString;
-pub use vi_keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings};
+pub use vi_keybindings::{
+    default_vi_insert_keybindings, default_vi_normal_keybindings, default_vi_visual_keybindings,
+};
 
-use super::{is_plain_char, is_text_char, parse_non_key_event, EditMode};
+use super::{is_meta_char, is_plain_char, is_text_char, parse_non_key_event, EditMode};
 use crate::{
     edit_mode::{keybindings::Keybindings, vi::parser::parse},
     enums::{EditCommand, EventStatus, ReedlineEvent, ReedlineRawEvent},
     Direction, MotionTarget, PromptEditMode, PromptViMode,
 };
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, EnumString)]
-#[strum(serialize_all = "lowercase", ascii_case_insensitive)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum ViMode {
     Normal,
     Insert,
     Visual,
 }
 
+impl From<PromptViMode> for ViMode {
+    fn from(mode: PromptViMode) -> Self {
+        match mode {
+            PromptViMode::Normal => ViMode::Normal,
+            PromptViMode::Insert => ViMode::Insert,
+            PromptViMode::Visual => ViMode::Visual,
+        }
+    }
+}
+
 /// This parses incoming input `Event`s like a Vi-Style editor
+///
+/// In every mode an unbound `Alt-<char>` is read as `Esc` followed by
+/// `<char>`, the meta convention of readline and zsh: `Alt-k` from insert
+/// recalls the previous line, `Alt-I` jumps to the line start and stays in
+/// insert. Binding the Alt chord itself takes precedence and is the per-key
+/// opt-out.
 pub struct Vi {
     cache: Vec<char>,
     insert_keybindings: Keybindings,
     normal_keybindings: Keybindings,
+    visual_keybindings: Keybindings,
     mode: ViMode,
     previous: Option<ReedlineEvent>,
     // last f, F, t, T motion for ; and ,
@@ -37,24 +52,45 @@ pub struct Vi {
 
 impl Default for Vi {
     fn default() -> Self {
-        Vi {
-            insert_keybindings: default_vi_insert_keybindings(),
-            normal_keybindings: default_vi_normal_keybindings(),
+        Self::new(
+            default_vi_insert_keybindings(),
+            default_vi_normal_keybindings(),
+            default_vi_visual_keybindings(),
+        )
+    }
+}
+
+impl Vi {
+    /// Creates Vi editor using defined keybindings, one table per mode, in the
+    /// order insert, normal, visual.
+    ///
+    /// Visual reads only its own table, so a binding meant for both goes into
+    /// both. [`default_vi_visual_keybindings`] is the normal table with its
+    /// navigation keys rebound to extend the selection, so build a custom
+    /// visual table on top of it rather than on the normal one.
+    pub fn new(
+        insert_keybindings: Keybindings,
+        normal_keybindings: Keybindings,
+        visual_keybindings: Keybindings,
+    ) -> Self {
+        // Every field is spelled out, since `Default` is built through here.
+        Self {
+            insert_keybindings,
+            normal_keybindings,
+            visual_keybindings,
             cache: Vec::new(),
             mode: ViMode::Insert,
             previous: None,
             last_char_search: None,
         }
     }
-}
 
-impl Vi {
-    /// Creates Vi editor using defined keybindings
-    pub fn new(insert_keybindings: Keybindings, normal_keybindings: Keybindings) -> Self {
-        Self {
-            insert_keybindings,
-            normal_keybindings,
-            ..Default::default()
+    /// The keybinding table for the mode the machine is in.
+    fn keybindings(&self) -> &Keybindings {
+        match self.mode {
+            ViMode::Normal => &self.normal_keybindings,
+            ViMode::Insert => &self.insert_keybindings,
+            ViMode::Visual => &self.visual_keybindings,
         }
     }
 }
@@ -64,107 +100,135 @@ impl EditMode for Vi {
         match event.into() {
             Event::Key(KeyEvent {
                 code, modifiers, ..
-            }) => match (self.mode, modifiers, code) {
-                // TODO: This guard changes `2v`: the pending count keeps `cache`
-                // non-empty, so `v` no longer enters Visual mode. Decide how
-                // count-prefixed Visual entry should behave before broadening this
-                // special case.
-                (ViMode::Normal, KeyModifiers::NONE, KeyCode::Char('v'))
-                    if self.cache.is_empty() =>
-                {
-                    self.mode = ViMode::Visual;
-                    // Entering Visual switches the rest policy to `Block`; the
-                    // pre-paint commit then widens the cursor into its min-width-1
-                    // selection. Just repaint — do *not* clear the selection here
-                    // (e.g. by emitting `Esc`), which would defeat starting one.
-                    ReedlineEvent::Repaint
-                }
-                (ViMode::Normal | ViMode::Visual, modifier, KeyCode::Char(c)) => {
-                    let c = c.to_ascii_lowercase();
+            }) => self.dispatch_key(modifiers, code),
+            event => parse_non_key_event(event),
+        }
+    }
 
-                    let binding = self
-                        .normal_keybindings
-                        .find_binding(modifiers, KeyCode::Char(c));
-                    let is_typeable = is_plain_char(modifier);
+    fn edit_mode(&self) -> PromptEditMode {
+        match self.mode {
+            ViMode::Normal => PromptEditMode::Vi(PromptViMode::Normal),
+            // Visual maps to its own policy (min-width-1 `Block`) so the commit
+            // boundary widens the cursor into a selection on entry.
+            ViMode::Visual => PromptEditMode::Vi(PromptViMode::Visual),
+            ViMode::Insert => PromptEditMode::Vi(PromptViMode::Insert),
+        }
+    }
 
-                    // A pending multi-key motion (e.g. `f<char>`) must be completed
-                    // before a custom keybinding can claim the next key; otherwise a
-                    // binding on that second key would hijack the sequence.
-                    if !self.cache.is_empty() || (binding.is_none() && is_typeable) {
-                        self.cache.push(if modifier == KeyModifiers::SHIFT {
-                            c.to_ascii_uppercase()
-                        } else {
-                            c
-                        });
+    fn handle_mode_specific_event(&mut self, event: ReedlineEvent) -> EventStatus {
+        match event {
+            ReedlineEvent::SwitchMode(PromptEditMode::Vi(target)) => {
+                // Abandon a half-typed sequence (`3f`), or the next key would
+                // be parsed as its argument in the new mode.
+                self.cache.clear();
+                self.mode = ViMode::from(target);
+                EventStatus::Handled
+            }
+            _ => EventStatus::Inapplicable,
+        }
+    }
+}
 
-                        let res = parse(self.mode, &mut self.cache.iter().peekable());
+impl Vi {
+    /// Route one keypress: the meta prefix first, then the mode's own grammar
+    /// and tables. A method rather than the body of `parse_event` so the meta
+    /// path can re-dispatch the stripped key without a raw-event round trip.
+    fn dispatch_key(&mut self, modifiers: KeyModifiers, code: KeyCode) -> ReedlineEvent {
+        if let Some(event) = self.meta_as_escape(modifiers, code) {
+            return event;
+        }
 
-                        if !res.is_valid() {
-                            self.cache.clear();
-                            ReedlineEvent::None
-                        } else if res.is_complete(self.mode) {
-                            let event = res.to_reedline_event(self);
-                            if let Some(mode) = res.changes_mode(self.mode) {
-                                self.mode = mode;
-                            }
-                            self.cache.clear();
-                            event
-                        } else {
-                            ReedlineEvent::None
+        match (self.mode, modifiers, code) {
+            // TODO: This guard changes `2v`: the pending count keeps `cache`
+            // non-empty, so `v` no longer enters Visual mode. Decide how
+            // count-prefixed Visual entry should behave before broadening this
+            // special case.
+            (ViMode::Normal, KeyModifiers::NONE, KeyCode::Char('v')) if self.cache.is_empty() => {
+                self.mode = ViMode::Visual;
+                // Entering Visual switches the rest policy to `Block`; the
+                // pre-paint commit then widens the cursor into its min-width-1
+                // selection. Just repaint — do *not* clear the selection here
+                // (e.g. by emitting `Esc`), which would defeat starting one.
+                ReedlineEvent::Repaint
+            }
+            (ViMode::Normal | ViMode::Visual, modifier, KeyCode::Char(c)) => {
+                let c = c.to_ascii_lowercase();
+
+                let binding = self.keybindings().find_binding(modifiers, KeyCode::Char(c));
+                let is_typeable = is_plain_char(modifier);
+
+                // A pending multi-key motion (e.g. `f<char>`) must be completed
+                // before a custom keybinding can claim the next key; otherwise a
+                // binding on that second key would hijack the sequence.
+                if !self.cache.is_empty() || (binding.is_none() && is_typeable) {
+                    self.cache.push(if modifier == KeyModifiers::SHIFT {
+                        c.to_ascii_uppercase()
+                    } else {
+                        c
+                    });
+
+                    let res = parse(self.mode, &mut self.cache.iter().peekable());
+
+                    if !res.is_valid() {
+                        self.cache.clear();
+                        ReedlineEvent::None
+                    } else if res.is_complete(self.mode) {
+                        let event = res.to_reedline_event(self);
+                        if let Some(mode) = res.changes_mode(self.mode) {
+                            self.mode = mode;
                         }
-                    } else if let Some(event) = binding {
+                        self.cache.clear();
                         event
                     } else {
                         ReedlineEvent::None
                     }
+                } else if let Some(event) = binding {
+                    event
+                } else {
+                    ReedlineEvent::None
                 }
-                (ViMode::Insert, modifier, KeyCode::Char(c)) => {
-                    // Note. The modifier can also be a combination of modifiers, for
-                    // example:
-                    //     KeyModifiers::CONTROL | KeyModifiers::ALT
-                    //     KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT
-                    //
-                    // Mixed modifiers are used by non american keyboards that have extra
-                    // keys like 'alt gr'. Keep this in mind if in the future there are
-                    // cases where an event is not being captured
-                    let c = match modifier {
-                        KeyModifiers::NONE => c,
-                        _ => c.to_ascii_lowercase(),
-                    };
+            }
+            (ViMode::Insert, modifier, KeyCode::Char(c)) => {
+                // Note. The modifier can also be a combination of modifiers, for
+                // example:
+                //     KeyModifiers::CONTROL | KeyModifiers::ALT
+                //     KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT
+                //
+                // Mixed modifiers are used by non american keyboards that have extra
+                // keys like 'alt gr'. Keep this in mind if in the future there are
+                // cases where an event is not being captured
+                let c = match modifier {
+                    KeyModifiers::NONE => c,
+                    _ => c.to_ascii_lowercase(),
+                };
 
-                    self.insert_keybindings
-                        .find_binding(modifier, KeyCode::Char(c))
-                        .unwrap_or_else(|| {
-                            if is_text_char(modifier) {
-                                ReedlineEvent::Edit(vec![EditCommand::InsertChar(
-                                    if modifier == KeyModifiers::SHIFT {
-                                        c.to_ascii_uppercase()
-                                    } else {
-                                        c
-                                    },
-                                )])
-                            } else {
-                                ReedlineEvent::None
-                            }
-                        })
-                }
-                (_, KeyModifiers::NONE, KeyCode::Esc) => {
-                    self.cache.clear();
-                    let leaving_insert = self.mode == ViMode::Insert;
-                    self.mode = ViMode::Normal;
-                    let mut events = vec![ReedlineEvent::Esc];
-                    if leaving_insert {
-                        events.push(ReedlineEvent::Edit(vec![EditCommand::Move(
-                            MotionTarget::Grapheme(Direction::Backward),
-                        )]));
-                    }
-                    events.push(ReedlineEvent::Repaint);
-                    ReedlineEvent::Multiple(events)
-                }
-                (ViMode::Normal | ViMode::Visual, _, _) => self
-                    .normal_keybindings
-                    .find_binding(modifiers, code)
+                self.keybindings()
+                    .find_binding(modifier, KeyCode::Char(c))
                     .unwrap_or_else(|| {
+                        if is_text_char(modifier) {
+                            ReedlineEvent::Edit(vec![EditCommand::InsertChar(
+                                if modifier == KeyModifiers::SHIFT {
+                                    c.to_ascii_uppercase()
+                                } else {
+                                    c
+                                },
+                            )])
+                        } else {
+                            ReedlineEvent::None
+                        }
+                    })
+            }
+            (_, KeyModifiers::NONE, KeyCode::Esc) => ReedlineEvent::Multiple(self.escape()),
+            (ViMode::Normal | ViMode::Visual, _, _) => {
+                match self.keybindings().find_binding(modifiers, code) {
+                    // A key the sequence has no use for: the binding fires and
+                    // abandons what was half typed, as a `SwitchMode` does, so
+                    // the next character is not read as a stale argument.
+                    Some(event) => {
+                        self.cache.clear();
+                        event
+                    }
+                    None => {
                         // Default Enter behavior when no custom binding
                         if modifiers == KeyModifiers::NONE && code == KeyCode::Enter {
                             self.mode = ViMode::Insert;
@@ -182,46 +246,75 @@ impl EditMode for Vi {
                         } else {
                             ReedlineEvent::None
                         }
-                    }),
-                (ViMode::Insert, _, _) => self
-                    .insert_keybindings
-                    .find_binding(modifiers, code)
-                    .unwrap_or_else(|| {
-                        // Default Enter behavior when no custom binding
-                        if modifiers == KeyModifiers::NONE && code == KeyCode::Enter {
-                            ReedlineEvent::Enter
-                        } else {
-                            ReedlineEvent::None
-                        }
-                    }),
-            },
-
-            event => parse_non_key_event(event),
-        }
-    }
-
-    fn edit_mode(&self) -> PromptEditMode {
-        match self.mode {
-            ViMode::Normal => PromptEditMode::Vi(PromptViMode::Normal),
-            // Visual maps to its own policy (min-width-1 `Block`) so the commit
-            // boundary widens the cursor into a selection on entry.
-            ViMode::Visual => PromptEditMode::Vi(PromptViMode::Visual),
-            ViMode::Insert => PromptEditMode::Vi(PromptViMode::Insert),
-        }
-    }
-
-    fn handle_mode_specific_event(&mut self, event: ReedlineEvent) -> EventStatus {
-        match event {
-            ReedlineEvent::ViChangeMode(mode_str) => match ViMode::from_str(&mode_str) {
-                Ok(mode) => {
-                    self.cache.clear();
-                    self.mode = mode;
-                    EventStatus::Handled
+                    }
                 }
-                Err(_) => EventStatus::Inapplicable,
-            },
-            _ => EventStatus::Inapplicable,
+            }
+            (ViMode::Insert, _, _) => self
+                .keybindings()
+                .find_binding(modifiers, code)
+                .unwrap_or_else(|| {
+                    // Default Enter behavior when no custom binding
+                    if modifiers == KeyModifiers::NONE && code == KeyCode::Enter {
+                        ReedlineEvent::Enter
+                    } else {
+                        ReedlineEvent::None
+                    }
+                }),
         }
+    }
+
+    /// Leave for normal mode the way `Esc` does: drop any pending sequence,
+    /// let the engine close menus and selections, and when leaving insert step
+    /// the caret back onto the last typed grapheme, as vim does.
+    fn escape(&mut self) -> Vec<ReedlineEvent> {
+        self.cache.clear();
+        let leaving_insert = self.mode == ViMode::Insert;
+        self.mode = ViMode::Normal;
+        let mut events = vec![ReedlineEvent::Esc];
+        if leaving_insert {
+            events.push(ReedlineEvent::Edit(vec![EditCommand::Move(
+                MotionTarget::Grapheme(Direction::Backward),
+            )]));
+        }
+        events.push(ReedlineEvent::Repaint);
+        events
+    }
+
+    /// `Alt-<char>` as `Esc` then `<char>`, the meta convention of readline
+    /// and zsh's vi mode. Terminals without the kitty protocol send the same
+    /// bytes for both spellings, so this only makes the two agree.
+    ///
+    /// Returns `None` where the convention does not apply: a binding on the
+    /// Alt chord wins (the per-key opt-out), Alt on a non-character key is
+    /// left to the tables, and the Ctrl-Alt pairs some terminals report for
+    /// AltGr stay typed text via [`is_text_char`].
+    fn meta_as_escape(&mut self, modifiers: KeyModifiers, code: KeyCode) -> Option<ReedlineEvent> {
+        let KeyCode::Char(c) = code else {
+            return None;
+        };
+        if !is_meta_char(modifiers) {
+            return None;
+        }
+
+        // Both mode arms look bindings up by the lowercased char, Shift
+        // riding in the modifiers; match that so a user's `Alt-Shift-x`
+        // binding is found the same way `Shift-x` is.
+        if self
+            .keybindings()
+            .find_binding(modifiers, KeyCode::Char(c.to_ascii_lowercase()))
+            .is_some()
+        {
+            return None;
+        }
+
+        let mut events = self.escape();
+        // The stripped key can no longer satisfy `is_meta_char`, so this
+        // re-dispatch cannot loop back here.
+        match self.dispatch_key(modifiers.difference(KeyModifiers::ALT), code) {
+            ReedlineEvent::None => {}
+            event => events.push(event),
+        }
+        Some(ReedlineEvent::Multiple(events))
     }
 }
 
@@ -275,6 +368,181 @@ mod test {
             ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
         );
         assert!(matches!(vi.mode, ViMode::Normal));
+    }
+
+    /// What `code` with `modifiers` does in a fresh `Vi` sitting in `mode`.
+    fn in_mode(mode: ViMode, code: KeyCode, modifiers: KeyModifiers) -> ReedlineEvent {
+        let mut vi = Vi {
+            mode,
+            ..Default::default()
+        };
+        vi.parse_event(key(code, modifiers))
+    }
+
+    /// [`in_mode`] for normal, for comparing against the tail of a
+    /// meta-prefixed dispatch.
+    fn in_normal(code: KeyCode, modifiers: KeyModifiers) -> ReedlineEvent {
+        in_mode(ViMode::Normal, code, modifiers)
+    }
+
+    #[test]
+    fn alt_char_in_insert_is_esc_then_the_normal_command() {
+        // The readline/zsh meta convention: `Alt-j` from insert leaves for
+        // normal mode exactly like `Esc` does, then runs `j` there.
+        let mut vi = Vi::default();
+        let result = vi.parse_event(key(KeyCode::Char('j'), KeyModifiers::ALT));
+
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Esc,
+                ReedlineEvent::Edit(vec![EditCommand::Move(MotionTarget::Grapheme(
+                    Direction::Backward
+                ))]),
+                ReedlineEvent::Repaint,
+                in_normal(KeyCode::Char('j'), KeyModifiers::NONE),
+            ])
+        );
+        assert!(matches!(vi.mode, ViMode::Normal));
+    }
+
+    #[test]
+    fn alt_shift_char_in_insert_reaches_the_uppercase_command() {
+        // `Alt-I` is `Esc` then `I`: caret to the line start, back in insert.
+        let mut vi = Vi::default();
+        let result = vi.parse_event(key(
+            KeyCode::Char('i'),
+            KeyModifiers::ALT | KeyModifiers::SHIFT,
+        ));
+
+        let prepend = in_normal(KeyCode::Char('i'), KeyModifiers::SHIFT);
+        assert_ne!(prepend, ReedlineEvent::None);
+        match result {
+            ReedlineEvent::Multiple(events) => assert_eq!(events.last(), Some(&prepend)),
+            other => panic!("expected the escape bundle, got {other:?}"),
+        }
+        assert!(matches!(vi.mode, ViMode::Insert));
+    }
+
+    #[test]
+    fn alt_char_in_normal_aborts_the_pending_sequence() {
+        // `d` then `Alt-w` is `d`, `Esc`, `w`: the operator is dropped and `w`
+        // only moves, where `dw` would have cut a word.
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+        assert_eq!(
+            vi.parse_event(key(KeyCode::Char('d'), KeyModifiers::NONE)),
+            ReedlineEvent::None
+        );
+
+        let result = vi.parse_event(key(KeyCode::Char('w'), KeyModifiers::ALT));
+
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Esc,
+                ReedlineEvent::Repaint,
+                in_normal(KeyCode::Char('w'), KeyModifiers::NONE),
+            ])
+        );
+        assert!(vi.cache.is_empty());
+    }
+
+    #[test]
+    fn alt_char_in_visual_returns_to_normal_first() {
+        let mut vi = Vi {
+            mode: ViMode::Visual,
+            ..Default::default()
+        };
+        let result = vi.parse_event(key(KeyCode::Char('j'), KeyModifiers::ALT));
+
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Esc,
+                ReedlineEvent::Repaint,
+                in_normal(KeyCode::Char('j'), KeyModifiers::NONE),
+            ])
+        );
+        assert!(matches!(vi.mode, ViMode::Normal));
+    }
+
+    #[test]
+    fn altgr_char_in_insert_is_still_typed() {
+        // Some terminals report AltGr as Ctrl-Alt. That is text, not a meta
+        // chord, so it must not escape to normal mode.
+        let mut vi = Vi::default();
+        let result = vi.parse_event(key(
+            KeyCode::Char('q'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        ));
+
+        assert_eq!(
+            result,
+            ReedlineEvent::Edit(vec![EditCommand::InsertChar('q')])
+        );
+        assert!(matches!(vi.mode, ViMode::Insert));
+    }
+
+    #[test]
+    fn binding_on_the_alt_chord_beats_the_escape() {
+        // Binding `Alt-j` is also how a user opts out of the convention for
+        // that one key.
+        let mut keybindings = default_vi_insert_keybindings();
+        keybindings.add_binding(
+            KeyModifiers::ALT,
+            KeyCode::Char('j'),
+            ReedlineEvent::ClearScreen,
+        );
+        let mut vi = Vi {
+            insert_keybindings: keybindings,
+            ..Default::default()
+        };
+
+        let result = vi.parse_event(key(KeyCode::Char('j'), KeyModifiers::ALT));
+
+        assert_eq!(result, ReedlineEvent::ClearScreen);
+        assert!(matches!(vi.mode, ViMode::Insert));
+    }
+
+    #[test]
+    fn the_alt_chord_opt_out_reads_the_visual_table() {
+        // Visual owns a table now, so its per-key opt-out lives there rather
+        // than in normal's, which is where it would have gone when the two
+        // shared one table.
+        let mut visual = default_vi_visual_keybindings();
+        visual.add_binding(
+            KeyModifiers::ALT,
+            KeyCode::Char('j'),
+            ReedlineEvent::ClearScreen,
+        );
+        let mut vi = Vi {
+            mode: ViMode::Visual,
+            ..Vi::new(
+                default_vi_insert_keybindings(),
+                default_vi_normal_keybindings(),
+                visual,
+            )
+        };
+
+        let result = vi.parse_event(key(KeyCode::Char('j'), KeyModifiers::ALT));
+
+        assert_eq!(result, ReedlineEvent::ClearScreen);
+        assert!(
+            matches!(vi.mode, ViMode::Visual),
+            "the binding wins, so nothing escapes to normal"
+        );
+    }
+
+    #[test]
+    fn alt_on_a_non_character_key_is_left_to_the_tables() {
+        let mut vi = Vi::default();
+        let result = vi.parse_event(key(KeyCode::Left, KeyModifiers::ALT));
+
+        assert_eq!(result, ReedlineEvent::None);
+        assert!(matches!(vi.mode, ViMode::Insert));
     }
 
     #[test]
@@ -914,29 +1182,35 @@ mod test {
         assert_eq!(dot, ReedlineEvent::Multiple(vec![dw]));
     }
 
-    // --- ViChangeMode ---
+    // --- SwitchMode ---
 
     #[rstest]
-    #[case("insert", ViMode::Insert)]
-    #[case("Normal", ViMode::Normal)]
-    #[case("VISUAL", ViMode::Visual)]
-    fn change_mode_event_switches_the_machine(#[case] name: &str, #[case] expected: ViMode) {
+    #[case(PromptViMode::Insert, ViMode::Insert)]
+    #[case(PromptViMode::Normal, ViMode::Normal)]
+    #[case(PromptViMode::Visual, ViMode::Visual)]
+    fn switch_mode_event_switches_the_machine(
+        #[case] target: PromptViMode,
+        #[case] expected: ViMode,
+    ) {
         let mut vi = Vi::default();
-        let status = vi.handle_mode_specific_event(ReedlineEvent::ViChangeMode(name.into()));
+        let status =
+            vi.handle_mode_specific_event(ReedlineEvent::SwitchMode(PromptEditMode::Vi(target)));
         assert!(matches!(status, EventStatus::Handled));
         assert_eq!(vi.mode, expected);
     }
 
     #[test]
-    fn change_mode_event_rejects_an_unknown_mode() {
+    fn switch_mode_event_declines_another_machine() {
         let mut vi = Vi::default();
-        let status = vi.handle_mode_specific_event(ReedlineEvent::ViChangeMode("select".into()));
+        let status = vi.handle_mode_specific_event(ReedlineEvent::SwitchMode(
+            PromptEditMode::Helix(crate::PromptHelixMode::Normal),
+        ));
         assert!(matches!(status, EventStatus::Inapplicable));
         assert_eq!(vi.mode, ViMode::Insert);
     }
 
     #[test]
-    fn change_mode_event_abandons_a_half_typed_sequence() {
+    fn switch_mode_event_abandons_a_half_typed_sequence() {
         let mut vi = Vi {
             mode: ViMode::Normal,
             ..Default::default()
@@ -947,8 +1221,174 @@ mod test {
         let _ = vi.parse_event(key(KeyCode::Char('f'), KeyModifiers::NONE));
         assert!(!vi.cache.is_empty(), "setup: sequence is armed");
 
-        vi.handle_mode_specific_event(ReedlineEvent::ViChangeMode("insert".into()));
+        vi.handle_mode_specific_event(ReedlineEvent::SwitchMode(PromptEditMode::Vi(
+            PromptViMode::Insert,
+        )));
         assert!(vi.cache.is_empty());
         assert_eq!(vi.mode, ViMode::Insert);
+    }
+
+    /// A key the sequence has no use for still reaches the table, and the
+    /// binding found there abandons the half-typed sequence, as in helix: the
+    /// character after it starts fresh instead of serving as `f`'s argument.
+    #[test]
+    fn a_bound_key_fires_during_a_half_typed_sequence_and_abandons_it() {
+        let mut normal = crate::default_vi_normal_keybindings();
+        normal.add_binding(
+            KeyModifiers::NONE,
+            KeyCode::F(5),
+            ReedlineEvent::ClearScreen,
+        );
+        let mut vi = Vi::new(
+            crate::default_vi_insert_keybindings(),
+            normal,
+            crate::default_vi_visual_keybindings(),
+        );
+        vi.mode = ViMode::Normal;
+        let _ = vi.parse_event(key(KeyCode::Char('f'), KeyModifiers::NONE));
+        assert!(!vi.cache.is_empty(), "setup: sequence is armed");
+
+        assert_eq!(
+            vi.parse_event(key(KeyCode::F(5), KeyModifiers::NONE)),
+            ReedlineEvent::ClearScreen
+        );
+        assert!(vi.cache.is_empty());
+        assert_eq!(
+            vi.parse_event(key(KeyCode::Char('x'), KeyModifiers::NONE)),
+            in_normal(KeyCode::Char('x'), KeyModifiers::NONE)
+        );
+    }
+
+    // --- visual keybinding table ---
+
+    /// Visual has its own table: a binding placed there fires after `v`, and a
+    /// binding placed only in the normal table does not.
+    #[test]
+    fn visual_mode_reads_its_own_keybinding_table() {
+        let mut normal = default_vi_normal_keybindings();
+        normal.add_binding(
+            KeyModifiers::CONTROL,
+            KeyCode::Char('t'),
+            ReedlineEvent::ClearScrollback,
+        );
+        let mut visual = default_vi_visual_keybindings();
+        visual.add_binding(
+            KeyModifiers::CONTROL,
+            KeyCode::Char('t'),
+            ReedlineEvent::ClearScreen,
+        );
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Vi::new(default_vi_insert_keybindings(), normal, visual)
+        };
+
+        assert_eq!(
+            vi.parse_event(key(KeyCode::Char('t'), KeyModifiers::CONTROL)),
+            ReedlineEvent::ClearScrollback
+        );
+        let _ = vi.parse_event(key(KeyCode::Char('v'), KeyModifiers::NONE));
+        assert_eq!(vi.mode, ViMode::Visual, "setup: `v` enters visual");
+        assert_eq!(
+            vi.parse_event(key(KeyCode::Char('t'), KeyModifiers::CONTROL)),
+            ReedlineEvent::ClearScreen
+        );
+    }
+
+    fn in_visual(code: KeyCode, modifiers: KeyModifiers) -> ReedlineEvent {
+        in_mode(ViMode::Visual, code, modifiers)
+    }
+
+    fn word_start(direction: Direction) -> MotionTarget {
+        MotionTarget::Word {
+            kind: WordKind::Word,
+            edge: WordEdge::Start,
+            direction,
+        }
+    }
+
+    /// A navigation key in visual extends like the modal key it stands for,
+    /// where the normal table's would collapse the selection and restart it.
+    #[rstest]
+    #[case::left_is_h(KeyCode::Left, KeyModifiers::NONE, EditCommand::MoveLeft { select: true })]
+    #[case::right_is_l(KeyCode::Right, KeyModifiers::NONE, EditCommand::MoveRight { select: true })]
+    #[case::backspace_is_h(KeyCode::Backspace, KeyModifiers::NONE, EditCommand::MoveLeft { select: true })]
+    #[case::up_is_k(KeyCode::Up, KeyModifiers::NONE, EditCommand::MoveLineUp { select: true })]
+    #[case::down_is_j(KeyCode::Down, KeyModifiers::NONE, EditCommand::MoveLineDown { select: true })]
+    #[case::ctrl_p_is_k(KeyCode::Char('p'), KeyModifiers::CONTROL, EditCommand::MoveLineUp { select: true })]
+    #[case::ctrl_n_is_j(KeyCode::Char('n'), KeyModifiers::CONTROL, EditCommand::MoveLineDown { select: true })]
+    #[case::ctrl_left_is_b(
+        KeyCode::Left,
+        KeyModifiers::CONTROL,
+        EditCommand::Extend(word_start(Direction::Backward))
+    )]
+    #[case::ctrl_right_is_w(
+        KeyCode::Right,
+        KeyModifiers::CONTROL,
+        EditCommand::Extend(word_start(Direction::Forward))
+    )]
+    #[case::home_is_0(
+        KeyCode::Home,
+        KeyModifiers::NONE,
+        EditCommand::Extend(MotionTarget::LineEdge(Direction::Backward))
+    )]
+    #[case::end_is_dollar(
+        KeyCode::End,
+        KeyModifiers::NONE,
+        EditCommand::Extend(MotionTarget::LineEdge(Direction::Forward))
+    )]
+    #[case::ctrl_a_is_0(
+        KeyCode::Char('a'),
+        KeyModifiers::CONTROL,
+        EditCommand::Extend(MotionTarget::LineEdge(Direction::Backward))
+    )]
+    #[case::ctrl_e_is_dollar(
+        KeyCode::Char('e'),
+        KeyModifiers::CONTROL,
+        EditCommand::Extend(MotionTarget::LineEdge(Direction::Forward))
+    )]
+    #[case::ctrl_home_is_gg(
+        KeyCode::Home,
+        KeyModifiers::CONTROL,
+        EditCommand::Extend(MotionTarget::BufferEdge(Direction::Backward))
+    )]
+    #[case::ctrl_end_is_g(
+        KeyCode::End,
+        KeyModifiers::CONTROL,
+        EditCommand::Extend(MotionTarget::BufferEdge(Direction::Forward))
+    )]
+    fn visual_navigation_keys_extend_the_selection(
+        #[case] code: KeyCode,
+        #[case] modifiers: KeyModifiers,
+        #[case] expected: EditCommand,
+    ) {
+        assert_eq!(
+            in_visual(code, modifiers),
+            ReedlineEvent::Edit(vec![expected])
+        );
+    }
+
+    /// `Delete` is `d`: it takes the selection and returns to normal, which a
+    /// table binding can only do through `SwitchMode`.
+    #[test]
+    fn visual_delete_cuts_the_selection_and_leaves_visual() {
+        assert_eq!(
+            in_visual(KeyCode::Delete, KeyModifiers::NONE),
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Edit(vec![EditCommand::CutSelection {
+                    granularity: Granularity::CharWise
+                }]),
+                ReedlineEvent::SwitchMode(PromptEditMode::Vi(PromptViMode::Normal)),
+            ])
+        );
+    }
+
+    /// The visual table must not leak into normal, where an open menu takes
+    /// the arrows first and `Right` accepts a history hint.
+    #[test]
+    fn normal_mode_arrows_keep_menu_navigation() {
+        assert_eq!(
+            in_normal(KeyCode::Left, KeyModifiers::NONE),
+            ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuLeft, ReedlineEvent::Left])
+        );
     }
 }

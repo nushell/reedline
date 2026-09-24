@@ -686,10 +686,11 @@ mod tests {
 
     #[test]
     fn extend_span_block_flip_forward_to_backward_keeps_anchor_grapheme() {
-        // Helix groundwork (no current mode pairs Span with Block): a Span that
-        // reverses past the anchor still hops it onto the far edge — the same
-        // flip_anchor as put_cursor — but the head lands exactly on op_end with
-        // no widening. [2,4) → op_end 0 → [3,0).
+        // Helix pairs Span with Block for forward travel only (a backward Extend
+        // rebuilds through put_cursor), thus this reversal is reached from the
+        // primitive rather than from a mode. It still hops the anchor onto the far
+        // edge — the same flip_anchor as put_cursor — but the head lands exactly
+        // on op_end with no widening. [2,4) → op_end 0 → [3,0).
         let c = Cursor::new(2, 4).extend_span("hello", 0, CaretGeometry::Block);
         assert_eq!(c, Cursor::new(3, 0));
         assert!(c.contains(2)); // start grapheme survives the reversal

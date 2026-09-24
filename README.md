@@ -23,6 +23,7 @@ It is currently primarily developed as the interactive editor for [nushell](http
   - [Integrate with `Hinter` for fish-style history autosuggestions](#integrate-with-hinter-for-fish-style-history-autosuggestions)
   - [Integrate with custom line completion `Validator`](#integrate-with-custom-line-completion-validator)
   - [Use custom `EditMode`](#use-custom-editmode)
+- [Default keybindings](./KEYBINDINGS.md)
 - [Crate features](#crate-features)
 - [Are we prompt yet? (Development status)](#are-we-prompt-yet-development-status)
 - [Contributing](./CONTRIBUTING.md)
@@ -190,12 +191,14 @@ let mut line_editor = Reedline::create().with_validator(validator);
 // This can define a keybinding setting or enable vi-emulation
 
 use reedline::{
-    default_vi_insert_keybindings, default_vi_normal_keybindings, EditMode, Reedline, Vi,
+    default_vi_insert_keybindings, default_vi_normal_keybindings, default_vi_visual_keybindings,
+    EditMode, Reedline, Vi,
 };
 
 let mut line_editor = Reedline::create().with_edit_mode(Box::new(Vi::new(
     default_vi_insert_keybindings(),
     default_vi_normal_keybindings(),
+    default_vi_visual_keybindings(),
 )));
 ```
 
