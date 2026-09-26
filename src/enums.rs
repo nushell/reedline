@@ -567,6 +567,9 @@ pub enum EditCommand {
         count: usize,
     },
 
+    /// Replace the selection with the context of the cut buffer
+    ReplaceSelection,
+
     /// Upper case the current word
     UppercaseWord,
 
@@ -865,6 +868,7 @@ impl EditCommand {
             | EditCommand::CutBigWordRightToNext
             | EditCommand::PasteCutBufferBefore
             | EditCommand::PasteCutBufferAfter
+            | EditCommand::ReplaceSelection
             | EditCommand::UppercaseWord
             | EditCommand::LowercaseWord
             | EditCommand::SwitchcaseChar
