@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ops::ControlFlow, path::PathBuf};
+use std::{collections::HashMap, ffi::OsStr, ops::ControlFlow, path::PathBuf};
 
 use nu_ansi_term::{Color, Style};
 
@@ -244,6 +244,88 @@ pub struct Reedline {
 struct BufferEditor {
     command: Command,
     temp_file: PathBuf,
+    is_template: bool,
+}
+
+impl BufferEditor {
+    const FILE: &str = "{file}";
+    const LINE: &str = "{line}";
+    const COL: &str = "{col}";
+
+    fn new(mut command: Command, temp_file: PathBuf) -> BufferEditor {
+        let mut has_file_arg = false;
+        let mut is_template = false;
+
+        for arg in command.get_args() {
+            has_file_arg |= arg == temp_file.as_os_str();
+
+            if let Some(arg) = arg.to_str() {
+                has_file_arg |= arg.contains(BufferEditor::FILE);
+
+                is_template |= arg.contains(BufferEditor::FILE)
+                    || arg.contains(BufferEditor::LINE)
+                    || arg.contains(BufferEditor::COL);
+            }
+        }
+
+        if !has_file_arg {
+            command.arg(&temp_file);
+        }
+
+        BufferEditor {
+            command,
+            temp_file,
+            is_template,
+        }
+    }
+
+    /// renders the editor command template,
+    /// substituting template placeholders where present.
+    pub(crate) fn render_command(&self, line_buffer: &LineBuffer) -> Command {
+        let mut rendered = Command::new(self.command.get_program());
+
+        for (key, value) in self.command.get_envs() {
+            match value {
+                Some(value) => rendered.env(key, value),
+                None => rendered.env_remove(key),
+            };
+        }
+
+        if let Some(dir) = self.command.get_current_dir() {
+            rendered.current_dir(dir);
+        }
+
+        let file = self.temp_file.to_string_lossy();
+        let line = (line_buffer.line() + 1).to_string();
+        let col = (line_buffer.col() + 1).to_string();
+
+        for arg in self.command.get_args().map(OsStr::to_string_lossy) {
+            let arg = arg
+                .replace(Self::FILE, &file)
+                .replace(Self::LINE, &line)
+                .replace(Self::COL, &col);
+
+            rendered.arg(arg);
+        }
+
+        rendered
+    }
+
+    /// writes the buffer to the temp file,
+    /// in preparation for spawning the buffer editor
+    pub(crate) fn write_current_buffer(&self, buffer_contents: &str) -> Result<()> {
+        let mut file = File::create(&self.temp_file)?;
+        write!(file, "{buffer_contents}")
+    }
+
+    /// reads the buffer from the temp file,
+    /// expected to be called after the buffer editor exits
+    pub(crate) fn get_edited_buffer(&mut self) -> Result<String> {
+        let mut res = std::fs::read_to_string(&self.temp_file)?;
+        let content_len = res.trim_end().len();
+        res.truncate(content_len);
+        Ok(res)
+    }
 }
 
 /// The completions the [`Menu`](ReedlineEvent::Menu) event could not decide, because the
@@ -742,24 +824,28 @@ impl Reedline {
     /// use std::env::temp_dir;
     /// use std::process::Command;
     ///
-    /// let temp_file = std::env::temp_dir().join("my-random-unique.file");
+    /// let temp = std::env::temp_dir().join("my-random-unique.file");
     /// let mut command = Command::new("vim");
     /// // you can provide additional flags:
-    /// command.arg("-p"); // open in a vim tab (just for demonstration)
-    /// // you don't have to pass the filename to the command
-    /// let mut line_editor =
-    /// Reedline::create().with_buffer_editor(command, temp_file);
+    /// command.arg("-p"); // open in a new vim tab
+    /// // ...and the filename will be appended at the end of the command
+    /// let mut line_editor = Reedline::create().with_buffer_editor(command, temp.clone());
+    ///
+    /// // optionally, {file}, {line}, and {col} placeholders can be used.
+    /// // they will be replaced with the corresponding filename and current cursor position
+    /// let mut command = Command::new("hx");
+    /// command.args(["+{line}:{col}", "{file}"]);
+    /// let mut line_editor = Reedline::create().with_buffer_editor(command, temp.clone());
+    ///
+    /// // if {file} is omitted, the filename is still appended at the end,
+    /// // as in the above example
+    /// let mut command = Command::new("emacs");
+    /// command.arg("+{line}:{col}");
+    /// let mut line_editor = Reedline::create().with_buffer_editor(command, temp);
     /// ```
     #[must_use]
     pub fn with_buffer_editor(mut self, editor: Command, temp_file: PathBuf) -> Self {
-        let mut editor = editor;
-        if !editor.get_args().any(|arg| arg == temp_file.as_os_str()) {
-            editor.arg(&temp_file);
-        }
-        self.buffer_editor = Some(BufferEditor {
-            command: editor,
-            temp_file,
-        });
+        self.buffer_editor = Some(BufferEditor::new(editor, temp_file));
         self
     }
 
@@ -2607,50 +2693,50 @@ impl Reedline {
     }
 
     fn open_editor(&mut self) -> Result<()> {
-        match &mut self.buffer_editor {
-            Some(BufferEditor {
-                ref mut command,
-                ref temp_file,
-            }) => {
-                {
-                    let mut file = File::create(temp_file)?;
-                    write!(file, "{}", self.editor.get_buffer())?;
-                }
-                // Capture the prompt's screen range so that an editor
-                // that leaves the cursor untouched (e.g. an editor that
-                // uses the alternate screen only) re-uses the existing
-                // prompt rows instead of starting a new prompt a row
-                // below the old one.
-                let suspended_state = self.painter.state_before_suspension();
-                {
-                    let mut child = command.spawn()?;
-                    // The child owns the tty now; invalidate eagerly so
-                    // any `?` early-return below still leaves the
-                    // painter in a safe state.
-                    self.painter.invalidate_prompt_start_row();
-                    child.wait()?;
-                }
+        let Some(buffer_editor) = &mut self.buffer_editor else {
+            return Ok(());
+        };
 
-                // On the success path, re-initialize position and size
-                // (covers a resize-during-editor with no SIGWINCH). If
-                // the editor moved the cursor out of the prompt's rows
-                // (it printed output), a fresh prompt starts below that
-                // output. On query failure, the eager invalidate above
-                // is our floor — losing the size refresh is acceptable;
-                // losing the user's edited buffer below is not.
-                let _ = self
-                    .painter
-                    .initialize_prompt_position(Some(&suspended_state));
+        buffer_editor.write_current_buffer(self.editor.get_buffer())?;
 
-                let res = std::fs::read_to_string(temp_file)?;
-                let res = res.trim_end().to_string();
+        // Capture the prompt's screen range so that an editor
+        // that leaves the cursor untouched (e.g. an editor that
+        // uses the alternate screen only) re-uses the existing
+        // prompt rows instead of starting a new prompt a row
+        // below the old one.
+        let suspended_state = self.painter.state_before_suspension();
+        {
+            let mut child = if buffer_editor.is_template {
+                buffer_editor
+                    .render_command(self.editor.line_buffer())
+                    .spawn()?
+            } else {
+                buffer_editor.command.spawn()?
+            };
 
-                self.editor.set_buffer(res, UndoBehavior::CreateUndoPoint);
-
-                Ok(())
-            }
-            _ => Ok(()),
+            // The child owns the tty now; invalidate eagerly so
+            // any `?` early-return below still leaves the
+            // painter in a safe state.
+            self.painter.invalidate_prompt_start_row();
+            child.wait()?;
         }
+
+        // On the success path, re-initialize position and size
+        // (covers a resize-during-editor with no SIGWINCH). If
+        // the editor moved the cursor out of the prompt's rows
+        // (it printed output), a fresh prompt starts below that
+        // output. On query failure, the eager invalidate above
+        // is our floor — losing the size refresh is acceptable;
+        // losing the user's edited buffer below is not.
+        let _ = self
+            .painter
+            .initialize_prompt_position(Some(&suspended_state));
+
+        let res = buffer_editor.get_edited_buffer()?;
+
+        self.editor.set_buffer(res, UndoBehavior::CreateUndoPoint);
+
+        Ok(())
     }
 
     /// Repaint logic for the history reverse search
@@ -3013,6 +3099,7 @@ mod tests {
         ListMenu, MenuBuilder, MotionTarget, PromptHelixMode, PromptViMode, Span, Suggestion,
     };
     use rstest::rstest;
+    use std::path::Path;
 
     fn seam_engine(edit_mode: Box<dyn EditMode>) -> Reedline {
         let mut rl = Reedline::create().with_edit_mode(edit_mode);
@@ -7685,5 +7772,69 @@ mod tests {
         assert_eq!(rl.editor.insertion_point(), 1);
         drive(&mut rl, &[ch('l')]); // crosses down to 'c' (start of line 2)
         assert_eq!(rl.editor.insertion_point(), 3);
+    }
+
+    fn command_from_strs(command: &[&str], current_dir: impl AsRef<Path>) -> Command {
+        let (program, args) = command.split_first().unwrap();
+        let mut command = Command::new(program);
+        command.args(args);
+        command.current_dir(current_dir);
+        command
+    }
+
+    fn command_into_string(command: Command) -> String {
+        use std::iter::once;
+
+        once(command.get_program())
+            .chain(command.get_args())
+            .map(|os_str| os_str.to_str().unwrap())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    #[rstest]
+    #[case(&["nano"], "nano foo.rs", false)]
+    #[case(&["nano", "file.rs"], "nano file.rs foo.rs", false)]
+    #[case(&["vim", "foo.rs"], "vim foo.rs", false)]
+    #[case(&["code", "--goto", "{file}:{line}:{col}"], "code --goto foo.rs:2:4", true)]
+    #[case(&["hx", "{file}:{line}:{col}"], "hx foo.rs:2:4", true)]
+    #[case(&["nvim", "{file}", "\"call cursor({line}, {col})\""], "nvim foo.rs \"call cursor(2, 4)\"", true)]
+    #[case(&["vim", "+{line}", "{file}"], "vim +2 foo.rs", true)]
+    #[case(&["emacs", "+{line}:{col}", "{file}"], "emacs +2:4 foo.rs", true)]
+    #[case(&["emacs", "+{line}:{col}"], "emacs +2:4 foo.rs", true)]
+    #[case(&["emacs", "+{line}:{col}", "foo.rs"], "emacs +2:4 foo.rs", true)]
+    fn render_editor_command_with_template(
+        #[case] command: &[&str],
+        #[case] expected: &str,
+        #[case] is_template: bool,
+    ) {
+        let current_dir = "test-dir";
+
+        let line_editor = Reedline::create().with_buffer_editor(
+            command_from_strs(command, current_dir),
+            PathBuf::from("foo.rs"),
+        );
+        let buffer_editor = line_editor.buffer_editor.as_ref().unwrap();
+
+        assert_eq!(buffer_editor.is_template, is_template);
+
+        let line_buffer = {
+            let mut line_buffer = LineBuffer::new();
+            line_buffer.insert_str("a mulatto\n");
+            line_buffer.insert_str("an albino\n");
+            line_buffer.insert_str("a mosquito\n");
+            line_buffer.insert_str("my libido\n");
+            line_buffer.move_line_up();
+            line_buffer.move_line_up();
+            line_buffer.move_left_before(' ', false);
+            line_buffer
+        };
+
+        let actual = buffer_editor.render_command(&line_buffer);
+
+        let current_dir = current_dir.as_ref();
+        assert_eq!(actual.get_current_dir(), Some(current_dir));
+
+        assert_eq!(command_into_string(actual), expected);
     }
 }
