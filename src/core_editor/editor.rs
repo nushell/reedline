@@ -302,6 +302,7 @@ impl Editor {
             EditCommand::CutBigWordRightToNext => self.cut_big_word_right_to_next(),
             EditCommand::PasteCutBufferBefore => self.paste_cut_buffer_before(),
             EditCommand::PasteCutBufferAfter => self.paste_cut_buffer_after(),
+            EditCommand::ReplaceSelection => self.replace_selection(),
             EditCommand::PasteAtSelectionEdge { direction, count } => {
                 self.paste_at_selection_edge(*direction, *count)
             }
@@ -1598,6 +1599,31 @@ impl Editor {
 
     fn paste_cut_buffer_after(&mut self) {
         insert_clipboard_content_after(&mut self.line_buffer, self.cut_buffer.deref_mut());
+    }
+
+    fn replace_selection(&mut self) {
+        let Some(selection) = self.get_selection() else {
+            return;
+        };
+
+        match self.cut_buffer.get() {
+            (content, Granularity::CharWise) => {
+                // let selection = self.get_selection();
+                self.line_buffer
+                    .replace_range(selection.0..selection.1, &content);
+                let cursor = self.line_buffer.cursor();
+                let len_utf8 = content.as_bytes().len();
+                let (anchor, head) = if cursor.anchor() == selection.0 {
+                    (cursor.anchor(), selection.0 + len_utf8)
+                } else {
+                    (selection.0 + len_utf8, cursor.head())
+                };
+                self.place(Cursor::new(anchor, head))
+            }
+            (content, Granularity::LineWise) => {
+                todo!()
+            }
+        }
     }
 
     fn cut_range(&mut self, range: Range<usize>) {
