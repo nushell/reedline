@@ -302,6 +302,9 @@ impl Editor {
             EditCommand::CutBigWordRightToNext => self.cut_big_word_right_to_next(),
             EditCommand::PasteCutBufferBefore => self.paste_cut_buffer_before(),
             EditCommand::PasteCutBufferAfter => self.paste_cut_buffer_after(),
+            EditCommand::ReplaceSelection { new_line_before } => {
+                self.replace_selection(*new_line_before)
+            }
             EditCommand::PasteAtSelectionEdge { direction, count } => {
                 self.paste_at_selection_edge(*direction, *count)
             }
@@ -408,7 +411,10 @@ impl Editor {
             EditCommand::CopyTextObject { text_object } => self.copy_text_object(*text_object),
         }
         let leaves_selection = matches!(command.edit_type(), EditType::MoveCursor { select: true })
-            || matches!(command, EditCommand::PasteAtSelectionEdge { .. })
+            || matches!(
+                command,
+                EditCommand::PasteAtSelectionEdge { .. } | EditCommand::ReplaceSelection { .. }
+            )
             || (matches!(
                 command,
                 EditCommand::CopySelection
@@ -1598,6 +1604,37 @@ impl Editor {
 
     fn paste_cut_buffer_after(&mut self) {
         insert_clipboard_content_after(&mut self.line_buffer, self.cut_buffer.deref_mut());
+    }
+
+    fn replace_selection(&mut self, new_line_before: bool) {
+        let Some(selection) = self.get_selection() else {
+            return;
+        };
+
+        let (content, granularity) = self.cut_buffer.get();
+        let len_utf8 = content.as_bytes().len();
+
+        let (content, jump_new_line) = match granularity {
+            Granularity::CharWise => (content, 0),
+            Granularity::LineWise if new_line_before => (format!("\n{content}\n"), 1),
+            Granularity::LineWise => (format!("{content}\n"), 0),
+        };
+
+        self.line_buffer
+            .replace_range(selection.0..selection.1, &content);
+        let cursor = self.line_buffer.cursor();
+        let (anchor, head) = if cursor.anchor() == selection.0 {
+            (
+                cursor.anchor() + jump_new_line,
+                selection.0 + len_utf8 + jump_new_line,
+            )
+        } else {
+            (
+                selection.0 + len_utf8 + jump_new_line,
+                cursor.head() + jump_new_line,
+            )
+        };
+        self.place(Cursor::new(anchor, head))
     }
 
     fn cut_range(&mut self, range: Range<usize>) {

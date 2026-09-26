@@ -245,6 +245,11 @@ impl Command {
             })],
             Self::NewlineAbove => vec![ReedlineOption::Edit(EditCommand::InsertNewlineAbove)],
             Self::NewlineBelow => vec![ReedlineOption::Edit(EditCommand::InsertNewlineBelow)],
+            Self::PasteAfter | Self::PasteBefore if vi_state.mode == ViMode::Visual => {
+                vec![ReedlineOption::Edit(EditCommand::ReplaceSelection {
+                    new_line_before: true,
+                })]
+            }
             Self::PasteAfter => vec![ReedlineOption::Edit(EditCommand::PasteCutBufferAfter)],
             Self::PasteBefore => vec![ReedlineOption::Edit(EditCommand::PasteCutBufferBefore)],
             Self::Undo => vec![ReedlineOption::Edit(EditCommand::Undo)],
