@@ -555,7 +555,9 @@ fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
             }]),
             Op::Yank => ReedlineEvent::Edit(vec![EditCommand::CopySelection]),
             Op::Replace(ch) => ReedlineEvent::Edit(vec![EditCommand::ReplaceChar(ch)]),
-            Op::ReplaceWithCutBuffer => ReedlineEvent::Edit(vec![EditCommand::ReplaceSelection]),
+            Op::ReplaceWithCutBuffer => ReedlineEvent::Edit(vec![EditCommand::ReplaceSelection {
+                new_line_before: false,
+            }]),
             Op::Switchcase => ReedlineEvent::Edit(vec![EditCommand::SwitchcaseSelection]),
             Op::Lowercase => ReedlineEvent::Edit(vec![EditCommand::LowercaseSelection]),
         },

@@ -568,7 +568,12 @@ pub enum EditCommand {
     },
 
     /// Replace the selection with the context of the cut buffer
-    ReplaceSelection,
+    ReplaceSelection {
+        /// Add a new line before the replacement on line wise content.
+        /// In Vi mode, a new line is added before and after the content replaced
+        /// On the other hand, in Helix mode, a new line is added only after the content.
+        new_line_before: bool,
+    },
 
     /// Upper case the current word
     UppercaseWord,
@@ -868,7 +873,7 @@ impl EditCommand {
             | EditCommand::CutBigWordRightToNext
             | EditCommand::PasteCutBufferBefore
             | EditCommand::PasteCutBufferAfter
-            | EditCommand::ReplaceSelection
+            | EditCommand::ReplaceSelection { .. }
             | EditCommand::UppercaseWord
             | EditCommand::LowercaseWord
             | EditCommand::SwitchcaseChar
