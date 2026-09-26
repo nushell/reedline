@@ -414,7 +414,10 @@ impl Editor {
             EditCommand::ReplaceTextObject { old, new } => self.replace_text_object(*old, *new),
         }
         let leaves_selection = matches!(command.edit_type(), EditType::MoveCursor { select: true })
-            || matches!(command, EditCommand::PasteAtSelectionEdge { .. })
+            || matches!(
+                command,
+                EditCommand::PasteAtSelectionEdge { .. } | EditCommand::ReplaceSelection
+            )
             || (matches!(
                 command,
                 EditCommand::CopySelection
