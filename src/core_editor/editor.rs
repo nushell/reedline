@@ -1609,24 +1609,24 @@ impl Editor {
             return;
         };
 
-        match self.cut_buffer.get() {
-            (content, Granularity::CharWise) => {
-                // let selection = self.get_selection();
-                self.line_buffer
-                    .replace_range(selection.0..selection.1, &content);
-                let cursor = self.line_buffer.cursor();
-                let len_utf8 = content.as_bytes().len();
-                let (anchor, head) = if cursor.anchor() == selection.0 {
-                    (cursor.anchor(), selection.0 + len_utf8)
-                } else {
-                    (selection.0 + len_utf8, cursor.head())
-                };
-                self.place(Cursor::new(anchor, head))
+        let content = match self.cut_buffer.get() {
+            (content, Granularity::CharWise) => content,
+            (mut content, Granularity::LineWise) => {
+                content.push('\n');
+                content
             }
-            (content, Granularity::LineWise) => {
-                todo!()
-            }
-        }
+        };
+
+        self.line_buffer
+            .replace_range(selection.0..selection.1, &content);
+        let cursor = self.line_buffer.cursor();
+        let len_utf8 = content.as_bytes().len();
+        let (anchor, head) = if cursor.anchor() == selection.0 {
+            (cursor.anchor(), selection.0 + len_utf8)
+        } else {
+            (selection.0 + len_utf8, cursor.head())
+        };
+        self.place(Cursor::new(anchor, head))
     }
 
     fn cut_range(&mut self, range: Range<usize>) {
