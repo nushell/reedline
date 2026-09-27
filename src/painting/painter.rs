@@ -1,3 +1,4 @@
+use crate::painting::utils::estimate_required_lines;
 use crate::terminal_extensions::semantic_prompt::{PromptKind, SemanticPromptMarkers};
 use crate::{CursorConfig, PromptEditMode};
 
@@ -1478,42 +1479,58 @@ impl Painter {
         self.print_crlf()
     }
 
-    /// Prints an external message
+    /// Commits `messages` to the screen above the prompt block, one row per
+    /// line, so they scroll into history like output printed at a quiet
+    /// prompt.
     ///
-    /// This function doesn't flush the buffer. So buffer should be flushed
-    /// afterwards perhaps by repainting the prompt via `repaint_buffer()`.
+    /// The block itself, prompt, buffer and anything under
+    /// them, is erased from the anchor down and the messages take its place.
+    /// On return the cursor is on the first free row below them and
+    /// `prompt_start_row` names that row; the caller repaints the block there.
+    ///
+    /// Starting at the anchor rather than at the cursor is the point. The
+    /// anchor is the one row the painter trusts, and every part of the block
+    /// sits below it, so there is no height to guess and nothing to leave
+    /// behind. The old path counted the block's rows from the buffer's bytes,
+    /// disagreed with the painter whenever the left prompt wrapped a line,
+    /// and left a copy of the prompt row on screen per batch.
     pub(crate) fn print_external_message(&mut self, messages: Vec<String>) -> Result<()> {
-        let starting_row = self.prompt_start_row.last_known_row();
-        // Print from the prompt's first row, wherever the cursor is in a
-        // wrapped prompt and buffer.
-        self.stdout.queue(MoveTo(0, starting_row))?;
-        let erase_line = format!("\r{}\r", " ".repeat(self.screen_width().into()));
-        let max_row = self.screen_height().saturating_sub(1);
-        // Invalidate up front: a `?` early-return below can leave
-        // bytes in the buffer with the cache still claiming `Verified`.
+        let start = self.prompt_start_row.last_known_row();
+        // Invalidate before the first queued byte: a `?` early-return below
+        // must not leave bytes in the buffer with the cache still claiming
+        // `Verified`.
         self.invalidate_prompt_start_row();
-        let mut row = starting_row;
+
+        // Hide first, so the cursor is not seen jumping to the anchor. The
+        // repaint that follows shows it again; `hide_cursor` records the hide
+        // so a path that ends without that repaint can still undo it.
+        self.hide_cursor()?;
+        self.clear_from_anchor(start)?;
+
+        // Count where the cursor lands, for the case the terminal does not
+        // say. A line wider than the screen takes more than one row; an empty
+        // one still takes its `\r\n`. Once the cursor is on the last row a
+        // newline scrolls instead of moving, hence the cap.
+        let max_row = self.screen_height().saturating_sub(1);
+        let mut row = start;
+
         for line in messages {
-            self.stdout.queue(Print(&erase_line))?;
-            // Note: we don't use `print_line` here because we don't want to
-            // flush right now. The subsequent repaint of the prompt will cause
-            // immediate flush anyways. And if we flush here, every external
-            // print causes visible flicker.
+            // max(1) on the width: a mid-resize terminal can report 0 (#842).
+            let rows = estimate_required_lines(&line, self.screen_width().max(1)).max(1) as u16;
             self.stdout.queue(Print(line))?.queue(Print("\r\n"))?;
-            row = row.saturating_add(1).min(max_row);
+            row = (row + rows).min(max_row);
         }
+
         // The lines above are only *queued*, so the terminal's cursor has not
-        // moved yet: a row counted forward from `starting_row` names a position
-        // the terminal has not reached. Recorded as `Stale`, the next paint
-        // re-verifies it against the real, still-earlier cursor, reads that as
-        // the prompt having scrolled off the top, and re-anchors by printing a
+        // moved yet: a row counted forward from `start` names a position the
+        // terminal has not reached. Recorded as `Stale`, the next paint would
+        // re-verify it against the real, still-earlier cursor, read that as
+        // the prompt having scrolled off the top, and re-anchor by printing a
         // whole screen of newlines -- wiping the display (#1005).
         //
-        // Counting was also only as good as its assumption that a message
-        // occupies exactly one row, which fails as soon as one wraps or carries
-        // its own control sequences. Flush and ask instead: one round-trip per
-        // batch of messages, not per message, so the flicker the comment above
-        // guards against is unaffected.
+        // The count is also only as good as `estimate_required_lines`, which
+        // a message carrying its own control sequences can fool. Flush and
+        // ask instead: one round-trip per batch of messages, not per message.
         self.stdout.flush()?;
         self.prompt_start_row = match self.measure_cursor_position() {
             // Measured, so later paints can skip the drift check.
@@ -2279,7 +2296,6 @@ mod tests {
 
     // Covers the `print_external_message` call site: messages printed mid-line
     // leave the cursor below a short screen just as the prompt does.
-    #[cfg(feature = "external_printer")]
     #[test]
     fn test_print_external_message_grows_to_fit_the_cursor() {
         let mut painter = Painter::new(W::sink_with_cursor_at((0, 40)));
@@ -2296,7 +2312,6 @@ mod tests {
     // Messages overwrite the prompt from its first row, wherever the cursor
     // sits in a wrapped or multi-line prompt and buffer. Starting any lower
     // leaves the rows above it on screen as a stale copy of the prompt.
-    #[cfg(feature = "external_printer")]
     #[test]
     fn test_print_external_message_starts_at_the_prompt_start_row() {
         let mut painter = Painter::new(W::capture());
@@ -2308,7 +2323,10 @@ mod tests {
             .expect("print_external_message failed");
 
         // `MoveTo` is 0-based, the escape 1-based: row 5 is `6`.
-        assert!(painter.stdout.captured().starts_with(b"\x1b[6;1H"));
+        let out = String::from_utf8_lossy(painter.stdout.captured()).into_owned();
+        let anchor = out.find("\x1b[6;1H").expect("no move to the anchor");
+        let message = out.find("msg").expect("message not printed");
+        assert!(anchor < message, "{out:?}");
     }
 
     // Output printed while the tty was yielded can leave the cursor well below

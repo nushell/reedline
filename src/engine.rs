@@ -1331,7 +1331,6 @@ impl Reedline {
             if let Some(printer) = self.external_printer.as_mut() {
                 let messages = printer.drain()?;
                 if !messages.is_empty() {
-                    // print the message(s)
                     self.painter.print_external_message(messages)?;
                     self.repaint(prompt)?;
                 }
