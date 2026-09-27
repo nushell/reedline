@@ -1612,7 +1612,7 @@ impl Editor {
         };
 
         let (content, granularity) = self.cut_buffer.get();
-        let len_utf8 = content.as_bytes().len();
+        let len_utf8 = content.len();
 
         let (content, jump_new_line) = match granularity {
             Granularity::CharWise => (content, 0),
