@@ -2309,24 +2309,114 @@ mod tests {
         assert_eq!(painter.prompt_start_row, PromptStartRow::Verified(40));
     }
 
-    // Messages overwrite the prompt from its first row, wherever the cursor
-    // sits in a wrapped or multi-line prompt and buffer. Starting any lower
-    // leaves the rows above it on screen as a stale copy of the prompt.
-    #[test]
-    fn test_print_external_message_starts_at_the_prompt_start_row() {
-        let mut painter = Painter::new(W::capture());
-        painter.terminal_size = (80, 24);
-        painter.prompt_start_row.mark_verified(5);
+    /// A painter anchored at `row` whose bytes a test can read back. The
+    /// capture writer refuses a cursor query, so the commit path lands on its
+    /// counted `Stale` anchor, which is the arithmetic under test.
+    fn capturing_painter_anchored_at(row: u16) -> Painter {
+        let mut p = Painter::new(W::capture());
+        p.terminal_size = (20, 10);
+        p.term_is_dumb = false;
+        p.prompt_start_row.mark_verified(row);
+        p.prompt_height = 1;
+        p
+    }
 
-        painter
-            .print_external_message(vec!["msg".to_string()])
+    /// The commit starts where the painter says the block starts, erases from
+    /// there, and prints the messages in its place. The cursor is never moved
+    /// relative to where it was, so there is no block height to guess.
+    #[test]
+    fn external_messages_start_at_the_anchor_and_clear_the_block() {
+        let mut p = capturing_painter_anchored_at(5);
+        p.print_external_message(vec!["one".into(), "two".into()])
+            .expect("print_external_message failed");
+        let out = String::from_utf8_lossy(p.stdout.captured()).into_owned();
+
+        // Jump to the anchor, erase below, then the messages, nothing between.
+        assert!(
+            out.contains("\x1b[6;1H\x1b[Jone\r\ntwo\r\n"),
+            "commit did not clear from the anchor and print there: {out:?}"
+        );
+        let replayed = replay(&out, 20, false);
+        assert_eq!(replayed.screen, "onetwo");
+        assert_eq!(replayed.cursor, (7, 0, false));
+        assert_eq!(p.prompt_start_row, PromptStartRow::Stale(7));
+    }
+
+    /// A message wider than the screen takes the rows it wraps onto, so the
+    /// anchor moves past all of them, not past one row per message.
+    #[test]
+    fn a_wrapped_external_message_advances_the_anchor_by_its_rows() {
+        let mut p = capturing_painter_anchored_at(2);
+        p.print_external_message(vec!["x".repeat(30)])
+            .expect("print_external_message failed");
+        let out = String::from_utf8_lossy(p.stdout.captured()).into_owned();
+
+        assert_eq!(replay(&out, 20, false).cursor, (4, 0, false));
+        assert_eq!(p.prompt_start_row, PromptStartRow::Stale(4));
+    }
+
+    /// An empty message is still a row: the terminal spends one on its line
+    /// break even though the text has no lines to count.
+    #[test]
+    fn an_empty_external_message_still_takes_a_row() {
+        let mut p = capturing_painter_anchored_at(2);
+        p.print_external_message(vec![String::new(), "after".into()])
             .expect("print_external_message failed");
 
-        // `MoveTo` is 0-based, the escape 1-based: row 5 is `6`.
-        let out = String::from_utf8_lossy(painter.stdout.captured()).into_owned();
-        let anchor = out.find("\x1b[6;1H").expect("no move to the anchor");
-        let message = out.find("msg").expect("message not printed");
-        assert!(anchor < message, "{out:?}");
+        assert_eq!(p.prompt_start_row, PromptStartRow::Stale(4));
+    }
+
+    /// Once the cursor is on the last row a line break scrolls instead of
+    /// moving, so the counted anchor stops there whatever the batch size.
+    #[test]
+    fn external_messages_at_the_bottom_cap_the_anchor_at_the_last_row() {
+        let mut p = capturing_painter_anchored_at(9);
+        p.print_external_message(vec!["a".into(), "b".into(), "c".into()])
+            .expect("print_external_message failed");
+
+        assert_eq!(p.prompt_start_row, PromptStartRow::Stale(9));
+    }
+
+    /// The case from a real terminal: a left prompt long enough that the
+    /// first row wraps before the old byte count said so, and a message
+    /// landing mid-edit. The old path moved up from the cursor by that count
+    /// and left a copy of the prompt row above each batch. Replayed, the
+    /// screen must hold the message, then exactly one prompt.
+    #[test]
+    fn external_messages_leave_no_prompt_rows_behind() {
+        let lines = make_lines("~/project>", "", "", "some things!", "");
+        let mut p = capturing_painter_anchored_at(0);
+        let paint = |p: &mut Painter| {
+            p.repaint_buffer(
+                &TestPrompt,
+                &lines,
+                PromptEditMode::Default,
+                None,
+                false,
+                &None,
+            )
+            .expect("repaint_buffer failed")
+        };
+
+        paint(&mut p);
+        p.print_external_message(vec!["msg".into()])
+            .expect("print_external_message failed");
+        paint(&mut p);
+
+        let out = String::from_utf8_lossy(p.stdout.captured()).into_owned();
+        let screen = replay(&out, 20, false).screen;
+        assert_eq!(
+            screen.matches("~/project>").count(),
+            1,
+            "a prompt row was left behind: {screen:?}"
+        );
+        let at = |needle: &str| {
+            screen
+                .find(needle)
+                .unwrap_or_else(|| panic!("{needle:?} missing from {screen:?}"))
+        };
+        assert!(at("msg") < at("~/project>some things!"), "{screen:?}");
+        assert_eq!(p.prompt_start_row, PromptStartRow::Verified(1));
     }
 
     // Output printed while the tty was yielded can leave the cursor well below
