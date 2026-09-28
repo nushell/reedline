@@ -470,7 +470,8 @@ impl Painter {
             let prompt_indicator_lines = lines.prompt_indicator.lines().count();
             let before_cursor_lines = lines.before_cursor.lines().count();
             let total_lines_before =
-                prompt_rows_after_first + prompt_indicator_lines + before_cursor_lines - 1;
+                (prompt_rows_after_first + prompt_indicator_lines + before_cursor_lines)
+                    .saturating_sub(1);
             let extra = total_lines_before.saturating_sub(screen_height as usize);
             (extra, extra.saturating_sub(prompt_rows_after_first))
         } else {
@@ -3019,6 +3020,25 @@ mod tests {
         assert_eq!(layout.extra_rows, 1);
         assert_eq!(layout.extra_rows_after_prompt, 1);
         assert_eq!(layout.first_buffer_col, 0); // scrolled, so col 0
+    }
+
+    #[test]
+    fn test_layout_large_buffer_tiny_screen_does_not_underflow() {
+        // A one-line prompt with an empty indicator and an empty buffer makes
+        // every line count in the large-buffer math zero:
+        // prompt_height(TEST_PROMPT) - 1 = 0
+        // prompt_indicator_lines("") = 0
+        // before_cursor_lines("") = 0
+        // total_lines_before = 0 + 0 + 0 - 1 used to underflow. A screen height
+        // of 0 or 1 is what forces the large-buffer path with an empty buffer.
+        for height in [0, 1] {
+            let painter = make_painter(120, height, true);
+            let lines = make_lines(TEST_PROMPT, "", "", "", "");
+            let layout = painter.compute_layout(&lines, None);
+
+            assert_eq!(layout.extra_rows, 0);
+            assert_eq!(layout.extra_rows_after_prompt, 0);
+        }
     }
 
     #[test]
