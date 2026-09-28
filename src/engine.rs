@@ -40,7 +40,7 @@ use {
         PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult, Validator,
     },
     crossterm::{
-        cursor::{SetCursorStyle, Show},
+        cursor::SetCursorStyle,
         event,
         event::{Event, KeyCode, KeyEvent, KeyModifiers},
         terminal, QueueableCommand,
@@ -306,9 +306,14 @@ impl Drop for Reedline {
             let _ignore = terminal::enable_raw_mode();
             let mut stdout = std::io::stdout();
             let _ignore = stdout.queue(SetCursorStyle::DefaultUserShape);
-            let _ignore = stdout.queue(Show);
             let _ignore = stdout.flush();
         }
+        // The painter hides the cursor around its anchor query and the next
+        // paint shows it. An editor dropped between the two, or after a
+        // `read_line` that failed, would otherwise leave it hidden. This used
+        // to ride on the cursor-shape reset above, which a host may not
+        // configure; it stands on its own now that reedline hides on its own.
+        let _ignore = self.painter.show_cursor();
 
         // Ensures that the terminal is in a good state if we panic semigracefully
         // Calling `disable_raw_mode()` twice is fine with Linux
@@ -995,6 +1000,12 @@ impl Reedline {
         self.kitty_protocol.enter();
 
         let result = self.read_line_helper(prompt);
+        if result.is_err() {
+            // The anchor hid the cursor for its query and the first paint
+            // shows it again. An error in between must not strand it hidden,
+            // and the error is what to report, not a failure to show.
+            let _ignore = self.painter.show_cursor();
+        }
 
         self.bracketed_paste.exit();
         self.kitty_protocol.exit();

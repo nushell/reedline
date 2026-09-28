@@ -628,6 +628,18 @@ impl Painter {
     /// Establishes the prompt's start row for a new line editor invocation by
     /// asking the terminal where the cursor is.
     fn anchor_prompt(&mut self, suspended_state: Option<&PainterSuspendedState>) -> Result<()> {
+        // Hide before asking, not only before painting. `move_cursor_to_end`
+        // left the cursor shown at column 0 of the row the next prompt lands
+        // on, and the wait for the query's reply is the longest stretch
+        // between that newline and the paint, so a fast terminal renders the
+        // bare cursor for a frame (#1231). Flushed: the query goes out through
+        // crossterm on stdout, unbuffered, and this hide sits in the stderr
+        // buffer until then. `repaint_buffer` ends with Show. The dumb-terminal
+        // arm below makes no query and needs no hide, but a branch to skip it
+        // would buy nothing, since `repaint_buffer` hides there as well.
+        self.stdout.queue(cursor::Hide)?;
+        self.stdout.flush()?;
+
         // The terminal may not answer the cursor-position query in time
         // (crossterm gives it a fixed 2s): a terminal busy repainting, a
         // multiplexer briefly holding the reply, a slow remote link. That is
@@ -1355,6 +1367,16 @@ impl Painter {
         self.stdout.flush()
     }
 
+    /// Show the cursor, for the paths that end without a paint.
+    ///
+    /// [`Painter::anchor_prompt`] hides it and the next `repaint_buffer` shows
+    /// it again; a `read_line` that fails between the two, or an editor
+    /// dropped there, would leave the terminal without a cursor otherwise.
+    pub(crate) fn show_cursor(&mut self) -> Result<()> {
+        self.stdout.queue(cursor::Show)?;
+        self.stdout.flush()
+    }
+
     /// Goes to the beginning of the next line
     ///
     /// Also works in raw mode
@@ -1815,6 +1837,10 @@ mod tests {
     // and must guess the bottom row: the drift check only repairs a guess
     // that errs high, and the newline printed first has already moved the
     // cursor past any last-known row.
+    //
+    // The bytes pin #1231 as well: the hide is the first thing to leave the
+    // anchor, so neither the wait for the reply nor, here, the newline
+    // recovery runs with the cursor shown.
     #[test]
     fn test_anchor_prompt_without_answer_assumes_bottom_over_last_known_row() {
         let mut painter = Painter::new(W::capture());
@@ -1825,7 +1851,7 @@ mod tests {
         painter.anchor_prompt(None).unwrap();
 
         assert_eq!(painter.prompt_start_row, PromptStartRow::Stale(9));
-        assert_eq!(painter.stdout.captured(), b"\r\n");
+        assert_eq!(painter.stdout.captured(), b"\x1b[?25l\r\n");
     }
 
     #[test]
@@ -1837,7 +1863,7 @@ mod tests {
         painter.anchor_prompt(None).unwrap();
 
         assert_eq!(painter.prompt_start_row, PromptStartRow::Stale(9));
-        assert_eq!(painter.stdout.captured(), b"\r\n");
+        assert_eq!(painter.stdout.captured(), b"\x1b[?25l\r\n");
     }
 
     #[test]
@@ -1849,7 +1875,58 @@ mod tests {
         painter.anchor_prompt(None).unwrap();
 
         assert_eq!(painter.prompt_start_row, PromptStartRow::Stale(9));
-        assert_eq!(painter.stdout.captured(), b"");
+        assert_eq!(painter.stdout.captured(), b"\x1b[?25l");
+    }
+
+    /// Regression test for nushell/reedline#1231, seen across two lines.
+    ///
+    /// The exit path parks the cursor shown on the row the next prompt takes,
+    /// so the next anchor is where it goes hidden again. The hide has to be
+    /// the first byte after the exit newline, and the paint's closing Show
+    /// the only show after it, so nothing between one line and the next runs
+    /// with a bare cursor.
+    #[test]
+    fn next_anchor_hides_the_cursor_the_exit_path_left_shown() {
+        let mut p = Painter::new(W::capture());
+        p.term_is_dumb = false;
+        p.terminal_size = (20, 10);
+        p.prompt_start_row.mark_verified(0);
+        p.prompt_height = 1;
+        let lines = make_lines(TEST_PROMPT, "", "", "pwd", "");
+        let paint = |p: &mut Painter| {
+            p.repaint_buffer(
+                &TestPrompt,
+                &lines,
+                PromptEditMode::Default,
+                None,
+                false,
+                &None,
+            )
+            .expect("repaint_buffer failed");
+        };
+
+        paint(&mut p);
+        p.move_cursor_to_end().expect("move_cursor_to_end failed");
+        let exit_end = p.stdout.captured().len();
+        p.initialize_prompt_position_with_size((20, 10), None)
+            .expect("anchor failed");
+        p.prompt_start_row.mark_verified(0);
+        paint(&mut p);
+
+        let out = String::from_utf8_lossy(p.stdout.captured()).into_owned();
+        let (exit, next) = out.split_at(exit_end);
+        assert!(
+            exit.ends_with("\x1b[?25h\x1b[J\r\n"),
+            "exit path changed what it leaves the cursor as: {exit:?}"
+        );
+        assert!(
+            next.starts_with("\x1b[?25l"),
+            "anchor did not hide the cursor before anything else: {next:?}"
+        );
+        assert!(
+            next.matches("\x1b[?25h").count() == 1 && next.ends_with("\x1b[?25h"),
+            "cursor shown between the exit newline and the end of the next paint: {next:?}"
+        );
     }
 
     #[rstest]
