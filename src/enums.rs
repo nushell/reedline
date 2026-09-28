@@ -149,13 +149,13 @@ impl TextObjectType {
 
 /// Text objects that can be operated on with vim-style commands
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[serde(default)]
 pub struct TextObject {
     /// Whether to include surrounding context
     pub scope: TextObjectScope,
     /// The type of text object
     pub object_type: TextObjectType,
     /// check the next text object if no text object found around the cursor
-    #[serde(default)]
     pub check_next: bool,
 }
 
