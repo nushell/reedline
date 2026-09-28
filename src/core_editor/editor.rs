@@ -2047,7 +2047,7 @@ fn insert_clipboard_content_after(line_buffer: &mut LineBuffer, clipboard: &mut 
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::prompt::PromptViMode;
+    use crate::prompt::{PromptHelixMode, PromptViMode};
     use crate::{Direction, FindStop, WordEdge, WordKind};
     use pretty_assertions::assert_eq;
     use rstest::rstest;
@@ -2658,6 +2658,96 @@ mod test {
         editor.cut_buffer.set("ab", Granularity::LineWise);
         editor.run_edit_command(&EditCommand::PasteCutBufferAfter);
         assert_eq!(editor.get_buffer(), "ab");
+    }
+
+    #[rstest]
+    #[case(
+        PromptEditMode::Helix(PromptHelixMode::Normal),
+        Granularity::CharWise,
+        Cursor::new(3, 3),
+        "abcdefghi",
+        Cursor::new(3, 6)
+    )]
+    #[case(
+        PromptEditMode::Helix(PromptHelixMode::Normal),
+        Granularity::CharWise,
+        Cursor::new(3, 4),
+        "abcdefghi",
+        Cursor::new(3, 6)
+    )]
+    #[case(
+        PromptEditMode::Helix(PromptHelixMode::Normal),
+        Granularity::CharWise,
+        Cursor::new(4, 3),
+        "abcdefghi",
+        Cursor::new(6, 3)
+    )]
+    #[case(
+        PromptEditMode::Helix(PromptHelixMode::Normal),
+        Granularity::CharWise,
+        Cursor::new(1, 6),
+        "adefi",
+        Cursor::new(1, 4)
+    )]
+    #[case(
+        PromptEditMode::Helix(PromptHelixMode::Normal),
+        Granularity::CharWise,
+        Cursor::new(6, 1),
+        "adefi",
+        Cursor::new(4, 1)
+    )]
+    #[case(
+        PromptEditMode::Helix(PromptHelixMode::Normal),
+        Granularity::LineWise,
+        Cursor::new(3, 3),
+        "abcdef\nghi",
+        Cursor::new(3, 6)
+    )]
+    #[case(
+        PromptEditMode::Helix(PromptHelixMode::Normal),
+        Granularity::LineWise,
+        Cursor::new(3, 4),
+        "abcdef\nghi",
+        Cursor::new(3, 6)
+    )]
+    #[case(
+        PromptEditMode::Helix(PromptHelixMode::Normal),
+        Granularity::LineWise,
+        Cursor::new(4, 3),
+        "abcdef\nghi",
+        Cursor::new(6, 3)
+    )]
+    #[case(
+        PromptEditMode::Helix(PromptHelixMode::Normal),
+        Granularity::CharWise,
+        Cursor::new(1, 6),
+        "adef\ni",
+        Cursor::new(1, 4)
+    )]
+    #[case(
+        PromptEditMode::Helix(PromptHelixMode::Normal),
+        Granularity::CharWise,
+        Cursor::new(6, 1),
+        "adef\ni",
+        Cursor::new(4, 1)
+    )]
+    fn replace_selection_with_cut_buffer(
+        #[case] input_prompt: PromptEditMode,
+        #[case] input_granularity: Granularity,
+        #[case] input_cursor: Cursor,
+        #[case] expected_buffer: &str,
+        #[case] expected_cursor: Cursor,
+    ) {
+        let start_buffer = "abc_ghi";
+        let mut editor = editor_with(start_buffer);
+        editor.cut_buffer.set("def", input_granularity);
+        editor.edit_mode = input_prompt;
+        editor.place(input_cursor);
+        editor.run_edit_command(&EditCommand::ReplaceSelection {
+            new_line_before: matches!(editor.edit_mode, PromptEditMode::Vi(_)),
+        });
+        assert_eq!(editor.get_buffer(), expected_buffer);
+        assert_eq!(editor.line_buffer.cursor(), expected_cursor)
     }
 
     #[test]
