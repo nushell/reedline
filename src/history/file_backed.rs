@@ -6,6 +6,8 @@ use crate::{
     HistorySessionId, Result,
 };
 
+#[cfg(target_os = "android")]
+use std::ops::{Deref, DerefMut};
 use std::{
     collections::VecDeque,
     fs::OpenOptions,
@@ -213,16 +215,26 @@ impl History for FileBackedHistory {
                 std::fs::create_dir_all(base_dir)?;
             }
 
-            let mut file = OpenOptions::new()
-                .create(true)
-                .write(true)
-                .read(true)
-                .truncate(false)
-                .open(fname)?;
+            let mut opts = OpenOptions::new();
+            opts.create(true).write(true).read(true).truncate(false);
 
-            file.lock()?;
+            cfg_select! {
+                target_os = "android" => {
+                    let mut f_lock = fd_lock::RwLock::new(opts.open(fname)?);
+                    let mut writer_guard = f_lock.write()?;
+                },
+                _ => {
+                    let mut file = opts.open(fname)?;
+                    file.lock()?;
+                }
+            }
+
             let (mut foreign_entries, truncate) = {
-                let reader = BufReader::new(&file);
+                let reader = cfg_select! {
+                    target_os = "android" => BufReader::new(writer_guard.deref()),
+                    _ => BufReader::new(&file)
+                };
+
                 let mut from_file = reader
                     .lines()
                     .map(|o| o.map(|i| decode_entry(&i)))
@@ -240,7 +252,11 @@ impl History for FileBackedHistory {
             };
 
             {
-                let mut writer = BufWriter::new(&file);
+                let mut writer = cfg_select! {
+                    target_os = "android" => BufWriter::new(writer_guard.deref_mut()),
+                    _ => BufWriter::new(&file)
+                };
+
                 if truncate {
                     writer.rewind()?;
 
@@ -258,6 +274,8 @@ impl History for FileBackedHistory {
                 writer.flush()?;
             }
             if truncate {
+                #[cfg(target_os = "android")]
+                let file = writer_guard.deref_mut();
                 let file_len = file.stream_position()?;
                 file.set_len(file_len)?;
             }
