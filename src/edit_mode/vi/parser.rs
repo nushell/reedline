@@ -217,7 +217,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Direction, FindStop, Granularity, MotionTarget, WordEdge, WordKind};
+    use crate::{
+        Direction, FindStop, Granularity, MotionTarget, TextObject, TextObjectBracket,
+        TextObjectQuote, TextObjectScope, TextObjectType, WordEdge, WordKind,
+    };
     use pretty_assertions::assert_eq;
     use rstest::rstest;
 
@@ -240,6 +243,16 @@ mod tests {
             ch,
             direction,
             stop,
+        }
+    }
+
+    /// The text object a `<verb>i<char>` / `<verb>a<char>` sequence builds.
+    /// The vi path always searches forward when nothing surrounds the cursor.
+    fn text_object(scope: TextObjectScope, object_type: TextObjectType) -> TextObject {
+        TextObject {
+            scope,
+            object_type,
+            check_next: true,
         }
     }
 
@@ -465,6 +478,23 @@ mod tests {
         assert_eq!(output.is_valid(), false);
     }
 
+    /// Only `$` gets through as a custom pair on the vi side. Any other
+    /// character that `TextObjectType::from_char` would turn into a `Pair`
+    /// yields no command, so the sequence produces nothing.
+    #[rstest]
+    #[case(&['d', 'i', '#'])]
+    #[case(&['c', 'a', '#'])]
+    #[case(&['y', 'i', '#'])]
+    fn test_text_object_rejects_custom_pair(#[case] input: &[char]) {
+        let output = vi_parse(input);
+
+        assert_eq!(output.command, None);
+        assert_eq!(
+            output.to_reedline_event(&mut Vi::default()),
+            ReedlineEvent::None
+        );
+    }
+
     #[test]
     fn test_partial_action() {
         let input = ['r'];
@@ -667,6 +697,18 @@ mod tests {
     #[case(&['y', '^'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CopyFromLineNonBlankStart])]))]
     #[case(&['y', 'g', 'g'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Copy { target: MotionTarget::BufferEdge(Direction::Backward), granularity: Granularity::LineWise }])]))]
     #[case(&['y', 'G'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Copy { target: MotionTarget::BufferEdge(Direction::Forward), granularity: Granularity::LineWise }])]))]
+    // Text objects. `$` is the one custom pair the vi parser lets through,
+    // see `char_to_text_object` in `command.rs`.
+    #[case(&['d', 'i', '$'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutTextObject { text_object: text_object(TextObjectScope::Inner, TextObjectType::Pair { left: '$', right: '$' }) }])]))]
+    #[case(&['y', 'i', '$'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CopyTextObject { text_object: text_object(TextObjectScope::Inner, TextObjectType::Pair { left: '$', right: '$' }) }])]))]
+    #[case(&['d', 'i', '('], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutTextObject { text_object: text_object(TextObjectScope::Inner, TextObjectType::Brackets(TextObjectBracket::Parenthesis)) }])]))]
+    #[case(&['d', 'a', ')'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutTextObject { text_object: text_object(TextObjectScope::Around, TextObjectType::Brackets(TextObjectBracket::Parenthesis)) }])]))]
+    #[case(&['d', 'i', 'b'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutTextObject { text_object: text_object(TextObjectScope::Inner, TextObjectType::Brackets(TextObjectBracket::All)) }])]))]
+    #[case(&['y', 'a', 'q'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CopyTextObject { text_object: text_object(TextObjectScope::Around, TextObjectType::Quotes(TextObjectQuote::All)) }])]))]
+    // `c` on a text object switches to Insert through `changes_mode` but,
+    // unlike `c` with a motion, appends no `Repaint`. Same as `ChangeInsidePair` before it.
+    #[case(&['c', 'a', '"'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutTextObject { text_object: text_object(TextObjectScope::Around, TextObjectType::Quotes(TextObjectQuote::DoubleQuote)) }])]))]
+    #[case(&['c', 'i', 'w'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutTextObject { text_object: text_object(TextObjectScope::Inner, TextObjectType::Word) }])]))]
     fn test_reedline_move(#[case] input: &[char], #[case] expected: ReedlineEvent) {
         let mut vi = Vi::default();
         let res = vi_parse(input);
