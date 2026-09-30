@@ -1607,8 +1607,20 @@ impl Editor {
     }
 
     fn replace_selection(&mut self, new_line_before: bool) {
-        let Some(selection) = self.get_selection() else {
-            return;
+        let selection = {
+            let anchor = self.line_buffer.cursor().anchor();
+            let head = self.line_buffer.cursor().head();
+            match anchor.cmp(&head) {
+                std::cmp::Ordering::Equal => {
+                    let Some(right_graphene) = self.line_buffer.grapheme_right().chars().next()
+                    else {
+                        return;
+                    };
+                    (anchor, head + right_graphene.len_utf8())
+                }
+                std::cmp::Ordering::Less => (anchor, head),
+                std::cmp::Ordering::Greater => (head, anchor),
+            }
         };
 
         let (content, granularity) = self.cut_buffer.get();
