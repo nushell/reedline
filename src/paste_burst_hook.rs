@@ -15,7 +15,9 @@
 //! time (so real inter-char timing is preserved), keeps draining while
 //! [`PasteBurstHook::is_burst_active`] is true (using
 //! [`PasteBurstHook::poll_timeout`] as the idle-flush window), and calls
-//! [`PasteBurstHook::settle`] once the burst goes idle. A bare `Enter` drained
+//! [`PasteBurstHook::settle`] once after each burst, when the batch holding it
+//! has been processed. A batch without a burst is not followed by `settle`, so
+//! the detector has to expire stale timing itself. A bare `Enter` drained
 //! into a detected burst is always coalesced as an embedded newline; outside a
 //! detected burst (a short paste that never reached the burst threshold), a
 //! bare `Enter` is instead reclassified to an inserted newline when
@@ -100,10 +102,18 @@ pub trait PasteBurstHook: Send + Sync {
     /// settled.
     fn poll_timeout(&self) -> Duration;
 
-    /// Reset detector state after a batch settles, so the next line starts
-    /// clean. This is also the point at which [`is_burst_active`](Self::is_burst_active)
+    /// Reset detector state after a burst, so the next line starts clean. This
+    /// is also the point at which [`is_burst_active`](Self::is_burst_active)
     /// is released from its latch (see that method's required semantics): the
-    /// engine calls `settle` once per batch, after the batch has been processed.
+    /// engine calls `settle` once per burst, after the batch holding it has
+    /// been processed.
+    ///
+    /// A batch without a burst is not followed by `settle`. Some event sources
+    /// hand the read loop one event per batch, and a reset after each of those
+    /// would keep the detector from ever counting up to its threshold. An
+    /// implementation must therefore expire stale timing on its own, e.g. by
+    /// restarting its count in [`on_char`](Self::on_char) when the gap since
+    /// the previous char exceeds its threshold.
     fn settle(&self);
 
     /// Resolve a settled paste burst. Given the coalesced burst text (embedded

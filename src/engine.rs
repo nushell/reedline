@@ -1236,7 +1236,7 @@ impl Reedline {
                                 // still needs the live burst flag to reclassify
                                 // this batch's embedded Enters as newlines. The
                                 // reset happens once after the batch is processed
-                                // (see below).
+                                // (see `settle_paste_burst`).
                                 break;
                             }
                         }
@@ -1301,18 +1301,28 @@ impl Reedline {
             // synthetic `Submit` and returns the buffer. Gating this call behind
             // `!immediately_accept` would spin the loop forever.
             let batch_result = self.process_input_batch(prompt, events)?;
-            // Reset the paste-burst detector after every processed batch. The
-            // burst-extended drain above coalesces a whole paste into one batch,
-            // so a burst never legitimately spans batches; resetting per-batch
-            // keeps the detector's buffer/timing from accumulating across
-            // ordinary keystrokes and clears the burst flag before the next
-            // independent line (so a later human Enter submits instead of being
-            // absorbed).
-            if let Some(hook) = &self.paste_burst {
-                hook.settle();
-            }
+            self.settle_paste_burst();
             if let ControlFlow::Break(signal) = batch_result {
                 return Ok(signal);
+            }
+        }
+    }
+
+    /// Reset the paste-burst detector once the batch that held a burst has been
+    /// processed, which releases the burst flag before the next independent line
+    /// (so a later human Enter submits instead of being absorbed).
+    ///
+    /// A batch without a burst does not reset it: the detector tells typing from
+    /// a paste by its own clock. Some event sources hand over a single event per
+    /// loop iteration, and resetting after each of those batches would keep the
+    /// detector from ever counting up to its threshold.
+    ///
+    /// Kept out of the input loop so it is reachable from tests, which cannot
+    /// drive the loop itself.
+    fn settle_paste_burst(&self) {
+        if let Some(hook) = &self.paste_burst {
+            if hook.is_burst_active() {
+                hook.settle();
             }
         }
     }
@@ -4305,6 +4315,50 @@ mod tests {
             (rl.painter.screen_width(), rl.painter.screen_height()),
             (120, 40)
         );
+    }
+
+    #[test]
+    fn paste_burst_settles_only_after_a_burst_batch() {
+        // `settle` follows a batch that held a burst and no other: a batch
+        // without one leaves the detector's count alone, so an event source
+        // that delivers one event per batch can still reach the threshold.
+        struct CountingBurst {
+            active: bool,
+            settles: std::sync::atomic::AtomicUsize,
+        }
+        impl crate::PasteBurstHook for CountingBurst {
+            fn on_char(&self, _c: char) {}
+            fn enter_is_newline(&self) -> bool {
+                false
+            }
+            fn is_burst_active(&self) -> bool {
+                self.active
+            }
+            fn poll_timeout(&self) -> Duration {
+                Duration::from_millis(1)
+            }
+            fn settle(&self) {
+                self.settles
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            fn resolve_burst(&self, _coalesced: &str) -> Option<String> {
+                None
+            }
+        }
+        fn settles_after_one_batch(active: bool) -> usize {
+            let hook = Arc::new(CountingBurst {
+                active,
+                settles: std::sync::atomic::AtomicUsize::new(0),
+            });
+            let mut rl = seam_engine(Box::<crate::Emacs>::default()).with_paste_burst(hook.clone());
+            drive(&mut rl, &[ch('a')]);
+            rl.settle_paste_burst();
+            assert_eq!(rl.editor.get_buffer(), "a");
+            hook.settles.load(std::sync::atomic::Ordering::Relaxed)
+        }
+
+        assert_eq!(settles_after_one_batch(false), 0, "batch without a burst");
+        assert_eq!(settles_after_one_batch(true), 1, "burst batch");
     }
 
     #[test]
