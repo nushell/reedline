@@ -1472,6 +1472,16 @@ impl Reedline {
                     }) => {
                         coalesced.push('\n');
                     }
+                    // A pasted tab is part of the text. Left to the catch-all
+                    // below it would be dropped from the insert.
+                    Event::Key(KeyEvent {
+                        code: KeyCode::Tab,
+                        modifiers: KeyModifiers::NONE,
+                        kind: KeyEventKind::Press,
+                        ..
+                    }) => {
+                        coalesced.push('\t');
+                    }
                     Event::Resize(x, y) => resize = Some((*x, *y)),
                     // Release events and any other keys are paste artifacts here.
                     _ => {}
@@ -4295,6 +4305,30 @@ mod tests {
             (rl.painter.screen_width(), rl.painter.screen_height()),
             (120, 40)
         );
+    }
+
+    #[test]
+    fn paste_burst_batch_keeps_a_tab() {
+        // A tab inside a burst batch is pasted text, so it is coalesced into
+        // the insert as `\t` rather than dropped as a paste artifact.
+        let mut rl =
+            seam_engine(Box::<crate::Emacs>::default()).with_paste_burst(Arc::new(StubBurst {
+                enter_newline: true,
+                active: true,
+            }));
+        let prompt = DefaultPrompt::default();
+        let result = rl
+            .process_input_batch(
+                &prompt,
+                vec![
+                    Event::Key(ch('a')),
+                    Event::Key(key(KeyCode::Tab)),
+                    Event::Key(ch('b')),
+                ],
+            )
+            .expect("batch ok");
+        assert!(matches!(result, ControlFlow::Continue(())));
+        assert_eq!(rl.editor.get_buffer(), "a\tb");
     }
 
     #[test]
