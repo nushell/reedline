@@ -3023,22 +3023,20 @@ mod tests {
     }
 
     #[test]
-    fn test_layout_large_buffer_tiny_screen_does_not_underflow() {
+    fn test_layout_large_buffer_empty_buffer_does_not_underflow() {
         // A one-line prompt with an empty indicator and an empty buffer makes
         // every line count in the large-buffer math zero:
         // prompt_height(TEST_PROMPT) - 1 = 0
         // prompt_indicator_lines("") = 0
         // before_cursor_lines("") = 0
-        // total_lines_before = 0 + 0 + 0 - 1 used to underflow. A screen height
-        // of 0 or 1 is what forces the large-buffer path with an empty buffer.
-        for height in [0, 1] {
-            let painter = make_painter(120, height, true);
-            let lines = make_lines(TEST_PROMPT, "", "", "", "");
-            let layout = painter.compute_layout(&lines, None);
+        // total_lines_before = 0 + 0 + 0 - 1 used to underflow, independent of
+        // screen height. `make_painter(.., true)` forces the large-buffer path.
+        let painter = make_painter(120, 24, true);
+        let lines = make_lines(TEST_PROMPT, "", "", "", "");
+        let layout = painter.compute_layout(&lines, None);
 
-            assert_eq!(layout.extra_rows, 0);
-            assert_eq!(layout.extra_rows_after_prompt, 0);
-        }
+        assert_eq!(layout.extra_rows, 0);
+        assert_eq!(layout.extra_rows_after_prompt, 0);
     }
 
     #[test]
