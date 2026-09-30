@@ -30,6 +30,10 @@ strum = { version = "0.28.0", features = ["derive"] }
 unicode-segmentation = "1.13.3"
 unicode-width = "0.2"
 
+[target.'cfg(target_os = "android")'.dependencies]
+# `File::lock` in std is unsupported on Android before Rust 1.98.
+fd-lock = "4.0.4"
+
 [dev-dependencies]
 gethostname = "1.1.0"
 pretty_assertions = "1.4.0"
