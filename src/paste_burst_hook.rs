@@ -23,6 +23,13 @@
 //! bare `Enter` is instead reclassified to an inserted newline when
 //! [`PasteBurstHook::enter_is_newline`] returns true.
 //!
+//! # Limitations
+//!
+//! A paste that starts with a newline has that newline arrive before any char,
+//! so a detector that works from timing has nothing to compare it against. It
+//! is handled as an ordinary `Enter`, which on an empty buffer submits an empty
+//! line.
+//!
 //! The trait is intentionally generic (no application-specific concepts). The
 //! detector state and timing thresholds live entirely on the host side; reedline
 //! only drives the hook from the read loop.

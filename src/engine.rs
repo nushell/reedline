@@ -1244,58 +1244,6 @@ impl Reedline {
                 }
             }
 
-            // Drop a lone leading Enter on an EMPTY buffer when more input
-            // immediately follows. Some terminals deliver a pasted clipboard's
-            // leading blank line as a bare Enter that arrives BEFORE the paste
-            // burst is detectable; the read loop would otherwise submit an empty
-            // line (a stray blank prompt) and split it off from the paste. This
-            // only fires when the line buffer is empty AND the whole batch is
-            // bare Enter(s): a normal submit has a non-empty buffer and a real
-            // paste's first batch carries chars, so neither is affected. The
-            // `poll` probe (the burst idle window) is the only added latency, and
-            // it lands solely on an empty-line Enter — a no-op keystroke. When
-            // something follows within the window, the Enter is treated as
-            // paste-leading cruft and dropped; the following input is read fresh
-            // next iteration.
-            if let Some(hook) = self.paste_burst.clone() {
-                // Match only `Press` Enters and ignore key `Release` artifacts:
-                // with the kitty keyboard enhancement every key also emits a
-                // Release, which would otherwise break the "whole batch is bare
-                // Enter" test. Require at least one Enter Press so an all-Release
-                // batch does not trip the heuristic.
-                let mut saw_enter_press = false;
-                let only_bare_enter = !events.is_empty()
-                    && self.editor.line_buffer().get_buffer().is_empty()
-                    && events.iter().all(|e| match e {
-                        Event::Key(KeyEvent {
-                            kind: KeyEventKind::Release,
-                            ..
-                        }) => true,
-                        Event::Key(KeyEvent {
-                            code: KeyCode::Enter,
-                            modifiers: KeyModifiers::NONE,
-                            kind: KeyEventKind::Press,
-                            ..
-                        }) => {
-                            saw_enter_press = true;
-                            true
-                        }
-                        _ => false,
-                    });
-                // Drop the Enter only when the host's timing oracle agrees it is
-                // paste-leading cruft AND more input immediately follows. Asking
-                // the hook first means an intentional empty submit (Enter, then
-                // the next command typed within the window) is NOT swallowed, and
-                // also spares the normal empty-line Enter the poll latency.
-                if only_bare_enter
-                    && saw_enter_press
-                    && hook.enter_is_newline()
-                    && event::poll(hook.poll_timeout())?
-                {
-                    continue;
-                }
-            }
-
             // Process the batch unconditionally: in `immediately_accept` mode
             // `events` stays empty, but `process_input_batch` still pushes the
             // synthetic `Submit` and returns the buffer. Gating this call behind
