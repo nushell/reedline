@@ -30,6 +30,13 @@
 //! is handled as an ordinary `Enter`, which on an empty buffer submits an empty
 //! line.
 //!
+//! On Unix, crossterm's default event source reads 1024 bytes per readiness
+//! notification. A paste larger than that stalls part-way until the next key
+//! press. This happens with or without a hook installed, and the hook's poll
+//! does not see the unread bytes either. The event source enabled by
+//! crossterm's `use-dev-tty` feature does not stall. Where the terminal
+//! supports bracketed paste, prefer it.
+//!
 //! The trait is intentionally generic (no application-specific concepts). The
 //! detector state and timing thresholds live entirely on the host side; reedline
 //! only drives the hook from the read loop.

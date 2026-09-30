@@ -32,6 +32,11 @@
 // a human can type" is all it knows. A real host will want to tune the
 // thresholds, and where bracketed paste works it should be preferred.
 //
+// On Unix, crossterm's default event source reads 1024 bytes per readiness
+// notification, so a larger paste stalls until the next key press, with or
+// without this hook. Building with `--features crossterm/use-dev-tty` selects
+// an event source that does not stall.
+//
 // Abort with Ctrl-C or Ctrl-D.
 
 use reedline::{DefaultPrompt, PasteBurstHook, Reedline, Signal};
