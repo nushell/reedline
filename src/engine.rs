@@ -26,7 +26,10 @@ use {
             FileBackedHistory, History, HistoryCursor, HistoryItem, HistoryItemId,
             HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchQuery,
         },
-        painting::{Painter, PainterSuspendedState, PromptLines, RenderSnapshot, W},
+        painting::{
+            escape_control, escape_control_keep_sgr, Painter, PainterSuspendedState, PromptLines,
+            RenderSnapshot, W,
+        },
         prompt::{PromptEditMode, PromptHistorySearchStatus},
         result::{ReedlineError, ReedlineErrorVariants},
         terminal_extensions::{
@@ -1017,9 +1020,10 @@ impl Reedline {
         self.editor.get_selection()
     }
 
-    /// Writes `msg` to the terminal with a following carriage return and newline
+    /// Writes `msg` to the terminal with a following carriage return and newline,
+    /// its control characters shown rather than sent
     fn print_line(&mut self, msg: &str) -> Result<()> {
-        self.painter.paint_line(msg)
+        self.painter.paint_line(&escape_control(msg))
     }
 
     /// Clear the screen by printing enough whitespace to start the prompt or
@@ -2669,7 +2673,10 @@ impl Reedline {
                     PromptHistorySearchStatus::Passing
                 };
 
-            let prompt_history_search = PromptHistorySearch::new(status, substring.clone());
+            // The prompt passes through raw, but the search term is typed or
+            // pasted, not the host's.
+            let prompt_history_search =
+                PromptHistorySearch::new(status, escape_control(&substring).into_owned());
 
             let res_string = self.history_cursor.string_at_cursor().unwrap_or_default();
 
@@ -2679,7 +2686,7 @@ impl Reedline {
                 let styled = match_highlighter.highlight(&res_string, 0);
                 styled.render_simple()
             } else {
-                res_string
+                escape_control(&res_string).into_owned()
             };
 
             let lines = PromptLines::new(
@@ -2742,9 +2749,12 @@ impl Reedline {
             self.painter.semantic_markers(),
         );
 
+        // Escaped here rather than in each hinter, so a host's own hinter is
+        // covered too. SGR is kept only while coloring is on: hinters style
+        // their own output, and with coloring off any SGR came from history.
         let hint: String = if self.hints_active() {
             self.hinter.as_mut().map_or_else(String::new, |hinter| {
-                hinter.handle(
+                let hint = hinter.handle(
                     buffer_to_paint,
                     cursor_position_in_buffer,
                     self.history.as_ref(),
@@ -2755,7 +2765,12 @@ impl Reedline {
                             .to_string_lossy()
                             .to_string()
                     }),
-                )
+                );
+                if use_ansi_coloring {
+                    escape_control_keep_sgr(&hint).into_owned()
+                } else {
+                    escape_control(&hint).into_owned()
+                }
             })
         } else {
             String::new()
@@ -7424,6 +7439,48 @@ mod tests {
         fn next_hint_token(&self) -> String {
             self.0.to_string()
         }
+    }
+
+    /// Paints `echo ` with a host hinter offering `hint`, returning the engine
+    /// and what reached the terminal. A host hinter, not one of ours: the
+    /// engine escapes whatever it returns.
+    fn paint_with_hint(hint: &'static str, use_ansi_coloring: bool) -> (Reedline, String) {
+        let mut rl = Reedline::create()
+            .with_ansi_colors(use_ansi_coloring)
+            .with_hinter(Box::new(FixedHinter(hint)));
+        // A capturing painter, anchored as `seam_engine` anchors its sink.
+        rl.painter = Painter::new(W::capture());
+        rl.painter.force_prompt_anchored_for_test(0);
+        rl.run_edit_commands(&[EditCommand::InsertString("echo ".into())]);
+        rl.repaint(&DefaultPrompt::default()).unwrap();
+        let painted = String::from_utf8_lossy(rl.painter.captured_for_test()).into_owned();
+        (rl, painted)
+    }
+
+    #[test]
+    fn a_hint_shows_its_escape_sequences_but_completes_them_raw() {
+        let (mut rl, painted) = paint_with_hint("\x1b[2Khi", true);
+        assert!(painted.contains("^[[2Khi"), "hint not shown: {painted:?}");
+        assert!(!painted.contains("\x1b[2Khi"), "sent an erase: {painted:?}");
+
+        send(&mut rl, ReedlineEvent::HistoryHintComplete);
+        assert_eq!(rl.current_buffer_contents(), "echo \x1b[2Khi");
+    }
+
+    #[test]
+    fn a_hint_keeps_its_sgr_only_while_coloring_is_on() {
+        let (_, painted) = paint_with_hint("\x1b[8mhidden", true);
+        assert!(
+            painted.contains("\x1b[8mhidden"),
+            "lost its style: {painted:?}"
+        );
+
+        let (_, painted) = paint_with_hint("\x1b[8mhidden", false);
+        assert!(
+            painted.contains("^[[8mhidden"),
+            "hint not shown: {painted:?}"
+        );
+        assert!(!painted.contains("\x1b[8m"), "sent a conceal: {painted:?}");
     }
 
     fn vi_with_hint(hint: &'static str) -> Reedline {

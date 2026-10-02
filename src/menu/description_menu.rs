@@ -1,7 +1,7 @@
 use {
     super::MenuSettings,
     crate::{
-        menu_functions::{replace_in_buffer, resolve_completer_input},
+        menu_functions::{escape_suggestions, replace_in_buffer, resolve_completer_input},
         Completer, Editor, Menu, MenuBuilder, MenuEvent, Painter, Suggestion, Suggestions,
     },
     nu_ansi_term::ansi::RESET,
@@ -452,7 +452,7 @@ impl Menu for DescriptionMenu {
         // current suggestions and selection rather than blanking the menu. A
         // settled result hands over its shared `Arc` without copying.
         if let Some(values) = completer.complete(&input, pos).into_shared() {
-            self.values = values;
+            self.values = escape_suggestions(values);
             self.reset_position();
         }
     }

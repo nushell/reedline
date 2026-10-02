@@ -45,6 +45,104 @@ pub(crate) fn strip_ansi(string: &str) -> String {
         .unwrap_or_else(|_| string.to_owned())
 }
 
+/// Shows control characters readline-style (`^[`, `^?`, `M-^[`) instead of
+/// letting the terminal act on them, so untrusted text cannot erase or redraw
+/// the line. `\n` and `\t` pass through.
+pub(crate) fn escape_control(text: &str) -> Cow<'_, str> {
+    escape_with(text, Escape::All)
+}
+
+/// [`escape_control`], but keeps well-formed SGR. SGR can still conceal text,
+/// so this is for display-only text such as menu entries, never the buffer.
+pub(crate) fn escape_control_keep_sgr(text: &str) -> Cow<'_, str> {
+    escape_with(text, Escape::KeepSgr)
+}
+
+/// A menu as printed with coloring off. Suggestion text arrives escaped bar its
+/// SGR (see `escape_suggestions`), so any `ESC` left is that SGR: whole,
+/// uppercased into another command by a selected row (`ESC[5m` into `ESC[5M`,
+/// delete lines), or cut short by truncation. The first two are dropped, a cut
+/// one is shown. The menu's own `\r\n` passes.
+pub(crate) fn plain_menu_text(text: &str) -> Cow<'_, str> {
+    escape_with(text, Escape::DropSgr)
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Escape {
+    /// Every control char but `\n` and `\t`.
+    All,
+    /// As `All`, keeping well-formed SGR.
+    KeepSgr,
+    /// Drops SGR in either case and shows only `ESC` and C1.
+    DropSgr,
+}
+
+fn escape_with(text: &str, mode: Escape) -> Cow<'_, str> {
+    // Allocated at the first char that is escaped or dropped.
+    let mut result: Option<String> = None;
+    let mut rest = text;
+    while let Some(c) = rest.chars().next() {
+        let sgr = match mode {
+            Escape::All => None,
+            Escape::KeepSgr => sgr_len(rest),
+            Escape::DropSgr => sgr_len_ending(rest, b"mM"),
+        };
+        let len = sgr.unwrap_or(c.len_utf8());
+        let escaped = sgr.is_none()
+            && match mode {
+                Escape::DropSgr => c == '\x1b' || ('\u{80}'..='\u{9f}').contains(&c),
+                _ => c.is_control() && c != '\n' && c != '\t',
+            };
+        let dropped = sgr.is_some() && mode == Escape::DropSgr;
+
+        if escaped || dropped {
+            let out = result.get_or_insert_with(|| {
+                let mut out = String::with_capacity(text.len() + 8);
+                out.push_str(&text[..text.len() - rest.len()]);
+                out
+            });
+            if escaped {
+                push_caret(out, c);
+            }
+        } else if let Some(out) = &mut result {
+            out.push_str(&rest[..len]);
+        }
+        rest = &rest[len..];
+    }
+    result.map_or(Cow::Borrowed(text), Cow::Owned)
+}
+
+/// Pushes control char `c` in caret notation.
+fn push_caret(out: &mut String, c: char) {
+    // Every control char is below U+00A0, so it fits a byte.
+    let byte = c as u32 as u8;
+    match byte {
+        0x7f => out.push_str("^?"),
+        0x80.. => {
+            out.push_str("M-^");
+            out.push(char::from((byte - 0x80) ^ 0x40));
+        }
+        _ => {
+            out.push('^');
+            out.push(char::from(byte ^ 0x40));
+        }
+    }
+}
+
+/// Length of the SGR sequence (`ESC [`, digits and `;`, then `m`) that `text`
+/// starts with, if it starts with one.
+pub(crate) fn sgr_len(text: &str) -> Option<usize> {
+    sgr_len_ending(text, b"m")
+}
+
+fn sgr_len_ending(text: &str, finals: &[u8]) -> Option<usize> {
+    let args = text.strip_prefix("\x1b[")?;
+    let end = args.find(|c: char| !(c.is_ascii_digit() || c == ';'))?;
+    finals
+        .contains(&args.as_bytes()[end])
+        .then_some(2 + end + 1)
+}
+
 pub(crate) fn estimate_required_lines(input: &str, screen_width: u16) -> usize {
     input.lines().fold(0, |acc, line| {
         let wrap = estimate_single_line_wraps(line, screen_width);
@@ -193,6 +291,47 @@ mod test {
     use super::*;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
+
+    #[rstest]
+    #[case::esc("a\x1b[2Kb", "a^[[2Kb")]
+    #[case::bell_and_backspace("\x07\x08", "^G^H")]
+    #[case::carriage_return("bar\r", "bar^M")]
+    #[case::del("x\x7f", "x^?")]
+    #[case::c1_csi("\u{9b}2K", "M-^[2K")]
+    #[case::sgr_is_not_spared("\x1b[8mhidden", "^[[8mhidden")]
+    #[case::newline_and_tab_pass("a\n\tb", "a\n\tb")]
+    #[case::wide_text_passes("日本\x1b", "日本^[")]
+    fn escape_control_shows_controls(#[case] input: &str, #[case] expected: &str) {
+        assert_eq!(escape_control(input), expected);
+    }
+
+    #[rstest]
+    #[case::sgr_kept("sir\x1b[1mlancelot\x1b[0m", "sir\x1b[1mlancelot\x1b[0m")]
+    #[case::empty_sgr_kept("\x1b[m", "\x1b[m")]
+    #[case::other_csi("\x1b[2K\x1b[Gls", "^[[2K^[[Gls")]
+    #[case::osc("\x1b]52;c;aGk=\x07", "^[]52;c;aGk=^G")]
+    #[case::unterminated_sgr("\x1b[1", "^[[1")]
+    #[case::bare_esc_at_end("a\x1b", "a^[")]
+    fn escape_control_keep_sgr_spares_only_sgr(#[case] input: &str, #[case] expected: &str) {
+        assert_eq!(escape_control_keep_sgr(input), expected);
+    }
+
+    #[rstest]
+    #[case::sgr_dropped("a\x1b[1mb\x1b[0m", "ab")]
+    #[case::uppercased_sgr_dropped(">\x1b[5MX", ">X")]
+    #[case::cut_sgr_shown("\x1b[1abc", "^[[1abc")]
+    #[case::c1_shown("\u{9b}5M", "M-^[5M")]
+    #[case::menu_line_breaks_pass("a\r\nb\tc", "a\r\nb\tc")]
+    fn plain_menu_text_leaves_no_escape(#[case] input: &str, #[case] expected: &str) {
+        assert_eq!(plain_menu_text(input), expected);
+    }
+
+    #[rstest]
+    #[case("plain")]
+    #[case("\x1b[1mbold\x1b[0m")]
+    fn nothing_to_escape_borrows(#[case] input: &str) {
+        assert!(matches!(escape_control_keep_sgr(input), Cow::Borrowed(_)));
+    }
 
     #[rstest]
     #[case("sentence\nsentence", "sentence\r\nsentence")]

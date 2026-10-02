@@ -8,7 +8,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     menu::{InputMode, MenuSettings, OutputMode},
-    painting::Painter,
+    painting::{escape_control_keep_sgr, sgr_len, Painter},
     CompletionOrigin, CompletionResult, Editor, Partial, Suggestion, Suggestions, UndoBehavior,
 };
 
@@ -427,6 +427,7 @@ impl CompletionDisplay {
         base_ranges: &[Range<usize>],
         computed_for: CompletionOrigin,
     ) -> Self {
+        let values = escape_suggestions(values);
         let display_widths: Vec<usize> = values
             .iter()
             .map(|suggestion| strip_ansi_escapes::strip_str(suggestion.display_value()).width())
@@ -489,6 +490,51 @@ impl CompletionDisplay {
             },
         }
     }
+}
+
+/// Escapes the control characters in what a menu shows of each suggestion,
+/// keeping their SGR styling (see [`escape_control_keep_sgr`]).
+///
+/// `value` is never touched: it is what accepting inserts, and the buffer
+/// renders it escaped. Escaping shifts the characters `match_indices` points
+/// at, so a rewritten entry drops them and its highlighting falls back to
+/// finding the typed text. A clean list keeps its `Arc`.
+pub(crate) fn escape_suggestions(values: Suggestions) -> Suggestions {
+    let mut escaped: Option<Vec<Suggestion>> = None;
+    for (i, suggestion) in values.iter().enumerate() {
+        if let Some(shown) = escape_suggestion(suggestion) {
+            escaped.get_or_insert_with(|| values.to_vec())[i] = shown;
+        }
+    }
+    escaped.map_or(values, Into::into)
+}
+
+/// `suggestion` with its shown fields escaped, if any of them needed it.
+fn escape_suggestion(suggestion: &Suggestion) -> Option<Suggestion> {
+    fn escaped(text: &str) -> Option<String> {
+        match escape_control_keep_sgr(text) {
+            Cow::Owned(text) => Some(text),
+            Cow::Borrowed(_) => None,
+        }
+    }
+
+    let mut out: Option<Suggestion> = None;
+    if let Some(shown) = escaped(suggestion.display_value()) {
+        let out = out.get_or_insert_with(|| suggestion.clone());
+        out.display_override = Some(shown);
+        out.match_indices = None;
+    }
+    if let Some(description) = suggestion.description.as_deref().and_then(escaped) {
+        out.get_or_insert_with(|| suggestion.clone()).description = Some(description);
+    }
+    if let Some(extra) = &suggestion.extra {
+        let shown: Vec<Cow<str>> = extra.iter().map(|e| escape_control_keep_sgr(e)).collect();
+        if shown.iter().any(|e| matches!(e, Cow::Owned(_))) {
+            out.get_or_insert_with(|| suggestion.clone()).extra =
+                Some(shown.into_iter().map(Cow::into_owned).collect());
+        }
+    }
+    out
 }
 
 /// Longest common prefix across suggestions sharing a span
@@ -616,35 +662,19 @@ fn parse_ansi<'a>(s: &'a str) -> Vec<AnsiSegment<'a>> {
     let mut segments = Vec::new();
 
     let find_escape_end = |sgr_args_start: usize| {
+        let csi_start = sgr_args_start - ANSI_SGR_START.len();
+        // `sgr_len` decides what counts as SGR, so the escaping that keeps
+        // these sequences and the parsing here cannot disagree.
+        let escape_end = csi_start + sgr_len(&s[csi_start..])?;
         let mut escape_start = sgr_args_start;
         let mut contains_reset = false;
         // Whether all digits of the current argument have been 0 so far (this
         // is true for empty arguments too). A 0 (or empty argument) represents
         // the reset attribute.
         let mut all_zeroes = true;
-        for (i, c) in s[sgr_args_start..].char_indices() {
+        for (i, c) in s[sgr_args_start..escape_end - 1].char_indices() {
             match c {
-                'm' => {
-                    let csi_start = sgr_args_start - ANSI_SGR_START.len();
-                    let escape_end = sgr_args_start + i + 1;
-                    if all_zeroes {
-                        return Some(AnsiEscape {
-                            csi_start,
-                            escape_start: None,
-                            escape_end,
-                            had_reset: true,
-                        });
-                    } else {
-                        return Some(AnsiEscape {
-                            csi_start,
-                            escape_start: Some(escape_start),
-                            escape_end,
-                            had_reset: contains_reset,
-                        });
-                    }
-                }
                 '0' => {}
-                '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' => all_zeroes = false,
                 ';' => {
                     if all_zeroes {
                         contains_reset = true;
@@ -652,11 +682,25 @@ fn parse_ansi<'a>(s: &'a str) -> Vec<AnsiSegment<'a>> {
                     }
                     all_zeroes = true;
                 }
-                _ => return None,
+                // `1` to `9`: `sgr_len` let nothing else through.
+                _ => all_zeroes = false,
             }
         }
-        // No ending "m" to terminate SGR sequence
-        None
+        Some(if all_zeroes {
+            AnsiEscape {
+                csi_start,
+                escape_start: None,
+                escape_end,
+                had_reset: true,
+            }
+        } else {
+            AnsiEscape {
+                csi_start,
+                escape_start: Some(escape_start),
+                escape_end,
+                had_reset: contains_reset,
+            }
+        })
     };
 
     let find_escape = |mut search_start: usize| {
@@ -953,6 +997,45 @@ mod tests {
     use crate::{EditCommand, LineBuffer, PromptEditMode, PromptViMode, Span};
     use nu_ansi_term::Color;
     use rstest::rstest;
+
+    #[test]
+    fn suggestions_show_escape_sequences_but_keep_their_value() {
+        let poisoned = Suggestion {
+            value: "foo\x1b[2Kbar".into(),
+            description: Some("\x1b]52;c;aGk=\x07".into()),
+            extra: Some(vec!["\x1b[Gx".into()]),
+            match_indices: Some(vec![0, 1, 2]),
+            ..Default::default()
+        };
+        // nushell styles `display_override` with SGR; that has to survive.
+        let styled = Suggestion {
+            value: "sirlancelot".into(),
+            display_override: Some("sir\x1b[1mlancelot".into()),
+            match_indices: Some(vec![0]),
+            ..Default::default()
+        };
+        let values: Suggestions = vec![poisoned.clone(), styled.clone()].into();
+
+        let escaped = escape_suggestions(values);
+
+        assert_eq!(escaped[0].value, poisoned.value);
+        assert_eq!(escaped[0].display_value(), "foo^[[2Kbar");
+        assert_eq!(escaped[0].description.as_deref(), Some("^[]52;c;aGk=^G"));
+        assert_eq!(escaped[0].extra, Some(vec!["^[[Gx".to_string()]));
+        assert_eq!(escaped[0].match_indices, None);
+        assert_eq!(escaped[1], styled);
+    }
+
+    #[test]
+    fn clean_suggestions_keep_their_allocation() {
+        let values: Suggestions = vec![Suggestion {
+            value: "plain".into(),
+            ..Default::default()
+        }]
+        .into();
+        let escaped = escape_suggestions(values.clone());
+        assert!(std::sync::Arc::ptr_eq(&values, &escaped));
+    }
 
     /// A caret cursor rests on the last grapheme of the word, so completion must
     /// count that grapheme as part of the word instead of stranding it after the

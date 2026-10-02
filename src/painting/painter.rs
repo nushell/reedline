@@ -3,7 +3,8 @@ use crate::{CursorConfig, PromptEditMode};
 
 use {
     super::utils::{
-        advance_grapheme, coerce_crlf, deferred_wrap_row, line_width, resolve_wrap, wrap_position,
+        advance_grapheme, coerce_crlf, deferred_wrap_row, line_width, plain_menu_text,
+        resolve_wrap, wrap_position,
     },
     crate::{
         menu::{Menu, ReedlineMenu},
@@ -1110,6 +1111,13 @@ impl Painter {
         let starting_row = layout.menu_start_row.unwrap_or(0);
         let remaining_lines = self.screen_height().saturating_sub(starting_row);
         let menu_string = menu.menu_string(remaining_lines, use_ansi_coloring);
+        // Plain menus uppercase and truncate kept SGR as if it were text, so
+        // whatever is left of it goes here, once for every menu.
+        let menu_string = if use_ansi_coloring {
+            menu_string
+        } else {
+            plain_menu_text(&menu_string).into_owned()
+        };
         self.clear_from_anchor(starting_row)?;
         self.stdout
             .queue(Print(menu_string.trim_end_matches('\n')))?;
@@ -1508,6 +1516,12 @@ impl Painter {
     #[cfg(test)]
     pub(crate) fn force_prompt_anchored_for_test(&mut self, row: u16) {
         self.prompt_start_row = PromptStartRow::Verified(row);
+    }
+
+    /// What a [`W::capture`] painter has written so far.
+    #[cfg(test)]
+    pub(crate) fn captured_for_test(&self) -> &[u8] {
+        self.stdout.captured()
     }
 
     /// Whether the cached anchor is still trusted, so a test can pin which events cost

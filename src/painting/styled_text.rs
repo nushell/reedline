@@ -4,7 +4,7 @@ use crate::core_editor::{ensure_grapheme_boundary_next, ensure_grapheme_boundary
 use crate::terminal_extensions::semantic_prompt::{PromptKind, SemanticPromptMarkers};
 use crate::Prompt;
 
-use super::utils::strip_ansi;
+use super::utils::{escape_control, strip_ansi};
 
 /// A representation of a buffer with styling, used for doing syntax highlighting
 #[derive(Clone)]
@@ -135,7 +135,7 @@ impl StyledText {
     pub fn render_simple(&self) -> String {
         self.buffer
             .iter()
-            .map(|(style, text)| style.paint(text).to_string())
+            .map(|(style, text)| style.paint(escape_control(text)).to_string())
             .collect()
     }
 
@@ -189,7 +189,8 @@ fn render_as_string(
     // Only when the style would actually show on a blank cell, or a highlighter
     // that emits the buffer as one plain chunk would gain a stray space per line
     // in every mode. The `\r` of a CRLF is the terminator's own, thus the cell
-    // replaces it; a trailing `\r` on the *last* piece is buffer content, stays.
+    // replaces it; a trailing `\r` on the *last* piece is buffer content, and
+    // shows as `^M` with every other control character.
     //
     // The cell is a real column, so `required_lines` and `cursor_pos` count it.
     // That shows up only on a selected line which exactly fills the terminal.
@@ -201,6 +202,7 @@ fn render_as_string(
         } else {
             line
         };
+        let line = escape_control(line);
 
         // One `paint` for line and cell together: two would wrap each in its own
         // escape pair, and the rendered string is asserted verbatim.
@@ -533,13 +535,28 @@ mod test {
     #[test]
     fn a_trailing_carriage_return_is_not_a_terminator() {
         // The contrast with the case above: with no `\n` after it the `\r` is
-        // buffer content on the last piece, so it survives and gains no cell.
-        // Raw again, for the same reason.
+        // buffer content on the last piece, so it is shown and gains no cell.
+        // Shown as `^M`, not sent: a raw one would snap to column 0.
         let style = Style::new().on(Color::LightGray);
         let result =
             super::render_as_string(&(style, "bar\r".to_string()), &Style::new(), "::: ", None);
-        assert!(result.contains('\r'), "ate buffer content: {result:?}");
-        assert_eq!(strip_ansi(&result), "bar");
+        assert!(!result.contains('\r'), "leaked a CR: {result:?}");
+        assert_eq!(strip_ansi(&result), "bar^M");
+    }
+
+    #[test]
+    fn escape_sequences_in_the_buffer_are_shown_not_sent() {
+        // A pasted or completed line that erases itself and prints `ls` over
+        // the top would show one command and run another.
+        let buffer = "rm -rf ~ #\x1b[2K\x1b[Gls";
+        let result = super::render_as_string(
+            &(Style::new().fg(Color::Red), buffer.to_string()),
+            &Style::new(),
+            "::: ",
+            None,
+        );
+        assert_eq!(strip_ansi(&result), "rm -rf ~ #^[[2K^[[Gls");
+        assert!(!result.contains("\x1b[2K"), "sent an erase: {result:?}");
     }
 
     #[test]
