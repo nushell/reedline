@@ -308,11 +308,7 @@ impl Drop for Reedline {
             let _ignore = stdout.queue(SetCursorStyle::DefaultUserShape);
             let _ignore = stdout.flush();
         }
-        // The painter hides the cursor around its anchor query and the next
-        // paint shows it. An editor dropped between the two, or after a
-        // `read_line` that failed, would otherwise leave it hidden. This used
-        // to ride on the cursor-shape reset above, which a host may not
-        // configure; it stands on its own now that reedline hides on its own.
+        // Only writes if the painter left the cursor hidden.
         let _ignore = self.painter.show_cursor();
 
         // Ensures that the terminal is in a good state if we panic semigracefully
@@ -1001,9 +997,7 @@ impl Reedline {
 
         let result = self.read_line_helper(prompt);
         if result.is_err() {
-            // The anchor hid the cursor for its query and the first paint
-            // shows it again. An error in between must not strand it hidden,
-            // and the error is what to report, not a failure to show.
+            // The error is what to report, not a failure to show.
             let _ignore = self.painter.show_cursor();
         }
 
@@ -1037,15 +1031,14 @@ impl Reedline {
     /// other output back at the first line of the terminal.
     pub fn clear_screen(&mut self) -> Result<()> {
         self.painter.clear_screen()?;
-
-        Ok(())
+        // No paint follows outside `read_line` to show it again.
+        self.painter.show_cursor()
     }
 
     /// Clear the screen and the scrollback buffer of the terminal
     pub fn clear_scrollback(&mut self) -> Result<()> {
         self.painter.clear_scrollback()?;
-
-        Ok(())
+        self.painter.show_cursor()
     }
 
     /// Consume a pending external repaint request, returning whether one was
@@ -1350,6 +1343,9 @@ impl Reedline {
                         // area, for external commands or new read_line call
                         self.painter.move_cursor_to_end()?;
                     }
+                    // A clear earlier in this batch re-anchored with the
+                    // cursor hidden, and no paint is coming to show it.
+                    self.painter.show_cursor()?;
                     return Ok(ControlFlow::Break(signal));
                 }
                 EventStatus::Handled => {
@@ -4363,6 +4359,33 @@ mod tests {
             }
         }
         None
+    }
+
+    // Regression test for the #1231 fix: a clear re-anchors with the cursor
+    // hidden and counts on the batch's repaint to show it. Ctrl-C and Ctrl-D
+    // exit without a repaint (Enter repaints in `submit_buffer`), so after a
+    // clear in the same batch the exit itself has to show it, or the host
+    // gets the terminal back without a cursor.
+    #[rstest]
+    #[case::ctrl_c('c', Signal::CtrlC)]
+    #[case::ctrl_d('d', Signal::CtrlD)]
+    fn exit_after_clear_in_one_batch_shows_the_cursor(#[case] key: char, #[case] expected: Signal) {
+        let ctrl = |c| Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL));
+        let mut rl = Reedline::create();
+        rl.painter.force_prompt_anchored_for_test(0);
+
+        let flow = rl
+            .process_input_batch(&DefaultPrompt::default(), vec![ctrl('l'), ctrl(key)])
+            .expect("batch ok");
+
+        let ControlFlow::Break(signal) = flow else {
+            panic!("expected the batch to exit");
+        };
+        assert_eq!(
+            std::mem::discriminant(&signal),
+            std::mem::discriminant(&expected)
+        );
+        assert!(!rl.painter.cursor_hidden_for_test());
     }
 
     /// `DefaultValidator` reads an unclosed `"` as incomplete, so `Enter` breaks

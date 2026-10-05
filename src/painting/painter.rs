@@ -369,6 +369,9 @@ pub struct Painter {
     semantic_markers: Option<Box<dyn SemanticPromptMarkers>>,
     /// Layout computed during the last paint cycle.
     pub(crate) last_layout: Option<PromptLayout>,
+    /// Whether the painter hid the cursor and nothing has shown it since, so
+    /// [`Painter::show_cursor`] only writes when there is something to undo.
+    cursor_hidden: bool,
 }
 
 impl Painter {
@@ -387,6 +390,7 @@ impl Painter {
             exit_right_prompt: None,
             semantic_markers: None,
             last_layout: None,
+            cursor_hidden: false,
         }
     }
 
@@ -628,16 +632,16 @@ impl Painter {
     /// Establishes the prompt's start row for a new line editor invocation by
     /// asking the terminal where the cursor is.
     fn anchor_prompt(&mut self, suspended_state: Option<&PainterSuspendedState>) -> Result<()> {
-        // Hide before asking, not only before painting. `move_cursor_to_end`
-        // left the cursor shown at column 0 of the row the next prompt lands
-        // on, and the wait for the query's reply is the longest stretch
+        // Hide before asking, not only before painting. The exit path leaves
+        // the cursor shown at column 0 of the row the next prompt lands on,
+        // and the wait for the query's reply is the longest stretch
         // between that newline and the paint, so a fast terminal renders the
         // bare cursor for a frame (#1231). Flushed: the query goes out through
         // crossterm on stdout, unbuffered, and this hide sits in the stderr
         // buffer until then. `repaint_buffer` ends with Show. The dumb-terminal
         // arm below makes no query and needs no hide, but a branch to skip it
         // would buy nothing, since `repaint_buffer` hides there as well.
-        self.stdout.queue(cursor::Hide)?;
+        self.hide_cursor()?;
         self.stdout.flush()?;
 
         // The terminal may not answer the cursor-position query in time
@@ -732,7 +736,7 @@ impl Painter {
         // Note: Attribute::Reset (SGR 0) resets all attributes including colors
         self.stdout.queue(SetAttribute(Attribute::Reset))?;
 
-        self.stdout.queue(cursor::Hide)?;
+        self.hide_cursor()?;
 
         let screen_width = self.screen_width();
 
@@ -845,6 +849,7 @@ impl Painter {
             self.stdout.queue(shape)?;
         }
         self.stdout.queue(cursor::Show)?;
+        self.cursor_hidden = false;
 
         self.stdout.flush()
     }
@@ -1367,13 +1372,27 @@ impl Painter {
         self.stdout.flush()
     }
 
-    /// Show the cursor, for the paths that end without a paint.
+    /// Queue a hide and remember it, so [`Painter::show_cursor`] can undo it.
+    fn hide_cursor(&mut self) -> Result<()> {
+        self.stdout.queue(cursor::Hide)?;
+        self.cursor_hidden = true;
+        Ok(())
+    }
+
+    /// Show the cursor if the painter hid it, for the paths that end without
+    /// a paint.
     ///
     /// [`Painter::anchor_prompt`] hides it and the next `repaint_buffer` shows
-    /// it again; a `read_line` that fails between the two, or an editor
-    /// dropped there, would leave the terminal without a cursor otherwise.
+    /// it again. Anything that hands the terminal back in between (an exit
+    /// right after a clear, a failed `read_line`, a drop) goes through here.
+    /// Writes nothing when the cursor is already shown, so a host that hid it
+    /// on purpose keeps it hidden.
     pub(crate) fn show_cursor(&mut self) -> Result<()> {
+        if !self.cursor_hidden {
+            return Ok(());
+        }
         self.stdout.queue(cursor::Show)?;
+        self.cursor_hidden = false;
         self.stdout.flush()
     }
 
@@ -1537,6 +1556,11 @@ impl Painter {
     #[cfg(test)]
     pub(crate) fn prompt_anchor_is_verified_for_test(&self) -> bool {
         matches!(self.prompt_start_row, PromptStartRow::Verified(_))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cursor_hidden_for_test(&self) -> bool {
+        self.cursor_hidden
     }
 }
 
@@ -1927,6 +1951,23 @@ mod tests {
             next.matches("\x1b[?25h").count() == 1 && next.ends_with("\x1b[?25h"),
             "cursor shown between the exit newline and the end of the next paint: {next:?}"
         );
+    }
+
+    // `show_cursor` undoes the painter's own hide and nothing else, so a drop
+    // or an exit with the cursor already shown leaves the terminal alone.
+    #[test]
+    fn show_cursor_writes_only_after_a_hide_of_its_own() {
+        let mut p = Painter::new(W::capture());
+        p.term_is_dumb = false;
+
+        p.show_cursor().unwrap();
+        assert_eq!(p.stdout.captured(), b"");
+
+        p.anchor_prompt(None).unwrap();
+        let before_show = p.stdout.captured().len();
+        p.show_cursor().unwrap();
+        p.show_cursor().unwrap();
+        assert_eq!(&p.stdout.captured()[before_show..], b"\x1b[?25h");
     }
 
     #[rstest]
