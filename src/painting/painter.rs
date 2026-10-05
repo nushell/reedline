@@ -369,8 +369,7 @@ pub struct Painter {
     semantic_markers: Option<Box<dyn SemanticPromptMarkers>>,
     /// Layout computed during the last paint cycle.
     pub(crate) last_layout: Option<PromptLayout>,
-    /// Whether the painter hid the cursor and nothing has shown it since, so
-    /// [`Painter::show_cursor`] only writes when there is something to undo.
+    /// Set by `hide_cursor`, cleared by every Show. See [`Painter::show_cursor`].
     cursor_hidden: bool,
 }
 
@@ -611,7 +610,7 @@ impl Painter {
 
     /// [`Painter::initialize_prompt_position`] with the size passed in, since
     /// `terminal::size()` needs a tty and so cannot run under test.
-    fn initialize_prompt_position_with_size(
+    pub(crate) fn initialize_prompt_position_with_size(
         &mut self,
         reported_size: (u16, u16),
         suspended_state: Option<&PainterSuspendedState>,
@@ -638,9 +637,7 @@ impl Painter {
         // between that newline and the paint, so a fast terminal renders the
         // bare cursor for a frame (#1231). Flushed: the query goes out through
         // crossterm on stdout, unbuffered, and this hide sits in the stderr
-        // buffer until then. `repaint_buffer` ends with Show. The dumb-terminal
-        // arm below makes no query and needs no hide, but a branch to skip it
-        // would buy nothing, since `repaint_buffer` hides there as well.
+        // buffer until then.
         self.hide_cursor()?;
         self.stdout.flush()?;
 
@@ -1562,13 +1559,6 @@ impl Painter {
     pub(crate) fn cursor_hidden_for_test(&self) -> bool {
         self.cursor_hidden
     }
-
-    /// The re-anchor a clear ends with, minus the `terminal::size()` call that
-    /// needs a tty.
-    #[cfg(test)]
-    pub(crate) fn reanchor_for_test(&mut self, size: (u16, u16)) -> Result<()> {
-        self.initialize_prompt_position_with_size(size, None)
-    }
 }
 
 #[cfg(test)]
@@ -1869,9 +1859,8 @@ mod tests {
     // that errs high, and the newline printed first has already moved the
     // cursor past any last-known row.
     //
-    // The bytes pin #1231 as well: the hide is the first thing to leave the
-    // anchor, so neither the wait for the reply nor, here, the newline
-    // recovery runs with the cursor shown.
+    // The leading hide is #1231's: nothing in the anchor runs with the cursor
+    // shown.
     #[test]
     fn test_anchor_prompt_without_answer_assumes_bottom_over_last_known_row() {
         let mut painter = Painter::new(W::capture());
@@ -1918,11 +1907,8 @@ mod tests {
     /// with a bare cursor.
     #[test]
     fn next_anchor_hides_the_cursor_the_exit_path_left_shown() {
-        let mut p = Painter::new(W::capture());
-        p.term_is_dumb = false;
-        p.terminal_size = (20, 10);
-        p.prompt_start_row.mark_verified(0);
-        p.prompt_height = 1;
+        let mut p = make_painter(20, 10, false);
+        p.stdout = W::capture();
         let lines = make_lines(TEST_PROMPT, "", "", "pwd", "");
         let paint = |p: &mut Painter| {
             p.repaint_buffer(
@@ -1960,8 +1946,6 @@ mod tests {
         );
     }
 
-    // `show_cursor` undoes the painter's own hide and nothing else, so a drop
-    // or an exit with the cursor already shown leaves the terminal alone.
     #[test]
     fn show_cursor_writes_only_after_a_hide_of_its_own() {
         let mut p = Painter::new(W::capture());

@@ -308,7 +308,6 @@ impl Drop for Reedline {
             let _ignore = stdout.queue(SetCursorStyle::DefaultUserShape);
             let _ignore = stdout.flush();
         }
-        // Only writes if the painter left the cursor hidden.
         let _ignore = self.painter.show_cursor();
 
         // Ensures that the terminal is in a good state if we panic semigracefully
@@ -1031,7 +1030,6 @@ impl Reedline {
     /// other output back at the first line of the terminal.
     pub fn clear_screen(&mut self) -> Result<()> {
         self.painter.clear_screen()?;
-        // No paint follows outside `read_line` to show it again.
         self.painter.show_cursor()
     }
 
@@ -1343,9 +1341,10 @@ impl Reedline {
                         // area, for external commands or new read_line call
                         self.painter.move_cursor_to_end()?;
                     }
-                    // A clear earlier in this batch re-anchored with the
-                    // cursor hidden, and no paint is coming to show it.
-                    self.painter.show_cursor()?;
+                    // A clear earlier in this batch left it hidden and no
+                    // paint follows. The exit is what to report, so a failed
+                    // show must not turn it into an error.
+                    let _ignore = self.painter.show_cursor();
                     return Ok(ControlFlow::Break(signal));
                 }
                 EventStatus::Handled => {
@@ -4361,32 +4360,23 @@ mod tests {
         None
     }
 
-    // Regression test for the #1231 fix: a clear (Ctrl-L) re-anchors with the
-    // cursor hidden and counts on the batch's repaint to show it. Ctrl-C and
-    // Ctrl-D exit without a repaint (Enter repaints in `submit_buffer`), so
-    // when one follows the clear in the same batch the exit itself has to
-    // show it, or the host gets the terminal back without a cursor. The
-    // re-anchor stands in for the clear, whose `terminal::size()` needs a tty.
+    // #1231: Ctrl-C and Ctrl-D exit without a repaint (Enter repaints in
+    // `submit_buffer`), so after a clear in the same batch the exit has to
+    // show the cursor itself. The re-anchor stands in for the clear, whose
+    // `terminal::size()` needs a tty.
     #[rstest]
-    #[case::ctrl_c('c', Signal::CtrlC)]
-    #[case::ctrl_d('d', Signal::CtrlD)]
-    fn exit_before_the_next_paint_shows_the_cursor(#[case] key: char, #[case] expected: Signal) {
+    #[case::ctrl_c('c', "CtrlC")]
+    #[case::ctrl_d('d', "CtrlD")]
+    fn exit_before_the_next_paint_shows_the_cursor(#[case] key: char, #[case] expected: &str) {
         let mut rl = Reedline::create();
-        rl.painter.reanchor_for_test((80, 24)).unwrap();
+        rl.painter
+            .initialize_prompt_position_with_size((80, 24), None)
+            .unwrap();
         assert!(rl.painter.cursor_hidden_for_test());
 
-        let ctrl_key = Event::Key(KeyEvent::new(KeyCode::Char(key), KeyModifiers::CONTROL));
-        let flow = rl
-            .process_input_batch(&DefaultPrompt::default(), vec![ctrl_key])
-            .expect("batch ok");
+        let signal = drive_until_signal(&mut rl, &[ctrl(key)]).expect("expected an exit");
 
-        let ControlFlow::Break(signal) = flow else {
-            panic!("expected the batch to exit");
-        };
-        assert_eq!(
-            std::mem::discriminant(&signal),
-            std::mem::discriminant(&expected)
-        );
+        assert_eq!(format!("{signal:?}"), expected);
         assert!(!rl.painter.cursor_hidden_for_test());
     }
 
