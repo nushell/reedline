@@ -33,9 +33,11 @@
 // thresholds, and where bracketed paste works it should be preferred.
 //
 // On Unix, crossterm's default event source reads 1024 bytes per readiness
-// notification, so a larger paste stalls until the next key press, with or
-// without this hook. Building with `--features crossterm/use-dev-tty` selects
-// an event source that does not stall.
+// notification. Without the hook every pasted newline submits, and the next
+// prompt's cursor-position query wakes the reader again; with it, a larger
+// paste stalls until the next key press. Building with
+// `--features crossterm/use-dev-tty` selects an event source that does not
+// stall.
 //
 // Abort with Ctrl-C or Ctrl-D.
 

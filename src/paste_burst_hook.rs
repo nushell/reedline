@@ -31,9 +31,13 @@
 //! line.
 //!
 //! On Unix, crossterm's default event source reads 1024 bytes per readiness
-//! notification. A paste larger than that stalls part-way until the next key
-//! press. This happens with or without a hook installed, and the hook's poll
-//! does not see the unread bytes either. The event source enabled by
+//! notification and leaves the rest unread until the next one. Without a hook
+//! this goes unnoticed: every pasted newline submits, and the terminal's reply
+//! to the next prompt's cursor-position query is new input that wakes the
+//! reader again. With a hook nothing submits mid-paste, so a paste larger than
+//! that stalls part-way until the next key press, and the hook's poll does not
+//! see the unread bytes either. The fix belongs in crossterm, which would have
+//! to read until the descriptor runs dry. The event source enabled by
 //! crossterm's `use-dev-tty` feature does not stall. Where the terminal
 //! supports bracketed paste, prefer it.
 //!
@@ -83,6 +87,11 @@ pub trait PasteBurstHook: Send + Sync {
     /// within the last N ms" — is therefore the right signal here, and
     /// correctly keeps the paste from submitting halfway through.
     ///
+    /// Since a batch without a burst is not followed by [`settle`](Self::settle),
+    /// the timing it measures carries over from earlier batches. An `Enter`
+    /// typed within that window of the previous char counts as embedded as
+    /// well, so the window has to stay well below human typing speed.
+    ///
     /// A bare `Enter` drained into a *detected* burst is never routed through
     /// this method: the engine coalesces it as an embedded newline
     /// unconditionally. Reaching the drain loop at all means it arrived
@@ -100,10 +109,11 @@ pub trait PasteBurstHook: Send + Sync {
     ///
     /// # Required semantics: latch until [`settle`](Self::settle)
     ///
-    /// The engine queries this flag twice for a single burst: once to decide
-    /// whether to keep draining events, and again — after the idle flush — to
-    /// decide whether to treat the drained batch as a coalesced burst. Both must
-    /// see the same answer, so an implementation MUST latch `true` from the
+    /// The engine queries this flag three times for a single burst: once to
+    /// decide whether to keep draining events, again after the idle flush to
+    /// decide whether to treat the drained batch as a coalesced burst, and once
+    /// more after the batch to decide whether to [`settle`](Self::settle). All
+    /// must see the same answer, so an implementation MUST latch `true` from the
     /// moment a burst is detected until [`settle`](Self::settle) is called, even
     /// if the burst's inter-char timing has already gone idle by the second
     /// query. Returning `false` once idle (before `settle`) makes the engine
