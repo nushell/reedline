@@ -1562,6 +1562,13 @@ impl Painter {
     pub(crate) fn cursor_hidden_for_test(&self) -> bool {
         self.cursor_hidden
     }
+
+    /// The re-anchor a clear ends with, minus the `terminal::size()` call that
+    /// needs a tty.
+    #[cfg(test)]
+    pub(crate) fn reanchor_for_test(&mut self, size: (u16, u16)) -> Result<()> {
+        self.initialize_prompt_position_with_size(size, None)
+    }
 }
 
 #[cfg(test)]

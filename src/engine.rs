@@ -4361,21 +4361,23 @@ mod tests {
         None
     }
 
-    // Regression test for the #1231 fix: a clear re-anchors with the cursor
-    // hidden and counts on the batch's repaint to show it. Ctrl-C and Ctrl-D
-    // exit without a repaint (Enter repaints in `submit_buffer`), so after a
-    // clear in the same batch the exit itself has to show it, or the host
-    // gets the terminal back without a cursor.
+    // Regression test for the #1231 fix: a clear (Ctrl-L) re-anchors with the
+    // cursor hidden and counts on the batch's repaint to show it. Ctrl-C and
+    // Ctrl-D exit without a repaint (Enter repaints in `submit_buffer`), so
+    // when one follows the clear in the same batch the exit itself has to
+    // show it, or the host gets the terminal back without a cursor. The
+    // re-anchor stands in for the clear, whose `terminal::size()` needs a tty.
     #[rstest]
     #[case::ctrl_c('c', Signal::CtrlC)]
     #[case::ctrl_d('d', Signal::CtrlD)]
-    fn exit_after_clear_in_one_batch_shows_the_cursor(#[case] key: char, #[case] expected: Signal) {
-        let ctrl = |c| Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL));
+    fn exit_before_the_next_paint_shows_the_cursor(#[case] key: char, #[case] expected: Signal) {
         let mut rl = Reedline::create();
-        rl.painter.force_prompt_anchored_for_test(0);
+        rl.painter.reanchor_for_test((80, 24)).unwrap();
+        assert!(rl.painter.cursor_hidden_for_test());
 
+        let ctrl_key = Event::Key(KeyEvent::new(KeyCode::Char(key), KeyModifiers::CONTROL));
         let flow = rl
-            .process_input_batch(&DefaultPrompt::default(), vec![ctrl('l'), ctrl(key)])
+            .process_input_batch(&DefaultPrompt::default(), vec![ctrl_key])
             .expect("batch ok");
 
         let ControlFlow::Break(signal) = flow else {
