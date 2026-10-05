@@ -40,7 +40,7 @@ use {
         PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult, Validator,
     },
     crossterm::{
-        cursor::{SetCursorStyle, Show},
+        cursor::SetCursorStyle,
         event,
         event::{Event, KeyCode, KeyEvent, KeyModifiers},
         terminal, QueueableCommand,
@@ -388,9 +388,9 @@ impl Drop for Reedline {
             let _ignore = terminal::enable_raw_mode();
             let mut stdout = std::io::stdout();
             let _ignore = stdout.queue(SetCursorStyle::DefaultUserShape);
-            let _ignore = stdout.queue(Show);
             let _ignore = stdout.flush();
         }
+        let _ignore = self.painter.show_cursor();
 
         // Ensures that the terminal is in a good state if we panic semigracefully
         // Calling `disable_raw_mode()` twice is fine with Linux
@@ -1081,6 +1081,10 @@ impl Reedline {
         self.kitty_protocol.enter();
 
         let result = self.read_line_helper(prompt);
+        if result.is_err() {
+            // The error is what to report, not a failure to show.
+            let _ignore = self.painter.show_cursor();
+        }
 
         self.bracketed_paste.exit();
         self.kitty_protocol.exit();
@@ -1112,15 +1116,13 @@ impl Reedline {
     /// other output back at the first line of the terminal.
     pub fn clear_screen(&mut self) -> Result<()> {
         self.painter.clear_screen()?;
-
-        Ok(())
+        self.painter.show_cursor()
     }
 
     /// Clear the screen and the scrollback buffer of the terminal
     pub fn clear_scrollback(&mut self) -> Result<()> {
         self.painter.clear_scrollback()?;
-
-        Ok(())
+        self.painter.show_cursor()
     }
 
     /// Consume a pending external repaint request, returning whether one was
@@ -1425,6 +1427,10 @@ impl Reedline {
                         // area, for external commands or new read_line call
                         self.painter.move_cursor_to_end()?;
                     }
+                    // A clear earlier in this batch left it hidden and no
+                    // paint follows. The exit is what to report, so a failed
+                    // show must not turn it into an error.
+                    let _ignore = self.painter.show_cursor();
                     return Ok(ControlFlow::Break(signal));
                 }
                 EventStatus::Handled => {
@@ -4439,6 +4445,26 @@ mod tests {
             }
         }
         None
+    }
+
+    // #1231: Ctrl-C and Ctrl-D exit without a repaint (Enter repaints in
+    // `submit_buffer`), so after a clear in the same batch the exit has to
+    // show the cursor itself. The re-anchor stands in for the clear, whose
+    // `terminal::size()` needs a tty.
+    #[rstest]
+    #[case::ctrl_c('c', "CtrlC")]
+    #[case::ctrl_d('d', "CtrlD")]
+    fn exit_before_the_next_paint_shows_the_cursor(#[case] key: char, #[case] expected: &str) {
+        let mut rl = Reedline::create();
+        rl.painter
+            .initialize_prompt_position_with_size((80, 24), None)
+            .unwrap();
+        assert!(rl.painter.cursor_hidden_for_test());
+
+        let signal = drive_until_signal(&mut rl, &[ctrl(key)]).expect("expected an exit");
+
+        assert_eq!(format!("{signal:?}"), expected);
+        assert!(!rl.painter.cursor_hidden_for_test());
     }
 
     /// `DefaultValidator` reads an unclosed `"` as incomplete, so `Enter` breaks
