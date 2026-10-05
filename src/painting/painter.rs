@@ -826,8 +826,12 @@ impl Painter {
         // The last_required_lines is used to calculate safe range of the current prompt.
         self.last_required_lines = required_lines;
 
-        self.after_cursor_lines = if !lines.after_cursor.is_empty() {
-            Some(lines.after_cursor.to_string())
+        let after_cursor = lines
+            .exit_after_cursor
+            .as_ref()
+            .unwrap_or(&lines.after_cursor);
+        self.after_cursor_lines = if !after_cursor.is_empty() {
+            Some(after_cursor.to_string())
         } else {
             None
         };
@@ -1559,6 +1563,12 @@ impl Painter {
     #[cfg(test)]
     pub(crate) fn cursor_hidden_for_test(&self) -> bool {
         self.cursor_hidden
+    }
+
+    /// What the exit path will reprint after the cursor.
+    #[cfg(test)]
+    pub(crate) fn exit_after_cursor_for_test(&self) -> Option<&str> {
+        self.after_cursor_lines.as_deref()
     }
 }
 
@@ -2350,6 +2360,7 @@ mod tests {
             after_cursor: Cow::Borrowed(after),
             hint: Cow::Borrowed(""),
             right_prompt_on_last_line: false,
+            exit_after_cursor: None,
         }
     }
 

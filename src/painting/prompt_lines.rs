@@ -16,6 +16,11 @@ pub(crate) struct PromptLines<'prompt> {
     pub(crate) after_cursor: Cow<'prompt, str>,
     pub(crate) hint: Cow<'prompt, str>,
     pub(crate) right_prompt_on_last_line: bool,
+    /// What the exit path reprints after the cursor, when that is not
+    /// `after_cursor`: a history hint drawn in place of trailing auto-pair
+    /// closers leaves `after_cursor` empty, but the closers are still in the
+    /// buffer.
+    pub(crate) exit_after_cursor: Option<Cow<'prompt, str>>,
 }
 
 impl<'prompt> PromptLines<'prompt> {
@@ -51,7 +56,15 @@ impl<'prompt> PromptLines<'prompt> {
             after_cursor,
             hint,
             right_prompt_on_last_line,
+            exit_after_cursor: None,
         }
+    }
+
+    /// Set what the exit path reprints after the cursor in place of
+    /// `after_cursor`. See [`Self::exit_after_cursor`].
+    pub(crate) fn with_exit_after_cursor(mut self, after_cursor: &'prompt str) -> Self {
+        self.exit_after_cursor = Some(coerce_crlf(after_cursor));
+        self
     }
 
     /// Rows to reserve for the prompt and buffer, laid out end to end.
@@ -311,6 +324,7 @@ mod tests {
             after_cursor: Cow::Borrowed(""),
             hint: Cow::Borrowed(""),
             right_prompt_on_last_line: false,
+            exit_after_cursor: None,
         };
 
         let pos = prompt_lines.cursor_pos(terminal_columns);
@@ -346,6 +360,7 @@ mod tests {
             after_cursor: Cow::Borrowed(after_cursor),
             hint: Cow::Borrowed(""),
             right_prompt_on_last_line: false,
+            exit_after_cursor: None,
         };
 
         assert_eq!(
@@ -389,6 +404,7 @@ mod tests {
             after_cursor: Cow::Borrowed(""),
             hint: Cow::Borrowed(""),
             right_prompt_on_last_line: false,
+            exit_after_cursor: None,
         };
 
         assert_eq!(
@@ -415,6 +431,7 @@ mod tests {
             after_cursor: Cow::Borrowed(""),
             hint: Cow::Borrowed(""),
             right_prompt_on_last_line: false,
+            exit_after_cursor: None,
         };
 
         assert_eq!(prompt_lines.prompt_height(20), expected);
