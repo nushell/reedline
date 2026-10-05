@@ -4310,6 +4310,75 @@ mod tests {
     }
 
     #[test]
+    fn paste_burst_typed_line_still_submits() {
+        // With no `settle` after a batch without a burst, the detector's timing
+        // carries into the next batch. A detector that keeps its window below
+        // human typing speed, like the `paste_burst` example's, must still let
+        // a typed line submit; only an Enter inside the window is a newline.
+        // The clock is passed in, and `on_char` is fed by hand, since the read
+        // loop that feeds it needs a terminal.
+        use crate::PasteBurstHook;
+
+        const GAP: Duration = Duration::from_millis(10);
+
+        #[derive(Default)]
+        struct ClockedBurst {
+            // (now, when the last char arrived)
+            clock: std::sync::Mutex<(Duration, Option<Duration>)>,
+        }
+        impl ClockedBurst {
+            fn advance(&self, by: Duration) {
+                self.clock.lock().unwrap().0 += by;
+            }
+        }
+        impl PasteBurstHook for ClockedBurst {
+            fn on_char(&self, _c: char) {
+                let mut clock = self.clock.lock().unwrap();
+                clock.1 = Some(clock.0);
+            }
+            fn enter_is_newline(&self) -> bool {
+                let (now, last) = *self.clock.lock().unwrap();
+                last.is_some_and(|last| now - last < GAP)
+            }
+            fn is_burst_active(&self) -> bool {
+                false
+            }
+            fn poll_timeout(&self) -> Duration {
+                Duration::from_millis(1)
+            }
+            fn settle(&self) {
+                self.clock.lock().unwrap().1 = None;
+            }
+            fn resolve_burst(&self, _coalesced: &str) -> Option<String> {
+                None
+            }
+        }
+
+        // Type `ls` at 100ms a key, one batch per key, then press Enter `wait`
+        // after the last one.
+        fn type_ls_then_enter(wait: Duration) -> (Reedline, Option<Signal>) {
+            let hook = Arc::new(ClockedBurst::default());
+            let mut rl = seam_engine(Box::<crate::Emacs>::default()).with_paste_burst(hook.clone());
+            for c in ['l', 's'] {
+                hook.advance(Duration::from_millis(100));
+                hook.on_char(c);
+                drive(&mut rl, &[ch(c)]);
+                rl.settle_paste_burst();
+            }
+            hook.advance(wait);
+            let signal = drive_until_signal(&mut rl, &[key(KeyCode::Enter)]);
+            (rl, signal)
+        }
+
+        let (_, signal) = type_ls_then_enter(Duration::from_millis(100));
+        assert!(matches!(signal, Some(Signal::Success(ref line)) if line == "ls"));
+
+        let (rl, signal) = type_ls_then_enter(Duration::from_millis(2));
+        assert!(signal.is_none(), "an Enter inside the window inserts");
+        assert_eq!(rl.editor.get_buffer(), "ls\n");
+    }
+
+    #[test]
     fn paste_burst_batch_keeps_a_tab() {
         // A tab inside a burst batch is pasted text, so it is coalesced into
         // the insert as `\t` rather than dropped as a paste artifact.
