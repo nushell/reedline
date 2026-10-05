@@ -320,7 +320,7 @@ impl BufferEditor {
 
     /// reads the buffer from the temp file,
     /// expected to be called after the buffer editor exits
-    pub(crate) fn get_edited_buffer(&mut self) -> Result<String> {
+    pub(crate) fn get_edited_buffer(&self) -> Result<String> {
         let mut res = std::fs::read_to_string(&self.temp_file)?;
         let content_len = res.trim_end().len();
         res.truncate(content_len);
@@ -832,9 +832,10 @@ impl Reedline {
     /// let mut line_editor = Reedline::create().with_buffer_editor(command, temp.clone());
     ///
     /// // optionally, {file}, {line}, and {col} placeholders can be used.
-    /// // they will be replaced with the corresponding filename and current cursor position
+    /// // they will be replaced with the filename and the current cursor position,
+    /// // both 1-based, with {col} counting graphemes from the line start
     /// let mut command = Command::new("hx");
-    /// command.args(["+{line}:{col}", "{file}"]);
+    /// command.arg("{file}:{line}:{col}");
     /// let mut line_editor = Reedline::create().with_buffer_editor(command, temp.clone());
     ///
     /// // if {file} is omitted, the filename is still appended at the end,
@@ -843,6 +844,11 @@ impl Reedline {
     /// command.arg("+{line}:{col}");
     /// let mut line_editor = Reedline::create().with_buffer_editor(command, temp);
     /// ```
+    ///
+    /// A command with placeholders is rebuilt on every `OpenEditor` from its
+    /// program, arguments, environment and working directory. Other settings on
+    /// the `Command`, such as stdio redirection or `env_clear`, do not carry over.
+    /// A command without placeholders is spawned as given.
     #[must_use]
     pub fn with_buffer_editor(mut self, editor: Command, temp_file: PathBuf) -> Self {
         self.buffer_editor = Some(BufferEditor::new(editor, temp_file));
@@ -7805,6 +7811,8 @@ mod tests {
         let mut command = Command::new(program);
         command.args(args);
         command.current_dir(current_dir);
+        command.env("REEDLINE_TEST_KEEP", "kept");
+        command.env_remove("REEDLINE_TEST_DROP");
         command
     }
 
@@ -7860,6 +7868,12 @@ mod tests {
 
         let current_dir = current_dir.as_ref();
         assert_eq!(actual.get_current_dir(), Some(current_dir));
+
+        // nushell hands its `$env` to the editor through `envs`, so the
+        // rendered command has to keep both overrides and removals.
+        let envs: Vec<_> = actual.get_envs().collect();
+        assert!(envs.contains(&(OsStr::new("REEDLINE_TEST_KEEP"), Some(OsStr::new("kept")))));
+        assert!(envs.contains(&(OsStr::new("REEDLINE_TEST_DROP"), None)));
 
         assert_eq!(command_into_string(actual), expected);
     }
