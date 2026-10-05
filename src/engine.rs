@@ -677,7 +677,10 @@ impl Reedline {
     ///
     /// Auto-pairing applies to edits in the regular line buffer. Reverse-history
     /// search edits a separate search query and are not passed through the
-    /// auto-pairing machinery.
+    /// auto-pairing machinery. Neither is typing while a menu in
+    /// [`InputMode::Diff`](crate::InputMode::Diff) is open, such as a
+    /// [`ListMenu`](crate::ListMenu) used for history, since that text is the
+    /// menu's query.
     #[must_use]
     pub fn with_auto_pairs(mut self, auto_pairs: AutoPairs) -> Self {
         self.auto_pairs = Some(auto_pairs);
@@ -2318,6 +2321,16 @@ impl Reedline {
     fn auto_pair_command(&self, command: &EditCommand) -> Option<EditCommand> {
         let auto_pairs = self.auto_pairs.as_ref()?;
 
+        // A menu in `Diff` mode reads what is typed after it opened as its
+        // query, not as code, so a pair would end up in the search.
+        let query_menu_open = self.menus.iter().any(|menu| {
+            menu.is_active()
+                && menu.settings().effective_input_mode() == crate::menu::InputMode::Diff
+        });
+        if query_menu_open {
+            return None;
+        }
+
         // Resolve which auto-pair action (if any) `command` would trigger, along
         // with the pair it acts on and the `EditCommand` that would replace it.
         // The search order matters: for `InsertChar`, closers are checked before
@@ -3903,6 +3916,73 @@ mod tests {
             rl.history_cursor.get_navigation(),
             HistoryNavigationQuery::SubstringSearch("(".into())
         );
+    }
+
+    /// An auto-pairing engine with a history menu open in `mode`, over the
+    /// buffer `setup` leaves behind.
+    fn auto_pair_engine_with_open_menu(mode: crate::InputMode, setup: &[EditCommand]) -> Reedline {
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_auto_pairs(AutoPairs::new([('(', ')')]))
+            .with_menu(ReedlineMenu::HistoryMenu(Box::new(
+                ListMenu::default()
+                    .with_name("history_menu")
+                    .with_input_mode(mode),
+            )));
+        rl.history
+            .save(HistoryItem::from_command_line("(gstat).branch"))
+            .expect("history ok");
+        rl.run_edit_commands(setup);
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::Menu("history_menu".into()),
+        )
+        .expect("menu opens");
+        assert!(menu_is_active(&rl), "setup: menu is open");
+        rl
+    }
+
+    // A menu in `Diff` mode searches with what is typed after it opened, so a
+    // pair would put the closer in the query (nushell's Ctrl-R history menu).
+    // The other modes complete against the real buffer, where a pair is code.
+    #[rstest]
+    #[case::diff(crate::InputMode::Diff, "(")]
+    #[case::cursor_prefix(crate::InputMode::CursorPrefix, "()")]
+    #[case::full_buffer(crate::InputMode::FullBuffer, "()")]
+    fn auto_pairs_stay_out_of_a_query_menu(#[case] mode: crate::InputMode, #[case] expected: &str) {
+        let mut rl = auto_pair_engine_with_open_menu(mode, &[]);
+
+        drive(&mut rl, &[ch('(')]);
+
+        assert_eq!(rl.editor.get_buffer(), expected);
+    }
+
+    // Skipping a closer is an auto-pair action too: in the query a typed `)`
+    // is text, not a step over the `)` that was there before the menu opened.
+    #[test]
+    fn auto_pairs_do_not_skip_a_closer_in_a_query_menu() {
+        let mut rl = auto_pair_engine_with_open_menu(
+            crate::InputMode::Diff,
+            &[
+                EditCommand::InsertString("()".into()),
+                EditCommand::MoveLeft { select: false },
+            ],
+        );
+
+        drive(&mut rl, &[ch(')')]);
+
+        assert_eq!(rl.editor.get_buffer(), "())");
+    }
+
+    #[test]
+    fn auto_pairs_resume_after_the_query_menu_closes() {
+        let mut rl = auto_pair_engine_with_open_menu(crate::InputMode::Diff, &[]);
+        drive(&mut rl, &[ch('(')]);
+
+        drive(&mut rl, &[key(KeyCode::Esc)]);
+        assert!(!menu_is_active(&rl), "Esc closes the menu");
+        drive(&mut rl, &[ch('(')]);
+
+        assert_eq!(rl.editor.get_buffer(), "(()");
     }
 
     // FLIP SAFETY NET (Group C) — visual operability at the engine seam.
