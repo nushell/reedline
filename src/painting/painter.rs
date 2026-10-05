@@ -61,6 +61,182 @@ fn skip_buffer_lines_range(string: &str, skip: usize, offset: Option<usize>) -> 
     (index, limit)
 }
 
+/// Scrolling screen for tests. Answers cursor queries from what was printed.
+#[cfg(test)]
+pub(crate) struct VirtualTerm {
+    width: u16,
+    height: u16,
+    row: u16,
+    col: u16,
+    pending_wrap: bool,
+    saved: (u16, u16, bool),
+    grid: Vec<Vec<char>>,
+    pending: Vec<u8>,
+}
+
+#[cfg(test)]
+impl VirtualTerm {
+    fn new(width: u16, height: u16) -> Self {
+        let height = height.max(1);
+        let width = width.max(1);
+        Self {
+            width,
+            height,
+            row: 0,
+            col: 0,
+            pending_wrap: false,
+            saved: (0, 0, false),
+            grid: vec![vec![' '; width as usize]; height as usize],
+            pending: Vec::new(),
+        }
+    }
+
+    fn cursor(&self) -> (u16, u16) {
+        (self.col, self.row)
+    }
+
+    fn screen(&self) -> String {
+        self.grid
+            .iter()
+            .map(|line| line.iter().collect::<String>().trim_end().to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn push(&mut self, bytes: &[u8]) {
+        self.pending.extend_from_slice(bytes);
+        self.drain();
+    }
+
+    fn drain(&mut self) {
+        while !self.pending.is_empty() {
+            if self.pending[0] == 0x1b {
+                if !self.consume_escape() {
+                    return;
+                }
+            } else {
+                let byte = self.pending.remove(0);
+                self.glyph(byte);
+            }
+        }
+    }
+
+    fn consume_escape(&mut self) -> bool {
+        if self.pending.len() < 2 {
+            return false;
+        }
+        match self.pending[1] {
+            b'7' => {
+                self.saved = (self.row, self.col, self.pending_wrap);
+                self.pending.drain(..2);
+                true
+            }
+            b'8' => {
+                (self.row, self.col, self.pending_wrap) = self.saved;
+                self.pending.drain(..2);
+                true
+            }
+            b'[' => {
+                let Some(end) = self.pending[2..]
+                    .iter()
+                    .position(|byte| (0x40..=0x7e).contains(byte))
+                else {
+                    return false;
+                };
+                let final_at = end + 2;
+                let final_byte = self.pending[final_at];
+                let params: String = self.pending[2..final_at]
+                    .iter()
+                    .map(|byte| *byte as char)
+                    .collect();
+                self.pending.drain(..=final_at);
+                self.csi(final_byte, &params);
+                true
+            }
+            _ => {
+                self.pending.drain(..2);
+                true
+            }
+        }
+    }
+
+    fn csi(&mut self, final_byte: u8, params: &str) {
+        match final_byte {
+            b'H' | b'f' => {
+                let mut parts = params.split(';');
+                let row = parts
+                    .next()
+                    .unwrap_or("1")
+                    .trim_start_matches('?')
+                    .parse::<u16>()
+                    .unwrap_or(1)
+                    .saturating_sub(1);
+                let col = parts
+                    .next()
+                    .unwrap_or("1")
+                    .parse::<u16>()
+                    .unwrap_or(1)
+                    .saturating_sub(1);
+                self.row = row.min(self.height.saturating_sub(1));
+                self.col = col.min(self.width.saturating_sub(1));
+                self.pending_wrap = false;
+            }
+            b'J' if matches!(params, "" | "0") => {
+                if let Some(line) = self.grid.get_mut(self.row as usize) {
+                    for cell in line.iter_mut().skip(self.col as usize) {
+                        *cell = ' ';
+                    }
+                }
+                for line in self.grid.iter_mut().skip(self.row as usize + 1) {
+                    for cell in line.iter_mut() {
+                        *cell = ' ';
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn glyph(&mut self, byte: u8) {
+        match byte {
+            b'\n' => self.newline(),
+            b'\r' => {
+                self.col = 0;
+                self.pending_wrap = false;
+            }
+            byte if byte.is_ascii_graphic() || byte == b' ' => {
+                if self.pending_wrap {
+                    self.newline();
+                }
+                let row = self.row as usize;
+                let col = self.col as usize;
+                if let Some(line) = self.grid.get_mut(row) {
+                    if let Some(cell) = line.get_mut(col) {
+                        *cell = byte as char;
+                    }
+                }
+                if self.col + 1 >= self.width {
+                    self.pending_wrap = true;
+                } else {
+                    self.col += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn newline(&mut self) {
+        self.col = 0;
+        self.pending_wrap = false;
+        if self.row + 1 >= self.height {
+            self.grid.remove(0);
+            self.grid.push(vec![' '; self.width as usize]);
+        } else {
+            self.row += 1;
+        }
+    }
+}
+
 /// The writer used by crossterm operations.
 ///
 /// In production this is a buffered stderr handle. During tests it can be
@@ -81,6 +257,10 @@ pub enum W {
     /// output-level invariant).
     #[cfg(test)]
     Capture(Vec<u8>),
+    /// A tiny scrolling screen that also answers cursor queries, so a test can
+    /// run `open_editor` and submit without a real tty.
+    #[cfg(test)]
+    Virtual(VirtualTerm),
 }
 
 impl W {
@@ -120,6 +300,12 @@ impl W {
             _ => panic!("captured() called on a non-capturing writer"),
         }
     }
+
+    /// Scrolling screen of `width` by `height`, cursor starting at the origin.
+    #[cfg(test)]
+    pub(crate) fn virtual_screen(width: u16, height: u16) -> Self {
+        W::Virtual(VirtualTerm::new(width, height))
+    }
 }
 
 impl Write for W {
@@ -130,6 +316,11 @@ impl Write for W {
             W::Sink(w, _) => w.write(buf),
             #[cfg(test)]
             W::Capture(w) => w.write(buf),
+            #[cfg(test)]
+            W::Virtual(term) => {
+                term.push(buf);
+                Ok(buf.len())
+            }
         }
     }
 
@@ -140,6 +331,8 @@ impl Write for W {
             W::Sink(w, _) => w.flush(),
             #[cfg(test)]
             W::Capture(w) => w.flush(),
+            #[cfg(test)]
+            W::Virtual(_) => Ok(()),
         }
     }
 }
@@ -160,6 +353,8 @@ impl W {
             }
             #[cfg(test)]
             W::Capture(_) => Err(std::io::Error::other("no terminal attached")),
+            #[cfg(test)]
+            W::Virtual(term) => Ok(term.cursor()),
         }
     }
 }
@@ -251,16 +446,6 @@ fn select_prompt_row(
         if painter_state.can_reuse_prompt_at((column, row)) {
             let start_row = *painter_state.previous_prompt_rows_range.start();
             return PromptRowSelector::UseExistingPrompt { start_row };
-        }
-
-        // Still on a row we painted, but we cannot re-use the old anchor (e.g. a
-        // bottom-flush prompt whose cursor came back on a different column after
-        // `$EDITOR`). The cells past column 0 are our own prompt/buffer, not
-        // foreign output: advancing with `column > 0` would start one row below
-        // and leave the previous line on screen (nushell/nushell#13240,
-        // nushell/reedline#824). Replace in place on this row instead.
-        if painter_state.previous_prompt_rows_range.contains(&row) {
-            return PromptRowSelector::MakeNewPrompt { new_row: row };
         }
     }
 
@@ -618,7 +803,7 @@ impl Painter {
 
     /// [`Painter::initialize_prompt_position`] with the size passed in, since
     /// `terminal::size()` needs a tty and so cannot run under test.
-    fn initialize_prompt_position_with_size(
+    pub(crate) fn initialize_prompt_position_with_size(
         &mut self,
         reported_size: (u16, u16),
         suspended_state: Option<&PainterSuspendedState>,
@@ -1535,6 +1720,21 @@ impl Painter {
     pub(crate) fn prompt_anchor_is_verified_for_test(&self) -> bool {
         matches!(self.prompt_start_row, PromptStartRow::Verified(_))
     }
+
+    /// `Painter::new` copies `TERM`. Tests that need cursor queries override it.
+    #[cfg(test)]
+    pub(crate) fn set_term_dumb_for_test(&mut self, dumb: bool) {
+        self.term_is_dumb = dumb;
+    }
+
+    /// Screen text and cursor of a [`W::virtual_screen`], if that is the writer.
+    #[cfg(test)]
+    pub(crate) fn virtual_screen_for_test(&self) -> Option<(String, (u16, u16))> {
+        match &self.stdout {
+            W::Virtual(term) => Some((term.screen(), term.cursor())),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1783,24 +1983,11 @@ mod tests {
             select_prompt_row(Some(&state), (0, 7)),
             PromptRowSelector::MakeNewPrompt { new_row: 7 }
         );
-    }
-
-    // Regression test for nushell/nushell#13240 / nushell/reedline#824.
-    //
-    // Windows Ctrl-O / buffer-editor return often lands back on a prompt row
-    // with a non-zero column that is not the suspended cell (so the bottom-flush
-    // reuse check fails). Advancing for `column > 0` would paint one row down and
-    // leave a duplicate of the line; stay on the cursor's row instead.
-    #[test]
-    fn test_select_prompt_row_keeps_row_when_column_moved_inside_prompt_range() {
-        let state = PainterSuspendedState {
-            previous_prompt_rows_range: 5..=7,
-            was_flush_at_bottom: true,
-            cursor: Some((10, 7)),
-        };
+        // Mid-line on that same bottom row is still the scrolled program's
+        // output. Advancing keeps it; painting on `row` would cover it.
         assert_eq!(
             select_prompt_row(Some(&state), (4, 7)),
-            PromptRowSelector::MakeNewPrompt { new_row: 7 }
+            PromptRowSelector::MakeNewPrompt { new_row: 8 }
         );
     }
 

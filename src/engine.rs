@@ -6820,4 +6820,97 @@ mod tests {
         drive(&mut rl, &[ch('l')]); // crosses down to 'c' (start of line 2)
         assert_eq!(rl.editor.insertion_point(), 3);
     }
+
+    /// nushell/nushell#13240. A cleared screen leaves the prompt above the
+    /// bottom row, so returning from the editor reuses it. The duplicate is
+    /// what Enter does after that multi-line buffer has filled the screen.
+    #[test]
+    fn open_editor_then_submit_shows_a_multiline_buffer_once() {
+        use std::borrow::Cow;
+
+        struct BarePrompt;
+        impl Prompt for BarePrompt {
+            fn render_prompt_left(&self) -> Cow<'_, str> {
+                Cow::Borrowed("")
+            }
+            fn render_prompt_right(&self) -> Cow<'_, str> {
+                Cow::Borrowed("")
+            }
+            fn render_prompt_indicator(&self, _: PromptEditMode) -> Cow<'_, str> {
+                Cow::Borrowed("> ")
+            }
+            fn render_prompt_multiline_indicator(&self) -> Cow<'_, str> {
+                Cow::Borrowed(": ")
+            }
+            fn render_prompt_history_search_indicator(
+                &self,
+                _: PromptHistorySearch,
+            ) -> Cow<'_, str> {
+                Cow::Borrowed("")
+            }
+        }
+
+        let dir = std::env::temp_dir();
+        let stamp = std::process::id();
+        let src = dir.join(format!("reedline-13240-src-{stamp}.txt"));
+        let dest = dir.join(format!("reedline-13240-dest-{stamp}.txt"));
+        let body = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight";
+        std::fs::write(&src, body).unwrap();
+
+        let command = if cfg!(windows) {
+            let mut command = Command::new("cmd");
+            command.args(["/C", "copy", "/Y"]);
+            command.arg(&src);
+            command.arg(&dest);
+            command
+        } else {
+            let mut command = Command::new("cp");
+            command.arg(&src);
+            command.arg(&dest);
+            command
+        };
+
+        let mut rl = Reedline::create().with_buffer_editor(command, dest);
+        rl.use_ansi_coloring = false;
+        // Tall enough that the buffer fits, short enough that a prompt at
+        // row 2 is not flush with the bottom. That is the cleared-screen repro.
+        rl.painter = Painter::new(W::virtual_screen(40, 24));
+        rl.painter.handle_resize(40, 24);
+        rl.painter.set_term_dumb_for_test(false);
+        rl.painter.force_prompt_anchored_for_test(2);
+
+        let prompt = BarePrompt;
+        rl.repaint(&prompt).unwrap();
+        rl.open_editor().unwrap();
+        rl.repaint(&prompt).unwrap();
+        rl.submit_buffer(&prompt).unwrap();
+        rl.painter.move_cursor_to_end().unwrap();
+
+        let (screen, cursor) = rl
+            .painter
+            .virtual_screen_for_test()
+            .expect("virtual screen");
+        for line in [
+            "one", "two", "three", "four", "five", "six", "seven", "eight",
+        ] {
+            assert_eq!(
+                screen.matches(line).count(),
+                1,
+                "cursor {cursor:?}\n{screen}"
+            );
+        }
+        let last = screen
+            .lines()
+            .enumerate()
+            .find(|(_, line)| line.contains("eight"))
+            .map(|(index, _)| index)
+            .expect("eight");
+        assert!(
+            cursor.1 as usize > last,
+            "cursor {cursor:?} still on the last buffer row {last}\n{screen}"
+        );
+
+        let _ = std::fs::remove_file(&src);
+        let _ = std::fs::remove_file(dir.join(format!("reedline-13240-dest-{stamp}.txt")));
+    }
 }
