@@ -3187,6 +3187,8 @@ impl Reedline {
 /// the longest prefix of `closers` that `text` contains in order.
 fn closers_stepped_over(text: &str, closers: &str) -> usize {
     let mut text = text.chars();
+    // Find the first closer the rest of `text` does not contain. `any`
+    // consumes `text`, so each closer must come after the one before it.
     closers
         .char_indices()
         .find(|&(_, closer)| !text.any(|c| c == closer))
