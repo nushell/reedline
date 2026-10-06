@@ -7762,6 +7762,26 @@ mod tests {
         assert_eq!(rl.editor.get_buffer(), "abcdef");
     }
 
+    /// Regression test for nushell/reedline#1185: `l` accepts the hint like
+    /// Right does, and only where a hint applies; mid-line it still moves.
+    #[test]
+    fn helix_normal_l_accepts_hint_only_at_buffer_end() {
+        let mut rl = helix_with_hint("def");
+        type_each(&mut rl, &[ch('a'), ch('b'), ch('c'), key(KeyCode::Esc)]);
+        type_each(&mut rl, &[ch('l')]);
+        assert_eq!(rl.editor.get_buffer(), "abcdef");
+
+        let mut rl = helix_with_hint("def");
+        type_each(
+            &mut rl,
+            &[ch('a'), ch('b'), ch('c'), key(KeyCode::Esc), ch('h')],
+        );
+        let before = rl.editor.insertion_point();
+        type_each(&mut rl, &[ch('l')]);
+        assert_eq!(rl.editor.get_buffer(), "abc");
+        assert_eq!(rl.editor.insertion_point(), before + 1);
+    }
+
     /// A `v`-started helix selection is still protected, like vi visual.
     #[test]
     fn helix_select_selection_blocks_hint_completion() {

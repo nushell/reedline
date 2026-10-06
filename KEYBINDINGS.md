@@ -337,6 +337,9 @@ hint inserts text.
 `h`, `l` and the `g` motions collapse the selection onto the new position;
 `w`, `b`, `e`, `f` and `t` select what they traverse. `j` and `k` walk history
 at the buffer edge, since a prompt has nowhere above its first line to go.
+In normal mode `h` and `l` carry the same fallback chain as the arrow keys: an
+open menu takes the key first, and `l` accepts a history hint before that. In
+select mode both only extend.
 
 #### Selection
 
