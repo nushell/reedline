@@ -84,10 +84,13 @@ enum Verb {
     /// `x`. Selection-shaped rather than motion-shaped: it moves both edges,
     /// which no [`MotionTarget`] can express.
     SelectLine,
-    /// `j`/`k`. The only verb that does not lower to a [`MotionTarget`]: which
-    /// of line movement and history traversal applies is decided by the engine
-    /// against the *whole* buffer, above where a motion resolves.
+    /// `j`/`k`. Does not lower to a [`MotionTarget`]: which of line movement
+    /// and history traversal applies is decided by the engine against the
+    /// *whole* buffer, above where a motion resolves.
     LineOrHistory(Direction),
+    /// `h`/`l`. A grapheme step that, like `j`/`k`, lets an open menu take the
+    /// key first in normal mode, and for `l` a history hint before that.
+    GraphemeOrMenu(Direction),
     /// `m`. Apply action onto surrounding characters
     Match(Match),
 }
@@ -520,16 +523,8 @@ fn interpret(mode: HelixMode, count: Option<usize>, key: KeyEvent) -> Outcome {
                 Verb::SelectingMotion(word(WordKind::LongWord, WordEdge::End, Direction::Forward)),
                 None,
             ),
-            'l' => exec(
-                count,
-                Verb::CollapsingMotion(MotionTarget::Grapheme(Direction::Forward)),
-                None,
-            ),
-            'h' => exec(
-                count,
-                Verb::CollapsingMotion(MotionTarget::Grapheme(Direction::Backward)),
-                None,
-            ),
+            'l' => exec(count, Verb::GraphemeOrMenu(Direction::Forward), None),
+            'h' => exec(count, Verb::GraphemeOrMenu(Direction::Backward), None),
             'j' => exec(count, Verb::LineOrHistory(Direction::Forward), None),
             'k' => exec(count, Verb::LineOrHistory(Direction::Backward), None),
             'x' => exec(count, Verb::SelectLine, None),
@@ -716,6 +711,26 @@ fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
             };
             ReedlineEvent::Multiple(vec![event; action.count])
         }
+        // As `j`/`k`, and as vi's `h`/`l` and the arrow keys: an open menu takes
+        // the key first, and `l` takes a history hint before that (#1185). Select
+        // mode only extends, since accepting a hint inserts text.
+        Verb::GraphemeOrMenu(direction) => {
+            let target = MotionTarget::Grapheme(direction);
+            if mode == HelixMode::Select {
+                action.repeated(EditCommand::Extend(target))
+            } else {
+                let motion = ReedlineEvent::Edit(vec![EditCommand::Move(target)]);
+                let step = ReedlineEvent::UntilFound(match direction {
+                    Direction::Forward => vec![
+                        ReedlineEvent::HistoryHintComplete,
+                        ReedlineEvent::MenuRight,
+                        motion,
+                    ],
+                    Direction::Backward => vec![ReedlineEvent::MenuLeft, motion],
+                });
+                ReedlineEvent::Multiple(vec![step; action.count])
+            }
+        }
         // Collapse forward first, as `a` does. The resting selection outlives the
         // `next_mode` flip to insert, so `InsertNewline` on incomplete input
         // opens with `delete_selection` and eats the covered grapheme, and
@@ -884,14 +899,38 @@ mod test {
         );
     }
 
+    /// What normal-mode `l` emits per count step: take a history hint, else
+    /// step an open menu, else move.
+    fn l_step() -> ReedlineEvent {
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::HistoryHintComplete,
+            ReedlineEvent::MenuRight,
+            ReedlineEvent::Edit(vec![EditCommand::Move(MotionTarget::Grapheme(
+                Direction::Forward,
+            ))]),
+        ])
+    }
+
+    /// What normal-mode `h` emits per count step: step an open menu, else move.
+    fn h_step() -> ReedlineEvent {
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::MenuLeft,
+            ReedlineEvent::Edit(vec![EditCommand::Move(MotionTarget::Grapheme(
+                Direction::Backward,
+            ))]),
+        ])
+    }
+
     #[test]
-    fn h_and_l_collapse_in_normal_extend_in_select() {
+    fn h_and_l_fall_back_in_normal_extend_in_select() {
         let mut helix = normal();
         assert_eq!(
+            helix.parse_event(chr('h')),
+            ReedlineEvent::Multiple(vec![h_step()])
+        );
+        assert_eq!(
             helix.parse_event(chr('l')),
-            ReedlineEvent::Edit(vec![EditCommand::Move(MotionTarget::Grapheme(
-                Direction::Forward
-            ))])
+            ReedlineEvent::Multiple(vec![l_step()])
         );
         let _ = helix.parse_event(chr('v'));
         assert_eq!(
@@ -899,6 +938,22 @@ mod test {
             ReedlineEvent::Edit(vec![EditCommand::Extend(MotionTarget::Grapheme(
                 Direction::Backward
             ))])
+        );
+        assert_eq!(
+            helix.parse_event(chr('l')),
+            ReedlineEvent::Edit(vec![EditCommand::Extend(MotionTarget::Grapheme(
+                Direction::Forward
+            ))])
+        );
+    }
+
+    #[test]
+    fn counted_l_repeats_the_fallback_chain() {
+        let mut helix = normal();
+        let _ = helix.parse_event(chr('2'));
+        assert_eq!(
+            helix.parse_event(chr('l')),
+            ReedlineEvent::Multiple(vec![l_step(), l_step()])
         );
     }
 
@@ -1236,9 +1291,7 @@ mod test {
         // `h` is a grapheme step again, not a goto target
         assert_eq!(
             helix.parse_event(chr('h')),
-            ReedlineEvent::Edit(vec![EditCommand::Move(MotionTarget::Grapheme(
-                Direction::Backward
-            ))])
+            ReedlineEvent::Multiple(vec![h_step()])
         );
     }
 
