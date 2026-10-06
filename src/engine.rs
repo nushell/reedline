@@ -677,7 +677,10 @@ impl Reedline {
     ///
     /// Auto-pairing applies to edits in the regular line buffer. Reverse-history
     /// search edits a separate search query and are not passed through the
-    /// auto-pairing machinery.
+    /// auto-pairing machinery. Neither is typing while a menu in
+    /// [`InputMode::Diff`](crate::InputMode::Diff) is open, such as a
+    /// [`ListMenu`](crate::ListMenu) used for history, since that text is the
+    /// menu's query.
     #[must_use]
     pub fn with_auto_pairs(mut self, auto_pairs: AutoPairs) -> Self {
         self.auto_pairs = Some(auto_pairs);
@@ -1734,14 +1737,8 @@ impl Reedline {
                     None => Ok(EventStatus::Inapplicable),
                 }
             }
-            ReedlineEvent::HistoryHintComplete => {
-                let hint = self.hinter.as_mut().map(|h| h.complete_hint());
-                Ok(self.accept_history_hint(hint))
-            }
-            ReedlineEvent::HistoryHintWordComplete => {
-                let hint = self.hinter.as_mut().map(|h| h.next_hint_token());
-                Ok(self.accept_history_hint(hint))
-            }
+            ReedlineEvent::HistoryHintComplete => Ok(self.accept_history_hint(true)),
+            ReedlineEvent::HistoryHintWordComplete => Ok(self.accept_history_hint(false)),
             ReedlineEvent::Esc => {
                 self.deactivate_menus();
                 self.editor.clear_selection();
@@ -2318,6 +2315,16 @@ impl Reedline {
     fn auto_pair_command(&self, command: &EditCommand) -> Option<EditCommand> {
         let auto_pairs = self.auto_pairs.as_ref()?;
 
+        // A menu in `Diff` mode reads what is typed after it opened as its
+        // query, not as code, so a pair would end up in the search.
+        let query_menu_open = self.menus.iter().any(|menu| {
+            menu.is_active()
+                && menu.settings().effective_input_mode() == crate::menu::InputMode::Diff
+        });
+        if query_menu_open {
+            return None;
+        }
+
         // Resolve which auto-pair action (if any) `command` would trigger, along
         // with the pair it acts on and the `EditCommand` that would replace it.
         // The search order matters: for `InsertChar`, closers are checked before
@@ -2441,26 +2448,63 @@ impl Reedline {
         !self.hide_hints && matches!(self.input_mode, InputMode::Regular)
     }
 
-    /// Accept a trailing history hint (full hint or next word) by appending it at
-    /// the buffer end. `Handled` only when a non-empty hint applies: hints active,
-    /// cursor at the buffer end, no menu open. Appending positions past the last
-    /// grapheme first — a block caret (vi normal) rests *on* it, so a plain insert
-    /// would split it.
-    fn accept_history_hint(&mut self, hint: Option<String>) -> EventStatus {
-        let Some(hint) = hint else {
+    /// Accept the history hint, all of it when `whole`, else its next word.
+    /// `Handled` only when a non-empty hint applies: hints active, no menu
+    /// open, and the cursor either at the buffer end or followed only by
+    /// auto-pair closers the hint accounts for.
+    ///
+    /// At the buffer end the text is appended, positioned past the last
+    /// grapheme first: a block caret (vi normal) rests *on* it, so a plain
+    /// insert would split it. Before trailing closers it goes in the way
+    /// typing it would with auto-pairs on: each closer it contains steps over
+    /// the matching one, and the closers it does not reach stay after the
+    /// cursor.
+    fn accept_history_hint(&mut self, whole: bool) -> EventStatus {
+        let Some(hinter) = self.hinter.as_ref() else {
             return EventStatus::Inapplicable;
         };
-        if self.hints_active()
-            && self.editor.is_cursor_at_buffer_end()
-            && !hint.is_empty()
-            && self.active_menu().is_none()
-        {
+        let full = hinter.complete_hint();
+        let accepted = if whole {
+            full.clone()
+        } else {
+            hinter.next_hint_token()
+        };
+        if !self.hints_active() || accepted.is_empty() || self.active_menu().is_some() {
+            return EventStatus::Inapplicable;
+        }
+
+        // Checked before the buffer end: a block caret resting on the last
+        // closer counts as at the end, but the text belongs before it.
+        if let Some(closers) = self.trailing_auto_pair_closers().map(str::to_owned) {
+            // A selection would be replaced by the edit, as at the buffer end.
+            if self.editor.cursor_is_a_selection()
+                || closers_stepped_over(&full, &closers) != closers.len()
+            {
+                return EventStatus::Inapplicable;
+            }
+            let left_over = &closers[closers_stepped_over(&accepted, &closers)..];
+            self.editor.sync_edit_mode(self.edit_mode.edit_mode());
+            self.editor.replace_to_line_end(&accepted, left_over);
+            return EventStatus::Handled;
+        }
+
+        if self.editor.is_cursor_at_buffer_end() {
             self.editor.prepare_append_at_buffer_end();
-            self.run_edit_commands(&[EditCommand::InsertString(hint)]);
+            self.run_edit_commands(&[EditCommand::InsertString(accepted)]);
             EventStatus::Handled
         } else {
             EventStatus::Inapplicable
         }
+    }
+
+    /// The text after the cursor when it is nothing but closers of the
+    /// configured auto-pairs, like the `)` in `(gs|)`. A history hint for the
+    /// text before the cursor can stand in for them.
+    fn trailing_auto_pair_closers(&self) -> Option<&str> {
+        let auto_pairs = self.auto_pairs.as_ref()?;
+        let after = &self.editor.get_buffer()[self.editor.insertion_point()..];
+        let only_closers = after.chars().all(|c| auto_pairs.closing_pair(c).is_some());
+        (!after.is_empty() && only_closers).then_some(after)
     }
 
     /// Repaint of either the buffer or the parts for reverse history search
@@ -2840,10 +2884,22 @@ impl Reedline {
             self.painter.semantic_markers(),
         );
 
+        // With only auto-pair closers after the cursor, as in `(gs|)`, hint
+        // from the text before them and draw the hint in their place. A hint
+        // that does not close them would drop them on accept, so none shows.
+        let trailing_closers = self.trailing_auto_pair_closers().map(str::to_owned);
+        let hinted_line = match trailing_closers {
+            Some(_) => &buffer_to_paint[..cursor_position_in_buffer],
+            None => buffer_to_paint,
+        };
+
+        // Decided from the hint this paint looked up, never a stale one: the
+        // paint that submit makes with hints hidden must draw the closers.
+        let mut hint_replaces_closers = false;
         let hint: String = if self.hints_active() {
             self.hinter.as_mut().map_or_else(String::new, |hinter| {
-                hinter.handle(
-                    buffer_to_paint,
+                let hint = hinter.handle(
+                    hinted_line,
                     cursor_position_in_buffer,
                     self.history.as_ref(),
                     use_ansi_coloring,
@@ -2853,7 +2909,18 @@ impl Reedline {
                             .to_string_lossy()
                             .to_string()
                     }),
-                )
+                );
+                let Some(closers) = trailing_closers.as_deref() else {
+                    return hint;
+                };
+                let full = hinter.complete_hint();
+                hint_replaces_closers =
+                    !full.is_empty() && closers_stepped_over(&full, closers) == closers.len();
+                if hint_replaces_closers {
+                    hint
+                } else {
+                    String::new()
+                }
             })
         } else {
             String::new()
@@ -2862,14 +2929,28 @@ impl Reedline {
         // Needs to add return carriage to newlines because when not in raw mode
         // some OS don't fully return the carriage
 
-        let mut lines = PromptLines::new(
-            prompt,
-            self.prompt_edit_mode(),
-            None,
-            &before_cursor,
-            &after_cursor,
-            &hint,
-        );
+        let mut lines = if hint_replaces_closers {
+            // The exit path reprints what follows the cursor, which is still
+            // the closers, not the hint drawn over them.
+            PromptLines::new(
+                prompt,
+                self.prompt_edit_mode(),
+                None,
+                &before_cursor,
+                "",
+                &hint,
+            )
+            .with_exit_after_cursor(&after_cursor)
+        } else {
+            PromptLines::new(
+                prompt,
+                self.prompt_edit_mode(),
+                None,
+                &before_cursor,
+                &after_cursor,
+                &hint,
+            )
+        };
 
         // Updating the working details of the active menu
         for menu in self.menus.iter_mut() {
@@ -3100,6 +3181,18 @@ impl Reedline {
 
         Ok(EventStatus::Exits(Signal::Success(buffer)))
     }
+}
+
+/// How much of `closers` typing `text` before them would step over, in bytes:
+/// the longest prefix of `closers` that `text` contains in order.
+fn closers_stepped_over(text: &str, closers: &str) -> usize {
+    let mut text = text.chars();
+    // Find the first closer the rest of `text` does not contain. `any`
+    // consumes `text`, so each closer must come after the one before it.
+    closers
+        .char_indices()
+        .find(|&(_, closer)| !text.any(|c| c == closer))
+        .map_or(closers.len(), |(index, _)| index)
 }
 
 #[cfg(test)]
@@ -3903,6 +3996,73 @@ mod tests {
             rl.history_cursor.get_navigation(),
             HistoryNavigationQuery::SubstringSearch("(".into())
         );
+    }
+
+    /// An auto-pairing engine with a history menu open in `mode`, over the
+    /// buffer `setup` leaves behind.
+    fn auto_pair_engine_with_open_menu(mode: crate::InputMode, setup: &[EditCommand]) -> Reedline {
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_auto_pairs(AutoPairs::new([('(', ')')]))
+            .with_menu(ReedlineMenu::HistoryMenu(Box::new(
+                ListMenu::default()
+                    .with_name("history_menu")
+                    .with_input_mode(mode),
+            )));
+        rl.history
+            .save(HistoryItem::from_command_line("(gstat).branch"))
+            .expect("history ok");
+        rl.run_edit_commands(setup);
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::Menu("history_menu".into()),
+        )
+        .expect("menu opens");
+        assert!(menu_is_active(&rl), "setup: menu is open");
+        rl
+    }
+
+    // A menu in `Diff` mode searches with what is typed after it opened, so a
+    // pair would put the closer in the query (nushell's Ctrl-R history menu).
+    // The other modes complete against the real buffer, where a pair is code.
+    #[rstest]
+    #[case::diff(crate::InputMode::Diff, "(")]
+    #[case::cursor_prefix(crate::InputMode::CursorPrefix, "()")]
+    #[case::full_buffer(crate::InputMode::FullBuffer, "()")]
+    fn auto_pairs_stay_out_of_a_query_menu(#[case] mode: crate::InputMode, #[case] expected: &str) {
+        let mut rl = auto_pair_engine_with_open_menu(mode, &[]);
+
+        drive(&mut rl, &[ch('(')]);
+
+        assert_eq!(rl.editor.get_buffer(), expected);
+    }
+
+    // Skipping a closer is an auto-pair action too: in the query a typed `)`
+    // is text, not a step over the `)` that was there before the menu opened.
+    #[test]
+    fn auto_pairs_do_not_skip_a_closer_in_a_query_menu() {
+        let mut rl = auto_pair_engine_with_open_menu(
+            crate::InputMode::Diff,
+            &[
+                EditCommand::InsertString("()".into()),
+                EditCommand::MoveLeft { select: false },
+            ],
+        );
+
+        drive(&mut rl, &[ch(')')]);
+
+        assert_eq!(rl.editor.get_buffer(), "())");
+    }
+
+    #[test]
+    fn auto_pairs_resume_after_the_query_menu_closes() {
+        let mut rl = auto_pair_engine_with_open_menu(crate::InputMode::Diff, &[]);
+        drive(&mut rl, &[ch('(')]);
+
+        drive(&mut rl, &[key(KeyCode::Esc)]);
+        assert!(!menu_is_active(&rl), "Esc closes the menu");
+        drive(&mut rl, &[ch('(')]);
+
+        assert_eq!(rl.editor.get_buffer(), "(()");
     }
 
     // FLIP SAFETY NET (Group C) — visual operability at the engine seam.
@@ -7616,6 +7776,164 @@ mod tests {
         )
         .unwrap();
         assert_eq!(rl.editor.get_buffer(), "abc");
+    }
+
+    /// Offers `hint` whole and its first word the way `DefaultHinter` does,
+    /// and records the line it was last asked about.
+    struct RecordingHinter {
+        hint: &'static str,
+        asked: Arc<std::sync::Mutex<String>>,
+    }
+    impl Hinter for RecordingHinter {
+        fn handle(&mut self, line: &str, _: usize, _: &dyn History, _: bool, _: &str) -> String {
+            *self.asked.lock().unwrap() = line.to_string();
+            self.hint.to_string()
+        }
+        fn complete_hint(&self) -> String {
+            self.hint.to_string()
+        }
+        fn next_hint_token(&self) -> String {
+            crate::hinter::get_first_token(self.hint)
+        }
+    }
+
+    /// An emacs engine pairing `()` with `hint` on offer, after typing `(gs`,
+    /// which auto-pairs into `(gs|)`.
+    fn paired_line_with_hint(hint: &'static str) -> (Reedline, Arc<std::sync::Mutex<String>>) {
+        let asked = Arc::default();
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_auto_pairs(AutoPairs::new([('(', ')')]))
+            .with_hinter(Box::new(RecordingHinter {
+                hint,
+                asked: Arc::clone(&asked),
+            }));
+        drive(&mut rl, &[ch('('), ch('g'), ch('s')]);
+        assert_eq!(
+            (rl.editor.get_buffer(), rl.editor.insertion_point()),
+            ("(gs)", 3),
+            "setup"
+        );
+        (rl, asked)
+    }
+
+    // With only auto-pair closers after the cursor, the hint is looked up for
+    // the text before them: history holds `(gstat).branch`, not `(gs)...`.
+    #[test]
+    fn history_hint_looks_up_the_text_before_trailing_closers() {
+        let (_, asked) = paired_line_with_hint("tat).branch");
+        assert_eq!(*asked.lock().unwrap(), "(gs");
+    }
+
+    // Accepting before trailing closers goes in the way typing it would with
+    // auto-pairs on: a closer in the accepted text steps over the one at the
+    // cursor, the rest stay put. A hint that leaves a pair open is refused,
+    // since taking it would drop the closer.
+    #[rstest]
+    #[case::whole_hint(true, "tat).branch", "(gstat).branch", 14)]
+    #[case::word_before_the_closer(false, "tat).branch", "(gstat)", 6)]
+    #[case::word_is_the_closer(false, ") | lines", "(gs)", 4)]
+    #[case::hint_leaves_the_pair_open(true, "tat", "(gs)", 3)]
+    fn history_hint_accepts_before_trailing_closers(
+        #[case] whole: bool,
+        #[case] hint: &'static str,
+        #[case] buffer: &str,
+        #[case] cursor: usize,
+    ) {
+        let (mut rl, _) = paired_line_with_hint(hint);
+        let event = if whole {
+            ReedlineEvent::HistoryHintComplete
+        } else {
+            ReedlineEvent::HistoryHintWordComplete
+        };
+
+        rl.handle_event(&DefaultPrompt::default(), event).unwrap();
+
+        assert_eq!(
+            (rl.editor.get_buffer(), rl.editor.insertion_point()),
+            (buffer, cursor)
+        );
+    }
+
+    // The exit path reprints what follows the cursor. While the hint is drawn
+    // over the closers that is still the closers, and the paint submit makes
+    // with hints hidden must not act on the hint the hinter still holds.
+    #[test]
+    fn trailing_closers_survive_the_exit_reprint() {
+        // The text carries the highlighter's styling, so look for the closer.
+        let keeps_the_closer = |rl: &Reedline| {
+            rl.painter
+                .exit_after_cursor_for_test()
+                .is_some_and(|text| text.contains(')'))
+        };
+        let (mut rl, _) = paired_line_with_hint("tat).branch");
+        assert!(keeps_the_closer(&rl), "hint showing");
+
+        rl.hide_hints = true;
+        rl.repaint(&DefaultPrompt::default()).unwrap();
+        assert!(keeps_the_closer(&rl), "hints hidden");
+    }
+
+    #[test]
+    fn one_undo_takes_back_a_hint_accepted_before_closers() {
+        let (mut rl, _) = paired_line_with_hint("tat).branch");
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::HistoryHintComplete,
+        )
+        .unwrap();
+
+        rl.run_edit_commands(&[EditCommand::Undo]);
+
+        assert_eq!(
+            (rl.editor.get_buffer(), rl.editor.insertion_point()),
+            ("(gs)", 3)
+        );
+    }
+
+    // Vi normal rests a block caret on the closer itself; the word goes in
+    // before it all the same.
+    #[test]
+    fn vi_normal_accepts_a_hint_word_before_trailing_closers() {
+        let mut rl = seam_engine(Box::<crate::Vi>::default())
+            .with_auto_pairs(AutoPairs::new([('(', ')')]))
+            .with_hinter(Box::new(RecordingHinter {
+                hint: "tat).branch",
+                asked: Arc::default(),
+            }));
+        type_each(
+            &mut rl,
+            &[ch('('), ch('g'), ch('s'), key(KeyCode::Esc), ch('l')],
+        );
+        assert_eq!(
+            (rl.editor.get_buffer(), rl.editor.insertion_point()),
+            ("(gs)", 3),
+            "setup: caret on the closer"
+        );
+
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::HistoryHintWordComplete,
+        )
+        .unwrap();
+
+        assert_eq!(rl.editor.get_buffer(), "(gstat)");
+    }
+
+    #[test]
+    fn selection_blocks_hint_completion_before_trailing_closers() {
+        let (mut rl, _) = paired_line_with_hint("tat).branch");
+        rl.run_edit_commands(&[
+            EditCommand::MoveLeft { select: false },
+            EditCommand::MoveRight { select: true },
+        ]);
+
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::HistoryHintComplete,
+        )
+        .unwrap();
+
+        assert_eq!(rl.editor.get_buffer(), "(gs)");
     }
 
     /// A retained motion selection in helix *normal* (here `b` sweeping back

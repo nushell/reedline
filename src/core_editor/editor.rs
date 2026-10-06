@@ -860,24 +860,30 @@ impl Editor {
         self.line_buffer.is_cursor_at_last_line()
     }
 
-    pub(crate) fn is_cursor_at_buffer_end(&self) -> bool {
-        let buf = self.get_buffer();
+    /// Whether the cursor holds a selection rather than resting as a caret.
+    ///
+    /// Under a bar caret the resting cursor is an empty point, so any
+    /// non-empty cursor is a selection and shape settles it. A block caret
+    /// rests as a min-width-1 range, so shape alone cannot tell a resting
+    /// caret from a `v`-started one-grapheme selection; only the mode can.
+    /// Asking the mode under a bar caret too would miss the shift-selections
+    /// emacs and vi insert can hold.
+    pub(crate) fn cursor_is_a_selection(&self) -> bool {
         let cursor = self.line_buffer.cursor();
-        // A selection is never a clean end-of-buffer point: accepting a hint
-        // here would run through `prepare_append_at_buffer_end` and silently
-        // drop it. Under a bar caret the resting cursor is an empty point, so
-        // any non-empty cursor is a selection and shape settles it. A block
-        // caret rests as a min-width-1 range, so shape alone cannot tell a
-        // resting caret from a `v`-started one-grapheme selection covering the
-        // last grapheme; only the mode can. Asking the mode under a bar caret
-        // too would miss the shift-selections emacs and vi insert can hold.
-        let selection = if self.caret_geometry() == CaretGeometry::Block {
-            next_grapheme_boundary(buf, cursor.start()) < cursor.end()
+        if self.caret_geometry() == CaretGeometry::Block {
+            next_grapheme_boundary(self.get_buffer(), cursor.start()) < cursor.end()
                 || (!cursor.is_empty() && self.edit_mode.is_selection_mode())
         } else {
             !cursor.is_empty()
-        };
-        if selection {
+        }
+    }
+
+    pub(crate) fn is_cursor_at_buffer_end(&self) -> bool {
+        let buf = self.get_buffer();
+        // A selection is never a clean end-of-buffer point: accepting a hint
+        // here would run through `prepare_append_at_buffer_end` and silently
+        // drop it.
+        if self.cursor_is_a_selection() {
             return false;
         }
         // Measure from the visible caret: `insertion_point` already resolves
@@ -1543,6 +1549,20 @@ impl Editor {
             self.line_buffer.insert_char(close);
             self.line_buffer.set_cursor(Cursor::point(inner));
         }
+    }
+
+    /// Replace the text from the caret to the end of its line with
+    /// `before_caret` followed by `after_caret`, leaving the caret between
+    /// them, as one undo step.
+    pub(crate) fn replace_to_line_end(&mut self, before_caret: &str, after_caret: &str) {
+        let start = self.insertion_point();
+        let end = self.line_buffer.find_current_line_end();
+        self.line_buffer
+            .replace_range(start..end, &format!("{before_caret}{after_caret}"));
+        self.line_buffer
+            .set_cursor(Cursor::point(start + before_caret.len()));
+        self.commit_cursor();
+        self.update_undo_state(UndoBehavior::CreateUndoPoint);
     }
 
     pub(crate) fn is_auto_pair_closer_at_cursor(&self, close: char) -> bool {
