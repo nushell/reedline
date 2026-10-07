@@ -52,7 +52,7 @@ use {
         terminal, QueueableCommand,
     },
     std::{
-        fs::File,
+        fs::{self, OpenOptions},
         io,
         io::Result,
         io::Write,
@@ -409,6 +409,51 @@ impl BufferEditor {
         rendered.args(args);
 
         rendered
+    }
+}
+
+/// The buffer editor's temp file for the length of one edit, removed on drop.
+struct EditorFile(PathBuf);
+
+impl EditorFile {
+    /// writes `contents` to a fresh file at `path`,
+    /// in preparation for spawning the buffer editor
+    ///
+    /// The file is readable by the user alone and removed when this drops,
+    /// on error paths too.
+    fn create(path: &Path, contents: &str) -> Result<EditorFile> {
+        // A file left behind, or planted at the path, is removed rather than
+        // written through: `create_new` refuses any existing path, a symlink
+        // included, so racing the removal only makes the open fail.
+        match fs::remove_file(path) {
+            Err(err) if err.kind() != io::ErrorKind::NotFound => return Err(err),
+            _ => {}
+        }
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        let mut file = options.open(path)?;
+
+        // Guard first, so a failed write still removes the file.
+        let editor_file = EditorFile(path.to_path_buf());
+        write!(file, "{contents}")?;
+        Ok(editor_file)
+    }
+
+    /// reads the buffer from the temp file,
+    /// expected to be called after the buffer editor exits
+    fn read(&self) -> Result<String> {
+        let mut res = fs::read_to_string(&self.0)?;
+        let content_len = res.trim_end().len();
+        res.truncate(content_len);
+        Ok(res)
+    }
+}
+
+impl Drop for EditorFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
     }
 }
 
@@ -993,7 +1038,10 @@ impl Reedline {
 
     /// A builder that configures the alternate text editor used to edit the line buffer
     ///
-    /// You are responsible for providing a file path that is unique to this reedline session
+    /// You are responsible for providing a file path that is unique to this reedline session.
+    /// The path is reedline's scratch file: it is created fresh for each edit (mode 0600 on
+    /// unix), replacing a file or link already there, and removed afterwards. The command has
+    /// to block until editing is done, since the file is read back as soon as it exits.
     ///
     /// # Example
     /// ```rust,no_run
@@ -1001,9 +1049,12 @@ impl Reedline {
     ///
     /// use reedline::Reedline;
     /// use std::env::temp_dir;
+    /// use std::hash::{BuildHasher, RandomState};
     /// use std::process::Command;
     ///
-    /// let temp = std::env::temp_dir().join("my-random-unique.file");
+    /// // a name nobody can guess, so nobody can occupy it first
+    /// let unique = RandomState::new().hash_one(std::process::id());
+    /// let temp = temp_dir().join(format!("reedline-{unique:x}.txt"));
     /// let mut command = Command::new("vim");
     /// // you can provide additional flags:
     /// command.arg("-p"); // open in a new vim tab
@@ -3288,9 +3339,7 @@ impl Reedline {
             return Ok(());
         };
 
-        let mut file = File::create(&buffer_editor.temp_file)?;
-        write!(file, "{}", self.editor.get_buffer())?;
-        drop(file);
+        let editor_file = EditorFile::create(&buffer_editor.temp_file, self.editor.get_buffer())?;
 
         // Capture the prompt's screen range so that an editor
         // that leaves the cursor untouched (e.g. an editor that
@@ -3330,9 +3379,7 @@ impl Reedline {
             .painter
             .initialize_prompt_position(Some(&suspended_state));
 
-        let mut res = std::fs::read_to_string(&buffer_editor.temp_file)?;
-        let content_len = res.trim_end().len();
-        res.truncate(content_len);
+        let res = editor_file.read()?;
 
         self.editor.set_buffer(res, UndoBehavior::CreateUndoPoint);
 
@@ -10604,5 +10651,47 @@ mod tests {
         assert!(!paint[..prompt_at].contains("\x1b[J"), "{paint:?}");
         assert!(paint.contains(STATUS_TEXT), "{paint:?}");
         assert_eq!(paint.contains("foot2"), !footer.is_empty(), "{paint:?}");
+    }
+
+    #[test]
+    fn the_editor_file_lives_for_one_edit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("buffer.nu");
+
+        let file = EditorFile::create(&path, "ls | length\n\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600, "mode {mode:o}");
+        }
+        assert_eq!(file.read().unwrap(), "ls | length");
+
+        drop(file);
+        assert!(!path.exists(), "the buffer outlived the edit");
+    }
+
+    #[test]
+    fn a_stale_editor_file_is_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("buffer.nu");
+        fs::write(&path, "left over from a crash").unwrap();
+
+        let file = EditorFile::create(&path, "fresh").unwrap();
+        assert_eq!(file.read().unwrap(), "fresh");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_at_the_editor_path_is_not_written_through() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target");
+        fs::write(&target, "untouched").unwrap();
+        let path = dir.path().join("buffer.nu");
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+
+        let _file = EditorFile::create(&path, "buffer").unwrap();
+        assert!(!fs::symlink_metadata(&path).unwrap().is_symlink());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "untouched");
     }
 }
