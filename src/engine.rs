@@ -1163,6 +1163,16 @@ impl Reedline {
         poll
     }
 
+    /// Erases the prompt footer, then returns the state from
+    /// [`Painter::state_before_suspension`] for the host to hand back.
+    ///
+    /// A host command or external break runs on the rows below the prompt, so
+    /// the footer is taken off them first.
+    fn suspend_painter(&mut self) -> Result<PainterSuspendedState> {
+        self.painter.clear_footer()?;
+        Ok(self.painter.state_before_suspension())
+    }
+
     /// Helper implementing the logic for [`Reedline::read_line()`] to be wrapped
     /// in a `raw_mode` context.
     fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
@@ -1196,7 +1206,7 @@ impl Reedline {
                     let buffer = self.editor.get_buffer().to_string();
                     self.input_mode = InputMode::Regular;
                     self.last_render_snapshot = None;
-                    self.suspended_state = Some(self.painter.state_before_suspension());
+                    self.suspended_state = Some(self.suspend_painter()?);
                     self.editor.reset_undo_stack();
                     return Ok(Signal::ExternalBreak(buffer));
                 }
@@ -1531,7 +1541,7 @@ impl Reedline {
             }
             ReedlineEvent::ExecuteHostCommand(host_command) => {
                 self.last_render_snapshot = None;
-                self.suspended_state = Some(self.painter.state_before_suspension());
+                self.suspended_state = Some(self.suspend_painter()?);
                 Ok(EventStatus::Exits(Signal::HostCommand(host_command)))
             }
             ReedlineEvent::Edit(commands) => {
@@ -1834,7 +1844,7 @@ impl Reedline {
             }
             ReedlineEvent::ExecuteHostCommand(host_command) => {
                 self.last_render_snapshot = None;
-                self.suspended_state = Some(self.painter.state_before_suspension());
+                self.suspended_state = Some(self.suspend_painter()?);
                 Ok(EventStatus::Exits(Signal::HostCommand(host_command)))
             }
             ReedlineEvent::Edit(commands) => {
@@ -2759,7 +2769,10 @@ impl Reedline {
         // that leaves the cursor untouched (e.g. an editor that
         // uses the alternate screen only) re-uses the existing
         // prompt rows instead of starting a new prompt a row
-        // below the old one.
+        // below the old one. The footer is erased first, so an
+        // editor that draws on the main screen does not start
+        // below it.
+        self.painter.clear_footer()?;
         let suspended_state = self.painter.state_before_suspension();
         {
             let mut child = if buffer_editor.is_template {
