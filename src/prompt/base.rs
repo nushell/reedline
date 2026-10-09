@@ -300,6 +300,16 @@ pub trait Prompt: Send {
     fn right_prompt_on_last_line(&self) -> bool {
         false
     }
+
+    /// Lines painted below the input, separated by `\n`
+    ///
+    /// Lines wrap at the screen width like the rest of the prompt. The footer
+    /// is dropped on a dumb terminal, and whenever it does not fit below the
+    /// buffer and menu with a row to spare, including while the buffer fills
+    /// the screen.
+    fn render_prompt_footer(&self) -> Cow<'_, str> {
+        Cow::Borrowed("")
+    }
 }
 
 #[cfg(test)]
