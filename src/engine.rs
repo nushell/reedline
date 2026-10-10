@@ -449,8 +449,9 @@ fn invalidate_anchor_if_host_completer_runs(menu: &ReedlineMenu, painter: &mut P
     }
 }
 
-/// The char a key event contributes to a paste burst: a plain or shifted char
-/// press.
+/// The char a key event contributes to a paste burst: a char press under the
+/// modifiers that type text, AltGr's Ctrl-Alt included, since ConPTY reports
+/// a pasted `@` or `{` on such layouts that way.
 ///
 /// Release events are skipped. With the kitty keyboard enhancement every key
 /// also yields a Release, which reedline's own `try_from` drops, so counting
@@ -462,13 +463,30 @@ fn burst_char(event: &Event) -> Option<char> {
             modifiers,
             kind,
             ..
-        }) if *kind != KeyEventKind::Release
-            && (modifiers.is_empty() || *modifiers == KeyModifiers::SHIFT) =>
-        {
+        }) if *kind != KeyEventKind::Release && crate::edit_mode::is_text_char(*modifiers) => {
             Some(*c)
         }
         _ => None,
     }
+}
+
+/// A key press that stands for a newline in pasted text: a bare `Enter` (CR),
+/// or `Ctrl-J`, which is how a raw LF arrives in raw mode.
+fn is_pasted_newline(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Key(KeyEvent {
+            code: KeyCode::Enter,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            ..
+        }) | Event::Key(KeyEvent {
+            code: KeyCode::Char('j'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            ..
+        })
+    )
 }
 
 impl Reedline {
@@ -1594,15 +1612,11 @@ impl Reedline {
                     coalesced.push(c);
                     continue;
                 }
+                if is_pasted_newline(event) {
+                    coalesced.push('\n');
+                    continue;
+                }
                 match event {
-                    Event::Key(KeyEvent {
-                        code: KeyCode::Enter,
-                        modifiers: KeyModifiers::NONE,
-                        kind: KeyEventKind::Press,
-                        ..
-                    }) => {
-                        coalesced.push('\n');
-                    }
                     // A pasted tab is part of the text. Left to the catch-all
                     // below it would be dropped from the insert.
                     Event::Key(KeyEvent {
@@ -1629,25 +1643,16 @@ impl Reedline {
         } else {
             let mut edits = vec![];
             for event in events {
-                // Reclassify a bare `Enter` that the oracle judges paste-embedded
-                // into a newline even when a full burst was NOT detected (a short
-                // fast paste, e.g. `aa\nbb`, whose lines never reach the burst
-                // char threshold) — this prevents that Enter from submitting
-                // mid-paste. Only a `Press` Enter is reclassified (the kitty
-                // enhancement also emits a Release, which `..` would double-count);
-                // a Release Enter is rejected downstream by
-                // `ReedlineRawEvent::try_from` and inserts nothing.
-                if let Some(hook) = self.paste_burst.clone() {
-                    if matches!(
-                        event,
-                        Event::Key(KeyEvent {
-                            code: KeyCode::Enter,
-                            modifiers: KeyModifiers::NONE,
-                            kind: KeyEventKind::Press,
-                            ..
-                        })
-                    ) && hook.enter_is_newline()
-                    {
+                // Reclassify a newline key (bare `Enter`, or `Ctrl-J` for a raw
+                // LF) that the oracle judges paste-embedded into a newline even
+                // when a full burst was NOT detected (a short fast paste, e.g.
+                // `aa\nbb`, whose lines never reach the burst char threshold),
+                // so it does not submit mid-paste. Only a `Press` is
+                // reclassified (the kitty enhancement also emits a Release); a
+                // Release is rejected downstream by `ReedlineRawEvent::try_from`
+                // and inserts nothing.
+                if let Some(hook) = &self.paste_burst {
+                    if is_pasted_newline(&event) && hook.enter_is_newline() {
                         edits.push(EditCommand::InsertNewline);
                         continue;
                     }
@@ -4858,6 +4863,38 @@ mod tests {
             .expect("batch ok");
         assert!(matches!(result, ControlFlow::Continue(())));
         assert_eq!(rl.editor.get_buffer(), "a\tb");
+    }
+
+    // ConPTY reports an AltGr char as Ctrl-Alt, and a raw LF arrives as
+    // Ctrl-J. Both are pasted text, inside a burst and, for the newline, also
+    // outside one when the oracle calls it embedded.
+    #[rstest]
+    #[case::altgr_in_burst(true, KeyEvent::new(KeyCode::Char('@'), KeyModifiers::CONTROL | KeyModifiers::ALT), "a@b")]
+    #[case::lf_in_burst(true, KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL), "a\nb")]
+    #[case::lf_outside_burst(
+        false,
+        KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL),
+        "a\nb"
+    )]
+    fn paste_burst_keeps_the_pasted_key(
+        #[case] active: bool,
+        #[case] pasted: KeyEvent,
+        #[case] expected: &str,
+    ) {
+        let mut rl =
+            seam_engine(Box::<crate::Emacs>::default()).with_paste_burst(Arc::new(StubBurst {
+                enter_newline: true,
+                active,
+            }));
+        let prompt = DefaultPrompt::default();
+        let result = rl
+            .process_input_batch(
+                &prompt,
+                vec![Event::Key(ch('a')), Event::Key(pasted), Event::Key(ch('b'))],
+            )
+            .expect("batch ok");
+        assert!(matches!(result, ControlFlow::Continue(())));
+        assert_eq!(rl.editor.get_buffer(), expected);
     }
 
     #[test]
