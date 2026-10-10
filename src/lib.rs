@@ -327,7 +327,7 @@ pub use edit_mode::{
 mod highlighter;
 pub use highlighter::{AbbrExpandContext, ExampleHighlighter, Highlighter, SimpleMatchHighlighter};
 mod hint_policy;
-pub use hint_policy::{HintContext, HintEdit, HintPlan, HintPolicy, HintPreview, HintQuery};
+pub use hint_policy::{HintContext, HintEdit, HintPolicy, HintQuery};
 
 mod completion;
 pub use completion::{

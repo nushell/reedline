@@ -1,9 +1,9 @@
 //! Optional policy for deciding how history hints interact with the buffer.
 //!
-//! A policy may narrow the line passed to a [`crate::Hinter`] and describe
-//! preview and acceptance edits. Reedline validates every range before it is
-//! used. The policy owns language-specific decisions; the editor only applies
-//! the resulting edit.
+//! A policy may narrow the line passed to a [`crate::Hinter`] and return one
+//! edit that drives both the preview and whole acceptance. Reedline validates
+//! every range before it is used. The policy owns language-specific decisions;
+//! the editor only applies the resulting edit.
 
 use std::ops::Range;
 
@@ -96,6 +96,11 @@ impl HintQuery {
 }
 
 /// One concrete replacement in the current source buffer.
+///
+/// For a full hint, the replacement must equal the hinter's raw candidate.
+/// When the range starts at the cursor, that range controls both preview
+/// masking and whole acceptance. A logical-end append instead uses the empty
+/// range at `source.len()`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HintEdit {
     /// The byte range to replace in the current source.
@@ -117,50 +122,6 @@ impl HintEdit {
     }
 }
 
-/// The independent overlay used while painting a hint.
-///
-/// Conceptually, the preview text is the source prefix before the cursor,
-/// followed by the raw candidate, followed by the retained source suffix
-/// after `hidden_range`. That text must match the result of the complete
-/// acceptance edit, or Reedline rejects the plan. Painting uses the formatted
-/// output from `Hinter::handle` for the candidate portion.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HintPreview {
-    /// Existing source text hidden by the hint. In the initial API this range
-    /// must begin at the cursor; any text after its end remains visible after
-    /// the hint.
-    pub hidden_range: Range<usize>,
-}
-
-impl HintPreview {
-    /// Construct preview metadata. Reedline validates its ranges before paint.
-    pub fn new(hidden_range: Range<usize>) -> Self {
-        Self { hidden_range }
-    }
-}
-
-/// A full acceptance edit and its separate preview description.
-///
-/// A plan with `preview: None` is drawn as a conventional hint appended after
-/// the current buffer; Reedline accepts it only as an end-of-buffer append of
-/// the raw candidate. A policy should return `None` from `plan` when it cannot
-/// safely offer the candidate for display and acceptance. Reedline calls
-/// `HintPolicy::plan` only for non-empty raw candidates.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HintPlan {
-    /// The edit used by whole-hint acceptance.
-    pub edit: HintEdit,
-    /// The edit-free preview shown by painting.
-    pub preview: Option<HintPreview>,
-}
-
-impl HintPlan {
-    /// Construct a plan with an optional preview.
-    pub fn new(edit: HintEdit, preview: Option<HintPreview>) -> Self {
-        Self { edit, preview }
-    }
-}
-
 /// Decides how a hint relates to the current buffer.
 ///
 /// Policies are optional. Without one, Reedline keeps the legacy end-of-buffer
@@ -172,17 +133,25 @@ pub trait HintPolicy: Send {
         HintQuery::whole_buffer(context)
     }
 
-    /// Plan whole-hint acceptance and, independently, an optional preview.
-    /// Reedline calls this only when `candidate` is non-empty and rejects a
-    /// preview whose text would differ from the resulting whole-edit buffer.
+    /// Plan whole-hint acceptance and its preview. Reedline calls this only
+    /// when `candidate` is non-empty. The edit replacement must equal the raw
+    /// candidate. If the edit starts at the cursor, its range is also the
+    /// source range hidden by the preview; source text after that range stays
+    /// visible after the hint. Alternatively, an edit may append at
+    /// `source.len()..source.len()` when the cursor is at the logical buffer
+    /// end, including a block cursor resting on the last grapheme. Reedline
+    /// validates ranges, UTF-8 boundaries, and selection state before showing
+    /// or applying the edit. Return `None` when the candidate cannot be
+    /// represented safely by one of these edits.
+    ///
     /// `candidate` is the raw hint suffix returned by
     /// [`crate::Hinter::complete_hint`], not the fully constructed buffer.
-    /// The policy plans edits from that raw text, while Reedline displays the
+    /// The policy plans edits from that raw text, while Reedline paints the
     /// formatted string returned by [`crate::Hinter::handle`]. Hinter
-    /// implementations must keep those two outputs semantically aligned;
+    /// implementations must keep those outputs semantically aligned;
     /// Reedline does not strip formatting or compare the displayed string to
     /// the raw candidate.
-    fn plan(&mut self, context: &HintContext<'_>, candidate: &str) -> Option<HintPlan>;
+    fn plan(&mut self, context: &HintContext<'_>, candidate: &str) -> Option<HintEdit>;
 
     /// Plan one partial acceptance. Called only when partial acceptance is
     /// requested, so policies can defer parsing until that key event. The
@@ -192,12 +161,10 @@ pub trait HintPolicy: Send {
     /// still match. If that state is stale, Reedline rejects the event without
     /// re-running the hinter.
     ///
-    /// When the validated full plan has a preview, a partial edit must start
-    /// at the cursor and end no later than the preview's hidden range. This
-    /// keeps partial acceptance from deleting visible source text. Without a
-    /// preview, a partial edit must append at the logical end of the buffer.
-    /// Whole edits use a separate contract: their range may differ from the
-    /// preview range as long as both produce the same resulting buffer.
+    /// When the validated full edit starts at the cursor, a partial edit must
+    /// start there and end no later than the full edit's range. This keeps
+    /// partial acceptance from deleting visible source text. For an end-of-
+    /// buffer append, a partial edit must also append at the buffer end.
     fn plan_partial(
         &mut self,
         _context: &HintContext<'_>,
