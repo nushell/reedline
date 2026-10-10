@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ffi::OsStr, ops::ControlFlow, path::PathBuf};
+use std::{collections::HashMap, ffi::OsStr, mem, ops::ControlFlow, path::PathBuf};
 
 use nu_ansi_term::{Color, Style};
 
@@ -112,6 +112,32 @@ impl MouseClickMode {
     }
 }
 
+#[derive(Default)]
+enum HistoryLastRun {
+    Stored(HistoryItemId),
+    /// Outlives its `read_line` for Up to recall, but only the call that
+    /// submitted it (`current`) may update its context.
+    Excluded {
+        item: HistoryItem,
+        current: bool,
+        recalled: bool,
+    },
+    #[default]
+    Empty,
+}
+
+impl HistoryLastRun {
+    fn set_recalled(&mut self, recalled: bool) {
+        if let Self::Excluded { recalled: slot, .. } = self {
+            *slot = recalled;
+        }
+    }
+
+    fn is_recalled(&self) -> bool {
+        matches!(self, Self::Excluded { recalled: true, .. })
+    }
+}
+
 /// Line editor engine
 ///
 /// ## Example usage
@@ -138,11 +164,8 @@ pub struct Reedline {
     history: Box<dyn History>,
     history_cursor: HistoryCursor,
     history_session_id: Option<HistorySessionId>,
-    // none if history doesn't support this
-    history_last_run_id: Option<HistoryItemId>,
+    history_last_run: HistoryLastRun,
     history_exclusion_prefix: Option<String>,
-    history_excluded_item: Option<HistoryItem>,
-    history_cursor_on_excluded: bool,
     /// Last failed `history.save`, until [`Reedline::take_history_save_error`].
     history_save_error: Option<ReedlineError>,
     input_mode: InputMode,
@@ -416,8 +439,6 @@ fn invalidate_anchor_if_host_completer_runs(menu: &ReedlineMenu, painter: &mut P
 }
 
 impl Reedline {
-    const FILTERED_ITEM_ID: HistoryItemId = HistoryItemId(i64::MAX);
-
     /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file.
     #[must_use]
     pub fn create() -> Self {
@@ -442,10 +463,8 @@ impl Reedline {
                 hist_session_id,
             ),
             history_session_id: hist_session_id,
-            history_last_run_id: None,
+            history_last_run: HistoryLastRun::Empty,
             history_exclusion_prefix: None,
-            history_excluded_item: None,
-            history_cursor_on_excluded: false,
             history_save_error: None,
             input_mode: InputMode::Regular,
             suspended_state: None,
@@ -1052,7 +1071,10 @@ impl Reedline {
     /// anything but a non-empty [`Signal::Success`] leaves it unset, and calling
     /// [`Self::update_last_command_context`] then fails with a "No command run" error.
     pub fn has_last_command_context(&self) -> bool {
-        self.history_last_run_id.is_some()
+        matches!(
+            self.history_last_run,
+            HistoryLastRun::Stored(_) | HistoryLastRun::Excluded { current: true, .. }
+        )
     }
 
     /// update the last history item with more information
@@ -1060,15 +1082,29 @@ impl Reedline {
         &mut self,
         f: &dyn Fn(HistoryItem) -> HistoryItem,
     ) -> crate::Result<()> {
-        match &self.history_last_run_id {
-            Some(Self::FILTERED_ITEM_ID) => {
-                self.history_excluded_item = self.history_excluded_item.take().map(f);
+        match mem::take(&mut self.history_last_run) {
+            HistoryLastRun::Excluded {
+                item,
+                current: true,
+                recalled,
+            } => {
+                self.history_last_run = HistoryLastRun::Excluded {
+                    item: f(item),
+                    current: true,
+                    recalled,
+                };
                 Ok(())
             }
-            Some(r) => self.history.update(*r, f),
-            None => Err(ReedlineError(ReedlineErrorVariants::OtherHistoryError(
-                "No command run",
-            ))),
+            HistoryLastRun::Stored(r) => {
+                self.history_last_run = HistoryLastRun::Stored(r);
+                self.history.update(r, f)
+            }
+            stale @ (HistoryLastRun::Excluded { current: false, .. } | HistoryLastRun::Empty) => {
+                self.history_last_run = stale;
+                Err(ReedlineError(ReedlineErrorVariants::OtherHistoryError(
+                    "No command run",
+                )))
+            }
         }
     }
 
@@ -1175,8 +1211,12 @@ impl Reedline {
         // The last command context belongs to the previous call. Only a
         // submit in this call may set it again, so a host command, Ctrl-C
         // or an empty Enter can't reach back and update an older entry.
-        // `history_excluded_item` stays: Up still recalls it.
-        self.history_last_run_id = None;
+        // An excluded item stays, since Up still recalls it.
+        if let HistoryLastRun::Excluded { current, .. } = &mut self.history_last_run {
+            *current = false;
+        } else {
+            self.history_last_run = HistoryLastRun::Empty;
+        }
 
         // Repaint requests raised while no read_line was active are stale:
         // the fresh prompt painted below already reflects the latest state.
@@ -2108,7 +2148,7 @@ impl Reedline {
     }
 
     fn previous_history(&mut self) -> io::Result<()> {
-        self.history_cursor_on_excluded = false;
+        self.history_last_run.set_recalled(false);
         if self.input_mode != InputMode::HistoryTraversal {
             self.input_mode = InputMode::HistoryTraversal;
             self.history_cursor = HistoryCursor::new(
@@ -2116,12 +2156,12 @@ impl Reedline {
                 self.get_history_session_id(),
             );
 
-            if self.history_excluded_item.is_some() {
-                self.history_cursor_on_excluded = true;
+            if matches!(self.history_last_run, HistoryLastRun::Excluded { .. }) {
+                self.history_last_run.set_recalled(true);
             }
         }
 
-        if !self.history_cursor_on_excluded {
+        if !self.history_last_run.is_recalled() {
             // On `Err` the next press retries on the fresh cursor; no rollback.
             self.history_cursor.back(self.history.as_ref())?;
         }
@@ -2145,21 +2185,22 @@ impl Reedline {
             );
         }
 
-        if self.history_cursor_on_excluded {
-            self.history_cursor_on_excluded = false;
+        if self.history_last_run.is_recalled() {
+            self.history_last_run.set_recalled(false);
         } else {
             let cursor_was_on_item = self.history_cursor.string_at_cursor().is_some();
             self.history_cursor.forward(self.history.as_ref())?;
 
             if cursor_was_on_item
                 && self.history_cursor.string_at_cursor().is_none()
-                && self.history_excluded_item.is_some()
+                && matches!(self.history_last_run, HistoryLastRun::Excluded { .. })
             {
-                self.history_cursor_on_excluded = true;
+                self.history_last_run.set_recalled(true);
             }
         }
 
-        if self.history_cursor.string_at_cursor().is_none() && !self.history_cursor_on_excluded {
+        if self.history_cursor.string_at_cursor().is_none() && !self.history_last_run.is_recalled()
+        {
             self.input_mode = InputMode::Regular;
         }
         self.update_buffer_from_history();
@@ -2251,8 +2292,8 @@ impl Reedline {
     /// When using the up/down traversal or fish/zsh style prefix search update the main line buffer accordingly.
     /// Not used for the separate modal reverse search!
     fn update_buffer_from_history(&mut self) {
-        if self.history_cursor_on_excluded {
-            if let Some(item) = &self.history_excluded_item {
+        if self.history_last_run.is_recalled() {
+            if let HistoryLastRun::Excluded { item, .. } = &self.history_last_run {
                 self.editor
                     .set_buffer(item.command_line.clone(), UndoBehavior::HistoryNavigation);
             }
@@ -3178,13 +3219,16 @@ impl Reedline {
 
             match saved {
                 Some(saved) => {
-                    self.history_last_run_id = saved.id;
-                    self.history_excluded_item = None;
+                    self.history_last_run = saved
+                        .id
+                        .map_or(HistoryLastRun::Empty, HistoryLastRun::Stored)
                 }
                 None => {
-                    entry.id = Some(Self::FILTERED_ITEM_ID);
-                    self.history_last_run_id = entry.id;
-                    self.history_excluded_item = Some(entry);
+                    self.history_last_run = HistoryLastRun::Excluded {
+                        item: entry,
+                        current: true,
+                        recalled: false,
+                    }
                 }
             }
         }
@@ -4509,12 +4553,37 @@ mod tests {
             item
         })
         .expect("context update works off the store");
-        assert_eq!(
-            rl.history_excluded_item
-                .as_ref()
-                .and_then(|i| i.exit_status),
-            Some(7)
+        assert!(matches!(
+            rl.history_last_run,
+            HistoryLastRun::Excluded {
+                item: HistoryItem {
+                    exit_status: Some(7),
+                    ..
+                },
+                ..
+            }
+        ));
+    }
+
+    // nushell#19188 for an excluded line: the next read drops its context
+    // but keeps the item, since Up still recalls it.
+    #[test]
+    fn a_read_after_an_excluded_submit_keeps_only_the_recall() {
+        let mut rl = seam_engine(Box::new(crate::Emacs::default()))
+            .with_history_exclusion_prefix(Some(" ".into()));
+        drive_until_signal(&mut rl, &[ch(' '), ch('l'), ch('s'), key(KeyCode::Enter)]);
+        assert!(rl.has_last_command_context(), "the submit sets the context");
+
+        rl.begin_read();
+        drive_until_signal(
+            &mut rl,
+            &[KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)],
         );
+        assert!(!rl.has_last_command_context());
+        assert!(rl.update_last_command_context(&|item| item).is_err());
+
+        drive(&mut rl, &[key(KeyCode::Up)]);
+        assert_eq!(rl.editor.get_buffer(), " ls", "Up still recalls it");
     }
 
     // nushell#19188: a `read_line` that ends without a submit must not leave
