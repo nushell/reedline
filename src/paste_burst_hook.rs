@@ -41,6 +41,11 @@
 //! crossterm's `use-dev-tty` feature does not stall. Where the terminal
 //! supports bracketed paste, prefer it.
 //!
+//! An event source that hands over one event per batch, like the `use-dev-tty`
+//! one, gives the detector its chars one batch at a time. Those that arrive
+//! before it declares a burst are inserted as typed, and only the rest of the
+//! paste is coalesced and passed to [`PasteBurstHook::resolve_burst`].
+//!
 //! The trait is intentionally generic (no application-specific concepts). The
 //! detector state and timing thresholds live entirely on the host side; reedline
 //! only drives the hook from the read loop.
@@ -145,5 +150,8 @@ pub trait PasteBurstHook: Send + Sync {
     /// have the read loop insert `s` (a `[Pasted text #N, +M lines]` placeholder —
     /// the host stored the original out-of-band) INSTEAD of the raw burst text,
     /// or `None` to keep the raw text. Called at most once per burst batch.
+    ///
+    /// `coalesced` starts where the burst was detected, which is not always
+    /// where the paste began; see the module's limitations.
     fn resolve_burst(&self, coalesced: &str) -> Option<String>;
 }

@@ -133,8 +133,9 @@ impl PasteBurstHook for TimingBurstDetector {
     }
 
     fn is_burst_active(&self) -> bool {
-        // Latched: the read loop asks twice for one burst, once to keep
-        // draining and once after the idle flush, and both must agree.
+        // Latched: the read loop asks three times for one burst, to keep
+        // draining, to coalesce after the idle flush and to settle, and all
+        // must agree.
         self.state.lock().expect("detector poisoned").burst
     }
 
