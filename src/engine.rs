@@ -1212,11 +1212,7 @@ impl Reedline {
                 let messages = Self::external_messages(external_printer)?;
                 if !messages.is_empty() {
                     // print the message(s)
-                    self.painter.print_external_message(
-                        messages,
-                        self.editor.line_buffer(),
-                        prompt,
-                    )?;
+                    self.painter.print_external_message(messages)?;
                     self.repaint(prompt)?;
                 }
             }

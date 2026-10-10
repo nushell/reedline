@@ -21,8 +21,6 @@ use {
     std::ops::RangeInclusive,
     unicode_segmentation::UnicodeSegmentation,
 };
-#[cfg(feature = "external_printer")]
-use {crate::LineBuffer, crossterm::cursor::MoveUp};
 
 // Returns a string that skips N number of lines with the next offset of lines
 // An offset of 0 would return only one line after skipping the required lines
@@ -1455,39 +1453,13 @@ impl Painter {
     /// This function doesn't flush the buffer. So buffer should be flushed
     /// afterwards perhaps by repainting the prompt via `repaint_buffer()`.
     #[cfg(feature = "external_printer")]
-    pub(crate) fn print_external_message(
-        &mut self,
-        messages: Vec<String>,
-        line_buffer: &LineBuffer,
-        prompt: &dyn Prompt,
-    ) -> Result<()> {
-        // adding 3 seems to be right for first line-wrap
-        let prompt_len = prompt.render_prompt_right().len() + 3;
-        let mut buffer_num_lines = 0_u16;
-        for (i, line) in line_buffer.get_buffer().lines().enumerate() {
-            let screen_lines = match i {
-                0 => {
-                    // the first line has to deal with the prompt
-                    let first_line_len = line.len() + prompt_len;
-                    // at least, it is one line
-                    // max(1): a mid-resize terminal can report width 0 (#842)
-                    ((first_line_len as u16) / self.screen_width().max(1)) + 1
-                }
-                _ => {
-                    // the n-th line, no prompt, at least, it is one line
-                    ((line.len() as u16) / self.screen_width().max(1)) + 1
-                }
-            };
-            // count up screen-lines
-            buffer_num_lines = buffer_num_lines.saturating_add(screen_lines);
-        }
-        // move upward to start print if the line-buffer is more than one screen-line
-        if buffer_num_lines > 1 {
-            self.stdout.queue(MoveUp(buffer_num_lines - 1))?;
-        }
+    pub(crate) fn print_external_message(&mut self, messages: Vec<String>) -> Result<()> {
+        let starting_row = self.prompt_start_row.last_known_row();
+        // Print from the prompt's first row, wherever the cursor is in a
+        // wrapped prompt and buffer.
+        self.stdout.queue(MoveTo(0, starting_row))?;
         let erase_line = format!("\r{}\r", " ".repeat(self.screen_width().into()));
         let max_row = self.screen_height().saturating_sub(1);
-        let starting_row = self.prompt_start_row.last_known_row();
         // Invalidate up front: a `?` early-return below can leave
         // bytes in the buffer with the cache still claiming `Verified`.
         self.invalidate_prompt_start_row();
@@ -2210,11 +2182,29 @@ mod tests {
         painter.terminal_size = (80, 10);
 
         painter
-            .print_external_message(vec!["msg".to_string()], &LineBuffer::new(), &TestPrompt)
+            .print_external_message(vec!["msg".to_string()])
             .expect("print_external_message failed");
 
         assert_eq!(painter.screen_height(), 41);
         assert_eq!(painter.prompt_start_row, PromptStartRow::Verified(40));
+    }
+
+    // Messages overwrite the prompt from its first row, wherever the cursor
+    // sits in a wrapped or multi-line prompt and buffer. Starting any lower
+    // leaves the rows above it on screen as a stale copy of the prompt.
+    #[cfg(feature = "external_printer")]
+    #[test]
+    fn test_print_external_message_starts_at_the_prompt_start_row() {
+        let mut painter = Painter::new(W::capture());
+        painter.terminal_size = (80, 24);
+        painter.prompt_start_row.mark_verified(5);
+
+        painter
+            .print_external_message(vec!["msg".to_string()])
+            .expect("print_external_message failed");
+
+        // `MoveTo` is 0-based, the escape 1-based: row 5 is `6`.
+        assert!(painter.stdout.captured().starts_with(b"\x1b[6;1H"));
     }
 
     // Output printed while the tty was yielded can leave the cursor well below
