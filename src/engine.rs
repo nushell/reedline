@@ -197,7 +197,7 @@ pub struct Reedline {
     // Completions owed to a menu activation the completer could not answer in time
     deferred_menu_completion: Option<DeferredMenuCompletion>,
 
-    // Optional host hook that intercepts a bare Ctrl+V `PasteSystem` paste
+    // Optional host hook that intercepts a lone `PasteSystem` paste
     // (see `crate::PasteInterceptor`). `PasteSystem` only exists under
     // `system_clipboard`, so the hook is gated on the same feature.
     #[cfg(feature = "system_clipboard")]
@@ -668,8 +668,8 @@ impl Reedline {
         self
     }
 
-    /// Install a paste interceptor. When set, a bare Ctrl+V
-    /// `EditCommand::PasteSystem` calls
+    /// Install a paste interceptor. When set, a lone
+    /// `EditCommand::PasteSystem` (Ctrl+Shift+V by default) calls
     /// [`PasteInterceptor::on_paste`](crate::PasteInterceptor::on_paste)
     /// instead of the default clipboard-read-and-insert, and reedline inserts
     /// whatever [`PasteAction`](crate::PasteAction) the hook returns. Requires
@@ -2109,7 +2109,7 @@ impl Reedline {
                 Ok(EventStatus::Exits(Signal::HostCommand(host_command)))
             }
             ReedlineEvent::Edit(commands) => {
-                // Intercept a bare Ctrl+V `PasteSystem` when a paste interceptor
+                // Intercept a lone `PasteSystem` when a paste interceptor
                 // is installed. The hook reads the clipboard itself and decides
                 // what to insert (a reference placeholder, the raw text, or
                 // nothing) — bypassing the default clipboard-read-and-insert.

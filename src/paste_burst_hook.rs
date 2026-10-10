@@ -4,10 +4,13 @@
 //! bracketed-paste [`Event::Paste`](crossterm::event::Event) but as a rapid
 //! stream of individual key events. The read loop cannot tell such a stream from
 //! fast human typing by content alone — it needs the arrival *timing*. This hook
-//! lets a host own that timing oracle: chars keep echoing into the line buffer
-//! live (no latency), and the host's detector answers two questions the read
-//! loop asks — is a bare `Enter` a paste-embedded newline (insert `\n`) rather
-//! than a settling submit, and is a real burst still coalescing (keep draining)?
+//! lets a host own that timing oracle: chars echo as usual until the detector
+//! declares a burst, from then on the rest of the paste lands as one insert
+//! once it goes idle. The host's detector answers two questions the read loop
+//! asks: is a bare `Enter` a paste-embedded newline (insert `\n`) rather than a
+//! settling submit, and is a real burst still coalescing (keep draining)?
+//! `Ctrl-J`, which is how a raw LF arrives in raw mode, counts as `Enter`
+//! throughout.
 //!
 //! When a `PasteBurstHook` is installed on the [`Reedline`](crate::Reedline)
 //! engine via [`with_paste_burst`](crate::Reedline::with_paste_burst), the read
