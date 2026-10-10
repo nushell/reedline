@@ -2548,8 +2548,9 @@ impl Reedline {
             let edit_starts_at_visible_position = |edit: &HintEdit| {
                 if whole {
                     true
-                } else if active_hint.plan.preview.is_some() {
+                } else if let Some(preview) = &active_hint.plan.preview {
                     edit.range.start == context.cursor()
+                        && edit.range.end <= preview.hidden_range.end
                 } else {
                     context.at_buffer_end()
                         && edit.range == (context.source().len()..context.source().len())
@@ -3369,7 +3370,6 @@ fn valid_hint_plan(
     match &plan.preview {
         Some(preview) => {
             if !(plan.edit.range.start == context.cursor()
-                && preview.overlay_position == context.cursor()
                 && preview.hidden_range.start == context.cursor()
                 && source.get(preview.hidden_range.clone()).is_some())
             {
@@ -8128,9 +8128,7 @@ mod tests {
             } else {
                 return None;
             };
-            let preview = tail.map(|_| {
-                HintPreview::new(context.cursor()..context.source().len(), context.cursor())
-            });
+            let preview = tail.map(|_| HintPreview::new(context.cursor()..context.source().len()));
             Some(HintPlan::new(
                 HintEdit::new(start..end, candidate, cursor),
                 preview,
@@ -8331,21 +8329,14 @@ mod tests {
                         candidate,
                         context.cursor() + candidate.len(),
                     ),
-                    Some(HintPreview::new(
-                        context.cursor()..hidden_end,
-                        context.cursor(),
-                    )),
+                    Some(HintPreview::new(context.cursor()..hidden_end)),
                 ))
-            }
-
-            fn plan_partial(&mut self, _: &HintContext<'_>, _: &str, _: &str) -> Option<HintEdit> {
-                None
             }
         }
 
         let mut styled = crate::painting::StyledText::new();
         styled.push((Style::new(), "(gs)x".to_string()));
-        let preview = HintPreview::new(3..4, 3);
+        let preview = HintPreview::new(3..4);
         let displayed = render_hint_preview(
             &styled,
             &preview,
@@ -8370,6 +8361,16 @@ mod tests {
             .painter
             .exit_after_cursor_for_test()
             .is_some_and(|text| text.contains('x')));
+        assert!(matches!(
+            send(&mut rl, ReedlineEvent::HistoryHintWordComplete),
+            EventStatus::Inapplicable
+        ));
+        assert_eq!(rl.editor.get_buffer(), "(gs)x");
+        send(&mut rl, ReedlineEvent::HistoryHintComplete);
+        assert_eq!(
+            (rl.editor.get_buffer(), rl.editor.insertion_point()),
+            ("(gstatx", 6)
+        );
     }
 
     #[test]
@@ -8441,7 +8442,7 @@ mod tests {
             fn plan(&mut self, _: &HintContext<'_>, _: &str) -> Option<HintPlan> {
                 Some(HintPlan::new(
                     HintEdit::new(3..5, "tat", 6),
-                    Some(HintPreview::new(3..4, 3)),
+                    Some(HintPreview::new(3..4)),
                 ))
             }
 
@@ -8478,6 +8479,85 @@ mod tests {
         assert_eq!(rl.editor.get_buffer(), "(gs!)x");
     }
 
+    #[rstest]
+    #[case::outside_hidden_range(5, false, "(gs!)x")]
+    #[case::ends_at_hidden_boundary(4, true, "(gstx")]
+    #[case::keeps_hidden_character(3, true, "(gst)x")]
+    fn partial_edit_cannot_extend_past_preview_hidden_range(
+        #[case] partial_end: usize,
+        #[case] accepted: bool,
+        #[case] expected: &'static str,
+    ) {
+        struct PartialRangePolicy(usize);
+        impl HintPolicy for PartialRangePolicy {
+            fn plan(&mut self, context: &HintContext<'_>, candidate: &str) -> Option<HintPlan> {
+                Some(HintPlan::new(
+                    HintEdit::new(
+                        context.cursor()..context.cursor() + 1,
+                        candidate,
+                        context.cursor() + candidate.len(),
+                    ),
+                    Some(HintPreview::new(context.cursor()..context.cursor() + 1)),
+                ))
+            }
+
+            fn plan_partial(
+                &mut self,
+                context: &HintContext<'_>,
+                _: &str,
+                next_token: &str,
+            ) -> Option<HintEdit> {
+                Some(HintEdit::new(
+                    context.cursor()..self.0,
+                    next_token,
+                    context.cursor() + next_token.len(),
+                ))
+            }
+        }
+
+        struct SingleCharacterTokenHinter;
+        impl Hinter for SingleCharacterTokenHinter {
+            fn handle(&mut self, _: &str, _: usize, _: &dyn History, _: bool, _: &str) -> String {
+                "tat".to_string()
+            }
+
+            fn complete_hint(&self) -> String {
+                "tat".to_string()
+            }
+
+            fn next_hint_token(&self) -> String {
+                "t".to_string()
+            }
+        }
+
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_hint_policy(Box::new(PartialRangePolicy(partial_end)))
+            .with_hinter(Box::new(SingleCharacterTokenHinter));
+        rl.run_edit_commands(&[EditCommand::InsertString("(gs)x".into())]);
+        rl.run_edit_commands(&[EditCommand::MoveToPosition {
+            position: 3,
+            select: false,
+        }]);
+        rl.buffer_paint(&DefaultPrompt::default()).unwrap();
+
+        if accepted {
+            send(&mut rl, ReedlineEvent::HistoryHintWordComplete);
+        } else {
+            assert!(matches!(
+                send(&mut rl, ReedlineEvent::HistoryHintWordComplete),
+                EventStatus::Inapplicable
+            ));
+            send(
+                &mut rl,
+                ReedlineEvent::UntilFound(vec![
+                    ReedlineEvent::HistoryHintWordComplete,
+                    ReedlineEvent::Edit(vec![EditCommand::InsertChar('!')]),
+                ]),
+            );
+        }
+        assert_eq!(rl.editor.get_buffer(), expected);
+    }
+
     #[test]
     fn empty_candidate_never_reaches_hint_policy() {
         struct CountingPolicy(Arc<std::sync::Mutex<usize>>);
@@ -8490,10 +8570,7 @@ mod tests {
                         "",
                         context.cursor(),
                     ),
-                    Some(HintPreview::new(
-                        context.cursor()..context.source().len(),
-                        context.cursor(),
-                    )),
+                    Some(HintPreview::new(context.cursor()..context.source().len())),
                 ))
             }
 
@@ -8559,10 +8636,7 @@ mod tests {
                         self.replacement,
                         context.cursor() + candidate.len(),
                     ),
-                    Some(HintPreview::new(
-                        context.cursor()..self.hidden_end,
-                        context.cursor(),
-                    )),
+                    Some(HintPreview::new(context.cursor()..self.hidden_end)),
                 ))
             }
 
@@ -8575,7 +8649,7 @@ mod tests {
         styled.push((Style::new(), "(gs)xtail".to_string()));
         let display = render_hint_preview(
             &styled,
-            &HintPreview::new(3..hidden_end, 3),
+            &HintPreview::new(3..hidden_end),
             candidate,
             &DefaultPrompt::default(),
             false,

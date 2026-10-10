@@ -130,18 +130,12 @@ pub struct HintPreview {
     /// must begin at the cursor; any text after its end remains visible after
     /// the hint.
     pub hidden_range: Range<usize>,
-    /// Byte position in the source where the hint overlay begins. The initial
-    /// renderer supports overlays at the cursor.
-    pub overlay_position: usize,
 }
 
 impl HintPreview {
     /// Construct preview metadata. Reedline validates its ranges before paint.
-    pub fn new(hidden_range: Range<usize>, overlay_position: usize) -> Self {
-        Self {
-            hidden_range,
-            overlay_position,
-        }
+    pub fn new(hidden_range: Range<usize>) -> Self {
+        Self { hidden_range }
     }
 }
 
@@ -191,14 +185,25 @@ pub trait HintPolicy: Send {
     fn plan(&mut self, context: &HintContext<'_>, candidate: &str) -> Option<HintPlan>;
 
     /// Plan one partial acceptance. Called only when partial acceptance is
-    /// requested, so policies can defer parsing until that key event. Reedline
-    /// calls this only for the last validated and displayed candidate while
-    /// the source, cursor, selection, and edit mode still match. If that state
-    /// is stale, Reedline rejects the event without re-running the hinter.
+    /// requested, so policies can defer parsing until that key event. The
+    /// default returns `None`, which makes partial acceptance unavailable for
+    /// this policy. Reedline calls this only for the last validated and
+    /// displayed candidate while the source, cursor, selection, and edit mode
+    /// still match. If that state is stale, Reedline rejects the event without
+    /// re-running the hinter.
+    ///
+    /// When the validated full plan has a preview, a partial edit must start
+    /// at the cursor and end no later than the preview's hidden range. This
+    /// keeps partial acceptance from deleting visible source text. Without a
+    /// preview, a partial edit must append at the logical end of the buffer.
+    /// Whole edits use a separate contract: their range may differ from the
+    /// preview range as long as both produce the same resulting buffer.
     fn plan_partial(
         &mut self,
-        context: &HintContext<'_>,
-        candidate: &str,
-        next_token: &str,
-    ) -> Option<HintEdit>;
+        _context: &HintContext<'_>,
+        _candidate: &str,
+        _next_token: &str,
+    ) -> Option<HintEdit> {
+        None
+    }
 }
