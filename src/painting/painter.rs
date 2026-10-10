@@ -2393,6 +2393,41 @@ mod tests {
         )
     }
 
+    /// Capture a repaint at a narrow size, optionally including the Enter exit
+    /// path. This returns raw output so Unicode cases do not use the ASCII-only
+    /// terminal replay helper as a width oracle.
+    fn capture_repaint_at_size(
+        lines: &PromptLines,
+        width: u16,
+        height: u16,
+        exit_after_cursor: bool,
+    ) -> (String, u16) {
+        let mut painter = Painter::new(W::capture());
+        painter.terminal_size = (width, height);
+        painter.term_is_dumb = false;
+        painter.prompt_start_row.mark_verified(0);
+        painter.prompt_height = 1;
+        painter
+            .repaint_buffer(
+                &TestPrompt,
+                lines,
+                PromptEditMode::Default,
+                None,
+                false,
+                &None,
+            )
+            .expect("repaint_buffer failed");
+        if exit_after_cursor {
+            painter
+                .move_cursor_to_end()
+                .expect("move_cursor_to_end failed");
+        }
+        (
+            String::from_utf8_lossy(painter.stdout.captured()).into_owned(),
+            painter.last_required_lines,
+        )
+    }
+
     /// Vi visual has a cursor shape of its own. A config that leaves it unset
     /// keeps the normal-mode shape, which is what visual drew before the slot
     /// existed, so a host that only names `vi_normal` sees no change.
@@ -3048,6 +3083,70 @@ mod tests {
             replayed.cursor.0, 1,
             "exit parked the cursor on row {}, not on the first free row",
             replayed.cursor.0
+        );
+    }
+
+    #[test]
+    fn hint_preview_paints_overlay_before_retained_suffix_and_exit_restores_source() {
+        let mut lines = make_lines(TEST_PROMPT, "", "RP", "f(", "");
+        lines.hint = Cow::Borrowed("\x1b[35mcomplete\x1b[39m)");
+        let lines = lines.with_exit_after_cursor(")");
+
+        let (painted, _) = capture_repaint_ansi(&TestPrompt, &lines, true);
+        let overlay = painted
+            .find("\x1b[35mcomplete\x1b[39m")
+            .expect("styled overlay was not painted");
+        let retained_close = painted[overlay..]
+            .find(')')
+            .map(|offset| overlay + offset)
+            .expect("retained suffix was not painted after the overlay");
+        assert!(overlay < retained_close);
+
+        let exited = capture_repaint_then_exit(&lines, None);
+        assert!(!exited.screen.contains("complete"));
+        assert!(
+            exited.screen.contains("f()"),
+            "source suffix was lost: {exited:?}"
+        );
+        assert!(
+            exited.screen.contains("RP"),
+            "right prompt was lost: {exited:?}"
+        );
+    }
+
+    #[test]
+    fn wrapped_unicode_crlf_hint_exit_restores_multiline_source_suffix() {
+        let prompt = TestPrompt;
+        let mut lines = PromptLines::new(&prompt, PromptEditMode::Default, None, "f(🎉\n", "", "");
+        lines.hint = Cow::Owned("\x1b[35m候補\r\n続き\x1b[39m尾\r\nrest".to_string());
+        let lines = lines.with_exit_after_cursor("尾\r\nrest");
+
+        // The terminal is deliberately narrow enough to wrap both the wide
+        // input glyph and the final CJK character, in addition to the explicit
+        // newlines. Assert emitted bytes and the independently calculated row
+        // count directly; the replay helper models ASCII cells only.
+        let (output, reserved_rows) = capture_repaint_at_size(&lines, 5, 10, true);
+        assert_eq!(
+            reserved_rows, 6,
+            "expected six rows from two wrapped segments and two CRLF hint breaks"
+        );
+        let overlay = output
+            .find("候補")
+            .expect("Unicode overlay was not painted");
+        let retained_suffix = output[overlay..]
+            .find("尾\r\nrest")
+            .map(|offset| overlay + offset)
+            .expect("retained multiline suffix was not painted");
+        assert!(overlay < retained_suffix);
+
+        let exit_clear = output
+            .rfind("\x1b[J")
+            .expect("Enter exit did not clear the preview");
+        let exit_output = &output[exit_clear..];
+        assert!(!exit_output.contains("候補"), "preview survived Enter exit");
+        assert!(
+            exit_output.contains("尾\r\nrest"),
+            "the original Unicode/CRLF suffix was not restored"
         );
     }
 
