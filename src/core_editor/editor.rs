@@ -308,6 +308,9 @@ impl Editor {
             EditCommand::CutBigWordRightToNext => self.cut_big_word_right_to_next(),
             EditCommand::PasteCutBufferBefore => self.paste_cut_buffer_before(),
             EditCommand::PasteCutBufferAfter => self.paste_cut_buffer_after(),
+            EditCommand::ReplaceSelection { new_line_before } => {
+                self.replace_selection(*new_line_before)
+            }
             EditCommand::PasteAtSelectionEdge { direction, count } => {
                 self.paste_at_selection_edge(*direction, *count)
             }
@@ -413,7 +416,10 @@ impl Editor {
             EditCommand::ReplaceTextObject { old, new } => self.replace_text_object(*old, *new),
         }
         let leaves_selection = matches!(command.edit_type(), EditType::MoveCursor { select: true })
-            || matches!(command, EditCommand::PasteAtSelectionEdge { .. })
+            || matches!(
+                command,
+                EditCommand::PasteAtSelectionEdge { .. } | EditCommand::ReplaceSelection { .. }
+            )
             || (matches!(
                 command,
                 EditCommand::CopySelection
@@ -1633,6 +1639,49 @@ impl Editor {
         insert_clipboard_content_after(&mut self.line_buffer, self.cut_buffer.deref_mut());
     }
 
+    fn replace_selection(&mut self, new_line_before: bool) {
+        let selection = {
+            let anchor = self.line_buffer.cursor().anchor();
+            let head = self.line_buffer.cursor().head();
+            match anchor.cmp(&head) {
+                std::cmp::Ordering::Equal => {
+                    let Some(right_graphene) = self.line_buffer.grapheme_right().chars().next()
+                    else {
+                        return;
+                    };
+                    (anchor, head + right_graphene.len_utf8())
+                }
+                std::cmp::Ordering::Less => (anchor, head),
+                std::cmp::Ordering::Greater => (head, anchor),
+            }
+        };
+
+        let (content, granularity) = self.cut_buffer.get();
+        let len_utf8 = content.len();
+
+        let (content, jump_new_line) = match granularity {
+            Granularity::CharWise => (content, 0),
+            Granularity::LineWise if new_line_before => (format!("\n{content}\n"), 1),
+            Granularity::LineWise => (format!("{content}\n"), 0),
+        };
+
+        self.line_buffer
+            .replace_range(selection.0..selection.1, &content);
+        let cursor = self.line_buffer.cursor();
+        let (anchor, head) = if cursor.anchor() == selection.0 {
+            (
+                cursor.anchor() + jump_new_line,
+                selection.0 + len_utf8 + jump_new_line,
+            )
+        } else {
+            (
+                selection.0 + len_utf8 + jump_new_line,
+                cursor.head() + jump_new_line,
+            )
+        };
+        self.place(Cursor::new(anchor, head))
+    }
+
     fn cut_range(&mut self, range: Range<usize>) {
         self.cut_range_with(range, Granularity::CharWise);
     }
@@ -2748,6 +2797,163 @@ mod test {
         editor.cut_buffer.set("ab", Granularity::LineWise);
         editor.run_edit_command(&EditCommand::PasteCutBufferAfter);
         assert_eq!(editor.get_buffer(), "ab");
+    }
+
+    #[rstest]
+    #[case(
+        false,
+        Granularity::CharWise,
+        Cursor::new(3, 3),
+        "abcdefghi",
+        Cursor::new(3, 6)
+    )]
+    #[case(
+        false,
+        Granularity::CharWise,
+        Cursor::new(3, 4),
+        "abcdefghi",
+        Cursor::new(3, 6)
+    )]
+    #[case(
+        false,
+        Granularity::CharWise,
+        Cursor::new(4, 3),
+        "abcdefghi",
+        Cursor::new(6, 3)
+    )]
+    #[case(
+        false,
+        Granularity::CharWise,
+        Cursor::new(1, 6),
+        "adefi",
+        Cursor::new(1, 4)
+    )]
+    #[case(
+        false,
+        Granularity::CharWise,
+        Cursor::new(6, 1),
+        "adefi",
+        Cursor::new(4, 1)
+    )]
+    #[case(
+        false,
+        Granularity::LineWise,
+        Cursor::new(3, 3),
+        "abcdef\nghi",
+        Cursor::new(3, 6)
+    )]
+    #[case(
+        false,
+        Granularity::LineWise,
+        Cursor::new(3, 4),
+        "abcdef\nghi",
+        Cursor::new(3, 6)
+    )]
+    #[case(
+        false,
+        Granularity::LineWise,
+        Cursor::new(4, 3),
+        "abcdef\nghi",
+        Cursor::new(6, 3)
+    )]
+    #[case(
+        false,
+        Granularity::LineWise,
+        Cursor::new(1, 6),
+        "adef\ni",
+        Cursor::new(1, 4)
+    )]
+    #[case(
+        false,
+        Granularity::LineWise,
+        Cursor::new(6, 1),
+        "adef\ni",
+        Cursor::new(4, 1)
+    )]
+    #[case(
+        true,
+        Granularity::CharWise,
+        Cursor::new(3, 3),
+        "abcdefghi",
+        Cursor::new(3, 6)
+    )]
+    #[case(
+        true,
+        Granularity::CharWise,
+        Cursor::new(3, 4),
+        "abcdefghi",
+        Cursor::new(3, 6)
+    )]
+    #[case(
+        true,
+        Granularity::CharWise,
+        Cursor::new(4, 3),
+        "abcdefghi",
+        Cursor::new(6, 3)
+    )]
+    #[case(
+        true,
+        Granularity::CharWise,
+        Cursor::new(1, 6),
+        "adefi",
+        Cursor::new(1, 4)
+    )]
+    #[case(
+        true,
+        Granularity::CharWise,
+        Cursor::new(6, 1),
+        "adefi",
+        Cursor::new(4, 1)
+    )]
+    #[case(
+        true,
+        Granularity::LineWise,
+        Cursor::new(3, 3),
+        "abc\ndef\nghi",
+        Cursor::new(4, 7)
+    )]
+    #[case(
+        true,
+        Granularity::LineWise,
+        Cursor::new(3, 4),
+        "abc\ndef\nghi",
+        Cursor::new(4, 7)
+    )]
+    #[case(
+        true,
+        Granularity::LineWise,
+        Cursor::new(4, 3),
+        "abc\ndef\nghi",
+        Cursor::new(7, 4)
+    )]
+    #[case(
+        true,
+        Granularity::LineWise,
+        Cursor::new(1, 6),
+        "a\ndef\ni",
+        Cursor::new(2, 5)
+    )]
+    #[case(
+        true,
+        Granularity::LineWise,
+        Cursor::new(6, 1),
+        "a\ndef\ni",
+        Cursor::new(5, 2)
+    )]
+    fn replace_selection_with_cut_buffer(
+        #[case] new_line_before: bool,
+        #[case] input_granularity: Granularity,
+        #[case] input_cursor: Cursor,
+        #[case] expected_buffer: &str,
+        #[case] expected_cursor: Cursor,
+    ) {
+        let start_buffer = "abc_ghi";
+        let mut editor = editor_with(start_buffer);
+        editor.cut_buffer.set("def", input_granularity);
+        editor.place(input_cursor);
+        editor.run_edit_command(&EditCommand::ReplaceSelection { new_line_before });
+        assert_eq!(editor.get_buffer(), expected_buffer);
+        assert_eq!(editor.line_buffer.cursor(), expected_cursor)
     }
 
     #[test]

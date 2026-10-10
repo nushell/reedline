@@ -124,6 +124,7 @@ enum Op {
     Change,
     Yank,
     Replace(char),
+    ReplaceWithCutBuffer,
     /// `~`. Keeps the selection, like `Yank`, so a further op reuses the span.
     Switchcase,
     /// `` ` ``. Keeps the selection, as `Switchcase` does.
@@ -588,6 +589,11 @@ fn interpret(mode: HelixMode, count: Option<usize>, key: KeyEvent) -> Outcome {
                 Verb::Paste(Direction::Backward),
                 Some(HelixMode::Normal),
             ),
+            'R' => exec(
+                1,
+                Verb::OnSelection(Op::ReplaceWithCutBuffer),
+                Some(HelixMode::Normal),
+            ),
             _ => Outcome::Reject,
         },
         KeyCode::Enter => exec(count, Verb::Submit, Some(HelixMode::Insert)),
@@ -629,6 +635,9 @@ fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
             }]),
             Op::Yank => ReedlineEvent::Edit(vec![EditCommand::CopySelection]),
             Op::Replace(ch) => ReedlineEvent::Edit(vec![EditCommand::ReplaceChar(ch)]),
+            Op::ReplaceWithCutBuffer => ReedlineEvent::Edit(vec![EditCommand::ReplaceSelection {
+                new_line_before: false,
+            }]),
             Op::Switchcase => ReedlineEvent::Edit(vec![EditCommand::SwitchcaseSelection]),
             Op::Lowercase => ReedlineEvent::Edit(vec![EditCommand::LowercaseSelection]),
         },
