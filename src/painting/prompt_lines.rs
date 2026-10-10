@@ -16,6 +16,11 @@ pub(crate) struct PromptLines<'prompt> {
     pub(crate) after_cursor: Cow<'prompt, str>,
     pub(crate) hint: Cow<'prompt, str>,
     pub(crate) right_prompt_on_last_line: bool,
+    /// What the exit path reprints after the cursor, when that is not
+    /// `after_cursor`: a history hint drawn in place of trailing auto-pair
+    /// closers leaves `after_cursor` empty, but the closers are still in the
+    /// buffer.
+    pub(crate) exit_after_cursor: Option<Cow<'prompt, str>>,
 }
 
 impl<'prompt> PromptLines<'prompt> {
@@ -51,7 +56,15 @@ impl<'prompt> PromptLines<'prompt> {
             after_cursor,
             hint,
             right_prompt_on_last_line,
+            exit_after_cursor: None,
         }
+    }
+
+    /// Set what the exit path reprints after the cursor in place of
+    /// `after_cursor`. See [`Self::exit_after_cursor`].
+    pub(crate) fn with_exit_after_cursor(mut self, after_cursor: &'prompt str) -> Self {
+        self.exit_after_cursor = Some(coerce_crlf(after_cursor));
+        self
     }
 
     /// Rows to reserve for the prompt and buffer, laid out end to end.
@@ -122,11 +135,11 @@ impl<'prompt> PromptLines<'prompt> {
         resolve_wrap(end, terminal_columns)
     }
 
-    /// Total lines that the prompt uses considering that it may wrap the screen
-    pub(crate) fn prompt_lines_with_wrap(&self, screen_width: u16) -> u16 {
+    /// Rows the prompt occupies, wrapping included. At least 1, since even an
+    /// empty prompt owns the row the buffer starts on.
+    pub(crate) fn prompt_height(&self, screen_width: u16) -> u16 {
         let complete_prompt = self.prompt_str_left.to_string() + &self.prompt_indicator;
-        let lines = estimate_required_lines(&complete_prompt, screen_width);
-        lines.saturating_sub(1) as u16
+        estimate_required_lines(&complete_prompt, screen_width).max(1) as u16
     }
 
     /// Estimated width of the line where right prompt will be rendered
@@ -311,6 +324,7 @@ mod tests {
             after_cursor: Cow::Borrowed(""),
             hint: Cow::Borrowed(""),
             right_prompt_on_last_line: false,
+            exit_after_cursor: None,
         };
 
         let pos = prompt_lines.cursor_pos(terminal_columns);
@@ -346,6 +360,7 @@ mod tests {
             after_cursor: Cow::Borrowed(after_cursor),
             hint: Cow::Borrowed(""),
             right_prompt_on_last_line: false,
+            exit_after_cursor: None,
         };
 
         assert_eq!(
@@ -389,11 +404,36 @@ mod tests {
             after_cursor: Cow::Borrowed(""),
             hint: Cow::Borrowed(""),
             right_prompt_on_last_line: false,
+            exit_after_cursor: None,
         };
 
         assert_eq!(
             prompt_lines.distance_from_prompt(terminal_columns),
             expected
         );
+    }
+
+    #[rstest]
+    #[case::empty_prompt_still_owns_its_row("", "", 1)]
+    #[case::single_row("~/path/", "> ", 1)]
+    #[case::newline_in_the_prompt("~/path/\n", "> ", 2)]
+    #[case::wrapped(&"a".repeat(25), "> ", 2)]
+    fn test_prompt_height(
+        #[case] prompt_str_left: &str,
+        #[case] prompt_indicator: &str,
+        #[case] expected: u16,
+    ) {
+        let prompt_lines = PromptLines {
+            prompt_str_left: Cow::Borrowed(prompt_str_left),
+            prompt_str_right: Cow::Borrowed(""),
+            prompt_indicator: Cow::Borrowed(prompt_indicator),
+            before_cursor: Cow::Borrowed(""),
+            after_cursor: Cow::Borrowed(""),
+            hint: Cow::Borrowed(""),
+            right_prompt_on_last_line: false,
+            exit_after_cursor: None,
+        };
+
+        assert_eq!(prompt_lines.prompt_height(20), expected);
     }
 }

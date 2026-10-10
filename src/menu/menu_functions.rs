@@ -1,7 +1,6 @@
 //! Collection of common functions that can be used to create menus
 use std::borrow::Cow;
 use std::ops::Range;
-use unicase::UniCase;
 
 use nu_ansi_term::{ansi::RESET, Style};
 use unicode_segmentation::UnicodeSegmentation;
@@ -517,9 +516,10 @@ fn derive_common_prefix(line: &str, suggestions: &[Suggestion]) -> Option<Partia
     // Ensure prefix extends (not overwrites) user input
     let extends = !insert.is_empty()
         && insert != entered
-        && UniCase::new(insert.as_str())
-            .to_folded_case()
-            .contains(&UniCase::new(entered).to_folded_case());
+        && insert
+            .as_str()
+            .to_lowercase()
+            .contains(&entered.to_lowercase());
     extends.then_some(Partial { span, insert })
 }
 

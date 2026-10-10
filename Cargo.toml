@@ -6,7 +6,7 @@ license = "MIT"
 name = "reedline"
 repository = "https://github.com/nushell/reedline"
 rust-version = "1.95.0"
-version = "0.51.0"
+version = "0.52.1"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
@@ -21,18 +21,18 @@ chrono = { version = "0.4.19", default-features = false, features = [
     "serde",
 ] }
 crossterm = { version = "0.29.0", features = ["serde"] }
-fd-lock = "4.0.2"
-itertools = "0.15.0"
 nu-ansi-term = "0.50.0"
 rusqlite = { version = "0.40.1", optional = true }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", optional = true }
 strip-ansi-escapes = "0.2.0"
 strum = { version = "0.28.0", features = ["derive"] }
-thiserror = "2.0.19"
-unicase = "2.8.0"
 unicode-segmentation = "1.13.3"
 unicode-width = "0.2"
+
+[target.'cfg(target_os = "android")'.dependencies]
+# `File::lock` in std is unsupported on Android before Rust 1.98.
+fd-lock = "4.0.4"
 
 [dev-dependencies]
 gethostname = "1.1.0"

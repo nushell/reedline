@@ -6,7 +6,10 @@ use crate::core_editor::get_system_clipboard;
 use crate::core_editor::graphemes::{next_grapheme_boundary, prev_grapheme_boundary};
 use crate::core_editor::resolve::resolve_selection;
 use crate::core_editor::{commit, line, operator_span, resolve_motion, RestPolicy};
-use crate::enums::{EditType, TextObject, TextObjectScope, TextObjectType, UndoBehavior};
+use crate::enums::{
+    EditType, TextObject, TextObjectBracket, TextObjectQuote, TextObjectScope, TextObjectType,
+    UndoBehavior,
+};
 use crate::prompt::PromptEditMode;
 use crate::{core_editor::get_local_clipboard, EditCommand};
 use crate::{Direction, Granularity, MotionTarget, WordEdge, WordKind};
@@ -210,6 +213,9 @@ impl Editor {
                     self.place(selection);
                 }
             },
+            EditCommand::SelectTextObject(t) => {
+                self.select_text_object(*t);
+            }
             EditCommand::CollapseSelection(direction) => {
                 let cursor = self.line_buffer.cursor();
                 let pos = match direction {
@@ -300,8 +306,8 @@ impl Editor {
             EditCommand::CutBigWordRight => self.cut_big_word_right(),
             EditCommand::CutWordRightToNext => self.cut_word_right_to_next(),
             EditCommand::CutBigWordRightToNext => self.cut_big_word_right_to_next(),
-            EditCommand::PasteCutBufferBefore => self.insert_cut_buffer_before(),
-            EditCommand::PasteCutBufferAfter => self.insert_cut_buffer_after(),
+            EditCommand::PasteCutBufferBefore => self.paste_cut_buffer_before(),
+            EditCommand::PasteCutBufferAfter => self.paste_cut_buffer_after(),
             EditCommand::PasteAtSelectionEdge { direction, count } => {
                 self.paste_at_selection_edge(*direction, *count)
             }
@@ -341,7 +347,8 @@ impl Editor {
             EditCommand::LowercaseSelection => self.lowercase_selection(),
             EditCommand::UppercaseSelection => self.uppercase_selection(),
             EditCommand::SwitchcaseSelection => self.switchcase_selection(),
-            EditCommand::Paste => self.paste_cut_buffer(),
+            // Same command as `PasteCutBufferBefore`, both names are public
+            EditCommand::Paste => self.paste_cut_buffer_before(),
             EditCommand::CopyFromStart => self.copy_from_start(),
             EditCommand::CopyFromStartLinewise => self.copy_from_start_linewise(),
             EditCommand::CopyFromLineStart => self.copy_from_line_start(),
@@ -399,12 +406,11 @@ impl Editor {
             }
             #[cfg(feature = "system_clipboard")]
             EditCommand::PasteSystem => self.paste_from_system(),
-            EditCommand::CutInsidePair { left, right } => self.cut_inside_pair(*left, *right),
-            EditCommand::CopyInsidePair { left, right } => self.copy_inside_pair(*left, *right),
-            EditCommand::CutAroundPair { left, right } => self.cut_around_pair(*left, *right),
-            EditCommand::CopyAroundPair { left, right } => self.copy_around_pair(*left, *right),
             EditCommand::CutTextObject { text_object } => self.cut_text_object(*text_object),
             EditCommand::CopyTextObject { text_object } => self.copy_text_object(*text_object),
+            EditCommand::AddTextObject { text_object } => self.add_text_object(*text_object),
+            EditCommand::RemoveTextObject { text_object } => self.remove_text_object(*text_object),
+            EditCommand::ReplaceTextObject { old, new } => self.replace_text_object(*old, *new),
         }
         let leaves_selection = matches!(command.edit_type(), EditType::MoveCursor { select: true })
             || matches!(command, EditCommand::PasteAtSelectionEdge { .. })
@@ -414,7 +420,15 @@ impl Editor {
                     | EditCommand::LowercaseSelection
                     | EditCommand::UppercaseSelection
                     | EditCommand::SwitchcaseSelection
-            ) && self.edit_mode.retains_selection_after_edit());
+            ) && self.edit_mode.retains_selection_after_edit())
+            || matches!(
+                command,
+                EditCommand::ReplaceTextObject { .. }
+                    | EditCommand::AddTextObject { .. }
+                    | EditCommand::RemoveTextObject { .. }
+                    | EditCommand::CutTextObject { .. }
+                    | EditCommand::CopyTextObject { .. }
+            );
         if !leaves_selection {
             self.clear_selection();
         }
@@ -451,8 +465,10 @@ impl Editor {
         // anchor: under `Block` the stored head sits on the far edge, so dropping
         // the anchor alone would strand the cursor one grapheme past where it
         // shows. Collapsing to `point(caret)` keeps it put; the commit boundary
-        // re-widens it under the active policy.
-        let caret = self.line_buffer.insertion_point();
+        // re-widens it under the active policy. The caret is the editor's
+        // policy-aware one: `LineBuffer::collapse_to_caret` always reads block
+        // geometry, which under a bar steps a forward head back a grapheme.
+        let caret = self.insertion_point();
         self.line_buffer.set_cursor(Cursor::point(caret));
     }
 
@@ -844,24 +860,30 @@ impl Editor {
         self.line_buffer.is_cursor_at_last_line()
     }
 
-    pub(crate) fn is_cursor_at_buffer_end(&self) -> bool {
-        let buf = self.get_buffer();
+    /// Whether the cursor holds a selection rather than resting as a caret.
+    ///
+    /// Under a bar caret the resting cursor is an empty point, so any
+    /// non-empty cursor is a selection and shape settles it. A block caret
+    /// rests as a min-width-1 range, so shape alone cannot tell a resting
+    /// caret from a `v`-started one-grapheme selection; only the mode can.
+    /// Asking the mode under a bar caret too would miss the shift-selections
+    /// emacs and vi insert can hold.
+    pub(crate) fn cursor_is_a_selection(&self) -> bool {
         let cursor = self.line_buffer.cursor();
-        // A selection is never a clean end-of-buffer point: accepting a hint
-        // here would run through `prepare_append_at_buffer_end` and silently
-        // drop it. Under a bar caret the resting cursor is an empty point, so
-        // any non-empty cursor is a selection and shape settles it. A block
-        // caret rests as a min-width-1 range, so shape alone cannot tell a
-        // resting caret from a `v`-started one-grapheme selection covering the
-        // last grapheme; only the mode can. Asking the mode under a bar caret
-        // too would miss the shift-selections emacs and vi insert can hold.
-        let selection = if self.caret_geometry() == CaretGeometry::Block {
-            next_grapheme_boundary(buf, cursor.start()) < cursor.end()
+        if self.caret_geometry() == CaretGeometry::Block {
+            next_grapheme_boundary(self.get_buffer(), cursor.start()) < cursor.end()
                 || (!cursor.is_empty() && self.edit_mode.is_selection_mode())
         } else {
             !cursor.is_empty()
-        };
-        if selection {
+        }
+    }
+
+    pub(crate) fn is_cursor_at_buffer_end(&self) -> bool {
+        let buf = self.get_buffer();
+        // A selection is never a clean end-of-buffer point: accepting a hint
+        // here would run through `prepare_append_at_buffer_end` and silently
+        // drop it.
+        if self.cursor_is_a_selection() {
             return false;
         }
         // Measure from the visible caret: `insertion_point` already resolves
@@ -1113,56 +1135,6 @@ impl Editor {
             let insertion_offset = self.line_buffer.insertion_point();
             let next_char = self.line_buffer.grapheme_right_index();
             self.cut_range(insertion_offset..next_char);
-        }
-    }
-
-    fn insert_cut_buffer_before(&mut self) {
-        self.delete_selection();
-        insert_clipboard_content_before(&mut self.line_buffer, self.cut_buffer.deref_mut())
-    }
-
-    fn insert_cut_buffer_after(&mut self) {
-        // After replacing a selection the cursor already sits at the deletion
-        // point, so it must NOT skip a grapheme; only the plain no-selection `p`
-        // steps past the grapheme under the cursor before inserting.
-        let had_selection = self.line_buffer.selection_anchor().is_some();
-        self.delete_selection();
-        match self.cut_buffer.get() {
-            (content, Granularity::CharWise) => {
-                if !had_selection {
-                    self.line_buffer.move_right();
-                }
-                self.line_buffer.insert_str(&content);
-            }
-            (mut content, Granularity::LineWise) => {
-                if !content.ends_with('\n') {
-                    content.push('\n');
-                }
-                let ip = self.line_buffer.insertion_point();
-                match line::start_of_next_line(self.line_buffer.get_buffer(), ip) {
-                    // A line exists below: insert at its start so the pasted lines
-                    // land between current and next — i.e. below the current line.
-                    Some(next) => {
-                        self.line_buffer.set_insertion_point(next);
-                        self.line_buffer.insert_str(&content);
-                    }
-                    // Last line: no line below, so append after the current line's
-                    // terminator. Drop the trailing `\n` so no blank line is added,
-                    // otherwise the paste would land *above* (like `P`).
-                    None => {
-                        let trimmed = content.strip_suffix('\n').unwrap_or(&content);
-                        if self.line_buffer.is_empty() {
-                            // No current line to append below — insert as-is so an
-                            // empty buffer (e.g. after `dd` on the only line) does
-                            // not gain a leading blank line.
-                            self.line_buffer.insert_str(trimmed);
-                        } else {
-                            self.line_buffer.set_insertion_point(self.line_buffer.len());
-                            self.line_buffer.insert_str(&format!("\n{trimmed}"));
-                        }
-                    }
-                }
-            }
         }
     }
 
@@ -1442,14 +1414,7 @@ impl Editor {
     /// If a selection is active returns the selected range, otherwise None.
     /// The range is guaranteed to be ascending.
     pub fn get_selection(&self) -> Option<(usize, usize)> {
-        // `None` exactly when the cursor is empty (head == anchor): with the
-        // collapsed `Cursor` storage, `selection_anchor()` is derived from
-        // `!is_empty()`, so an anchor on the head is simply no selection.
-        self.line_buffer.selection_anchor()?;
-        let cursor = self.line_buffer.cursor();
-
-        // Inclusivity is geometric (widened by put_cursor).
-        Some((cursor.start(), cursor.end().min(self.line_buffer.len())))
+        self.line_buffer.get_selection()
     }
 
     /// The one-grapheme cell the caret rests on inside the active selection,
@@ -1471,16 +1436,9 @@ impl Editor {
         (cell_start < to && cell_end > from).then_some((cell_start, cell_end))
     }
 
-    fn delete_selection(&mut self) {
-        if let Some((start, end)) = self.get_selection() {
-            self.line_buffer.clear_range_safe(start..end);
-            self.clear_selection();
-        }
-    }
-
     fn backspace(&mut self) {
         if self.line_buffer.selection_anchor().is_some() {
-            self.delete_selection();
+            self.line_buffer.delete_selection();
         } else {
             self.line_buffer.delete_left_grapheme();
         }
@@ -1506,7 +1464,7 @@ impl Editor {
 
     fn delete(&mut self) {
         if self.line_buffer.selection_anchor().is_some() {
-            self.delete_selection();
+            self.line_buffer.delete_selection();
         } else {
             self.line_buffer.delete_right_grapheme();
         }
@@ -1593,6 +1551,20 @@ impl Editor {
         }
     }
 
+    /// Replace the text from the caret to the end of its line with
+    /// `before_caret` followed by `after_caret`, leaving the caret between
+    /// them, as one undo step.
+    pub(crate) fn replace_to_line_end(&mut self, before_caret: &str, after_caret: &str) {
+        let start = self.insertion_point();
+        let end = self.line_buffer.find_current_line_end();
+        self.line_buffer
+            .replace_range(start..end, &format!("{before_caret}{after_caret}"));
+        self.line_buffer
+            .set_cursor(Cursor::point(start + before_caret.len()));
+        self.commit_cursor();
+        self.update_undo_state(UndoBehavior::CreateUndoPoint);
+    }
+
     pub(crate) fn is_auto_pair_closer_at_cursor(&self, close: char) -> bool {
         self.line_buffer.selection_anchor().is_none()
             && self.line_buffer.grapheme_right().starts_with(close)
@@ -1614,17 +1586,17 @@ impl Editor {
     }
 
     fn insert_char(&mut self, c: char) {
-        self.delete_selection();
+        self.line_buffer.delete_selection();
         self.line_buffer.insert_char(c);
     }
 
     fn insert_str(&mut self, str: &str) {
-        self.delete_selection();
+        self.line_buffer.delete_selection();
         self.line_buffer.insert_str(str);
     }
 
     fn insert_newline(&mut self) {
-        self.delete_selection();
+        self.line_buffer.delete_selection();
         self.line_buffer.insert_newline();
     }
 
@@ -1650,13 +1622,15 @@ impl Editor {
 
     #[cfg(feature = "system_clipboard")]
     fn paste_from_system(&mut self) {
-        self.delete_selection();
         insert_clipboard_content_before(&mut self.line_buffer, self.system_clipboard.deref_mut());
     }
 
-    fn paste_cut_buffer(&mut self) {
-        self.delete_selection();
+    fn paste_cut_buffer_before(&mut self) {
         insert_clipboard_content_before(&mut self.line_buffer, self.cut_buffer.deref_mut());
+    }
+
+    fn paste_cut_buffer_after(&mut self) {
+        insert_clipboard_content_after(&mut self.line_buffer, self.cut_buffer.deref_mut());
     }
 
     fn cut_range(&mut self, range: Range<usize>) {
@@ -1679,20 +1653,6 @@ impl Editor {
         if range.start < range.end {
             let slice = &self.line_buffer.get_buffer()[range];
             self.cut_buffer.set(slice, granularity);
-        }
-    }
-
-    /// Delete text strictly between matching `open_char` and `close_char`.
-    fn cut_inside_pair(&mut self, open_char: char, close_char: char) {
-        if let Some(range) = self
-            .line_buffer
-            .range_inside_current_pair(open_char, close_char)
-            .or_else(|| {
-                self.line_buffer
-                    .range_inside_next_pair(open_char, close_char)
-            })
-        {
-            self.cut_range(range)
         }
     }
 
@@ -1754,12 +1714,17 @@ impl Editor {
         &self,
         text_object_scope: TextObjectScope,
         matching_pair_group: &[(char, char)],
+        check_next: bool,
     ) -> Option<Range<usize>> {
         self.line_buffer
             .range_inside_current_pair_in_group(matching_pair_group)
             .or_else(|| {
-                self.line_buffer
-                    .range_inside_next_pair_in_group(matching_pair_group)
+                if check_next {
+                    self.line_buffer
+                        .range_inside_next_pair_in_group(matching_pair_group)
+                } else {
+                    None
+                }
             })
             .and_then(|pair_range| match text_object_scope {
                 TextObjectScope::Inner => Some(pair_range),
@@ -1780,9 +1745,18 @@ impl Editor {
     fn bracket_text_object_range(
         &self,
         text_object_scope: TextObjectScope,
+        brackets_type: TextObjectBracket,
+        check_next: bool,
     ) -> Option<Range<usize>> {
-        const BRACKET_PAIRS: &[(char, char)] = &[('(', ')'), ('[', ']'), ('{', '}')];
-        self.matching_pair_group_text_object_range(text_object_scope, BRACKET_PAIRS)
+        const BRACKET_PAIRS: &[(char, char)] = &[('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')];
+        let pairs = match brackets_type {
+            TextObjectBracket::Parenthesis => &BRACKET_PAIRS[0..1],
+            TextObjectBracket::SquareBracket => &BRACKET_PAIRS[1..2],
+            TextObjectBracket::CurlyBracket => &BRACKET_PAIRS[2..3],
+            TextObjectBracket::AngleBracket => &BRACKET_PAIRS[3..4],
+            TextObjectBracket::All => BRACKET_PAIRS,
+        };
+        self.matching_pair_group_text_object_range(text_object_scope, pairs, check_next)
     }
 
     /// Returns `Some(Range<usize>)` for the range inside quotes (`""`, `''` or `\`\`\`)
@@ -1796,9 +1770,20 @@ impl Editor {
     ///
     /// If multiple quote types exist, returns the innermost pair that surrounds
     /// the cursor. Handles empty quotes as zero-length ranges inside quote.
-    fn quote_text_object_range(&self, text_object_scope: TextObjectScope) -> Option<Range<usize>> {
-        const QUOTE_PAIRS: &[(char, char)] = &[('"', '"'), ('\'', '\''), ('`', '`')];
-        self.matching_pair_group_text_object_range(text_object_scope, QUOTE_PAIRS)
+    fn quote_text_object_range(
+        &self,
+        text_object_scope: TextObjectScope,
+        quote_type: TextObjectQuote,
+        check_next: bool,
+    ) -> Option<Range<usize>> {
+        const QUOTE_PAIRS: &[(char, char)] = &[('\'', '\''), ('"', '"'), ('`', '`')];
+        let pairs = match quote_type {
+            TextObjectQuote::SingleQuote => &QUOTE_PAIRS[0..1],
+            TextObjectQuote::DoubleQuote => &QUOTE_PAIRS[1..2],
+            TextObjectQuote::Tick => &QUOTE_PAIRS[2..3],
+            TextObjectQuote::All => QUOTE_PAIRS,
+        };
+        self.matching_pair_group_text_object_range(text_object_scope, pairs, check_next)
     }
 
     /// Get the bounds for a text object operation
@@ -1806,8 +1791,19 @@ impl Editor {
         match text_object.object_type {
             TextObjectType::Word => Some(self.word_text_object_range(text_object.scope)),
             TextObjectType::BigWord => Some(self.big_word_text_object_range(text_object.scope)),
-            TextObjectType::Brackets => self.bracket_text_object_range(text_object.scope),
-            TextObjectType::Quote => self.quote_text_object_range(text_object.scope),
+            TextObjectType::Brackets(brackets_type) => self.bracket_text_object_range(
+                text_object.scope,
+                brackets_type,
+                text_object.check_next,
+            ),
+            TextObjectType::Quotes(quote_type) => {
+                self.quote_text_object_range(text_object.scope, quote_type, text_object.check_next)
+            }
+            TextObjectType::Pair { left, right } => self.matching_pair_group_text_object_range(
+                text_object.scope,
+                &[(left, right)],
+                text_object.check_next,
+            ),
         }
     }
 
@@ -1820,6 +1816,122 @@ impl Editor {
     fn copy_text_object(&mut self, text_object: TextObject) {
         if let Some(range) = self.text_object_range(text_object) {
             self.copy_range(range);
+        }
+    }
+
+    fn add_text_object(&mut self, text_object: TextObjectType) {
+        let Some(pair) = text_object.to_chars() else {
+            return;
+        };
+        let cursor = self.line_buffer.cursor();
+        let cursor_forward = cursor.with_direction(super::cursor::Direction::Forward);
+        self.line_buffer.set_cursor(cursor_forward);
+        self.line_buffer.insert_char(pair.1);
+        self.line_buffer.set_cursor(cursor_forward.flip());
+        self.line_buffer.insert_char(pair.0);
+        self.place(Cursor::new(
+            cursor.anchor() + pair.0.len_utf8(),
+            cursor.head() + pair.0.len_utf8(),
+        ));
+    }
+
+    fn remove_text_object(&mut self, text_object: TextObjectType) {
+        let Some((left_len, right_len)) = text_object
+            .to_chars()
+            .map(|(l, r)| (l.len_utf8(), r.len_utf8()))
+        else {
+            return;
+        };
+        let cursor = self.line_buffer.cursor();
+        self.line_buffer.set_cursor(Cursor::point(cursor.head()));
+        let Some(range) = self.text_object_range(TextObject {
+            scope: TextObjectScope::Inner,
+            object_type: text_object,
+            check_next: false,
+        }) else {
+            self.line_buffer.set_cursor(cursor);
+            return;
+        };
+        let range = range.start - left_len..range.end;
+        self.line_buffer
+            .clear_range(range.end..range.end + right_len);
+        self.line_buffer
+            .clear_range(range.start..range.start + left_len);
+        let is_range_empty = (range.end - range.start) == left_len;
+        let mut anchor = cursor.anchor();
+        if cursor.anchor() > range.start || cursor.anchor() == range.start && is_range_empty {
+            anchor = anchor.saturating_sub(left_len);
+        }
+        if cursor.anchor() > range.end {
+            anchor = anchor.saturating_sub(right_len);
+        }
+        let mut head = cursor.head();
+        if cursor.head() > range.start || is_range_empty {
+            head = head.saturating_sub(left_len);
+        }
+        if cursor.head() > range.end || cursor.head() == range.end && is_range_empty {
+            head = head.saturating_sub(right_len);
+        }
+        let new_cursor = Cursor::new(anchor, head);
+        self.place(new_cursor);
+    }
+    fn replace_text_object(&mut self, old: TextObjectType, new: TextObjectType) {
+        let Some((old_left_len, old_right_len)) =
+            old.to_chars().map(|(l, r)| (l.len_utf8(), r.len_utf8()))
+        else {
+            return;
+        };
+        let Some((new_left_len, new_right_len)) =
+            new.to_chars().map(|(l, r)| (l.len_utf8(), r.len_utf8()))
+        else {
+            return;
+        };
+        let cursor = self.line_buffer.cursor();
+        self.line_buffer.set_cursor(Cursor::point(cursor.head()));
+        let Some(range) = self.text_object_range(TextObject {
+            scope: TextObjectScope::Inner,
+            object_type: old,
+            check_next: false,
+        }) else {
+            self.line_buffer.set_cursor(cursor);
+            return;
+        };
+        self.remove_text_object(old);
+        self.line_buffer.set_cursor(Cursor::new(
+            range.start - old_left_len,
+            range.end - old_left_len,
+        ));
+        self.add_text_object(new);
+
+        let (left_diff, right_diff) = (
+            old_left_len as isize - new_left_len as isize,
+            old_right_len as isize - new_right_len as isize,
+        );
+        if left_diff == 0 && right_diff == 0 {
+            self.place(cursor);
+            return;
+        }
+        let mut anchor = cursor.anchor();
+        if cursor.anchor() >= range.start {
+            anchor = anchor.saturating_sub_signed(left_diff);
+        }
+        if cursor.anchor() > range.end {
+            anchor = anchor.saturating_sub_signed(right_diff);
+        }
+        let mut head = cursor.head();
+        if cursor.head() >= range.start {
+            head = head.saturating_sub_signed(left_diff);
+        }
+        if cursor.head() > range.end {
+            head = head.saturating_sub_signed(right_diff);
+        }
+        let new_cursor = Cursor::new(anchor, head);
+        self.place(new_cursor);
+    }
+
+    fn select_text_object(&mut self, text_object: TextObject) {
+        if let Some(range) = self.text_object_range(text_object) {
+            self.place(Cursor::new(range.start, range.end));
         }
     }
 
@@ -1948,20 +2060,6 @@ impl Editor {
         }
     }
 
-    /// Copy text strictly between matching `open_char` and `close_char`.
-    fn copy_inside_pair(&mut self, open_char: char, close_char: char) {
-        if let Some(range) = self
-            .line_buffer
-            .range_inside_current_pair(open_char, close_char)
-            .or_else(|| {
-                self.line_buffer
-                    .range_inside_next_pair(open_char, close_char)
-            })
-        {
-            self.copy_range(range);
-        }
-    }
-
     /// Expand the range to include `open_char` and `close_char`
     fn expand_range_to_include_pair(&self, range: Range<usize>) -> Option<Range<usize>> {
         let start = self.line_buffer.grapheme_left_index_from_pos(range.start);
@@ -1969,39 +2067,12 @@ impl Editor {
 
         Some(start..end)
     }
-
-    /// Delete text around matching `open_char` and `close_char` (including the pair characters).
-    fn cut_around_pair(&mut self, open_char: char, close_char: char) {
-        if let Some(around_range) = self
-            .line_buffer
-            .range_inside_current_pair(open_char, close_char)
-            .or_else(|| {
-                self.line_buffer
-                    .range_inside_next_pair(open_char, close_char)
-            })
-            .and_then(|range| self.expand_range_to_include_pair(range))
-        {
-            self.cut_range(around_range);
-        }
-    }
-
-    /// Copy text around matching `open_char` and `close_char` (including the pair characters).
-    fn copy_around_pair(&mut self, open_char: char, close_char: char) {
-        if let Some(around_range) = self
-            .line_buffer
-            .range_inside_current_pair(open_char, close_char)
-            .or_else(|| {
-                self.line_buffer
-                    .range_inside_next_pair(open_char, close_char)
-            })
-            .and_then(|range| self.expand_range_to_include_pair(range))
-        {
-            self.copy_range(around_range);
-        }
-    }
 }
 
+/// Replaces the selection, if any, then inserts the clipboard content before
+/// the caret. Linewise content lands above the current line (vi `P`).
 fn insert_clipboard_content_before(line_buffer: &mut LineBuffer, clipboard: &mut dyn Clipboard) {
+    line_buffer.delete_selection();
     match clipboard.get() {
         (content, Granularity::CharWise) => {
             line_buffer.insert_str(&content);
@@ -2012,6 +2083,53 @@ fn insert_clipboard_content_before(line_buffer: &mut LineBuffer, clipboard: &mut
                 content.push('\n');
             }
             line_buffer.insert_str(&content);
+        }
+    }
+}
+
+/// Replaces the selection, if any, then inserts the clipboard content after
+/// the caret. Linewise content lands below the current line (vi `p`).
+fn insert_clipboard_content_after(line_buffer: &mut LineBuffer, clipboard: &mut dyn Clipboard) {
+    // After replacing a selection the cursor already sits at the deletion
+    // point, so it must NOT skip a grapheme; only the plain no-selection `p`
+    // steps past the grapheme under the cursor before inserting.
+    let had_selection = line_buffer.selection_anchor().is_some();
+    line_buffer.delete_selection();
+    match clipboard.get() {
+        (content, Granularity::CharWise) => {
+            if !had_selection {
+                line_buffer.move_right();
+            }
+            line_buffer.insert_str(&content);
+        }
+        (mut content, Granularity::LineWise) => {
+            if !content.ends_with('\n') {
+                content.push('\n');
+            }
+            let ip = line_buffer.insertion_point();
+            match line::start_of_next_line(line_buffer.get_buffer(), ip) {
+                // A line exists below: insert at its start so the pasted lines
+                // land between current and next — i.e. below the current line.
+                Some(next) => {
+                    line_buffer.set_insertion_point(next);
+                    line_buffer.insert_str(&content);
+                }
+                // Last line: no line below, so append after the current line's
+                // terminator. Drop the trailing `\n` so no blank line is added,
+                // otherwise the paste would land *above* (like `P`).
+                None => {
+                    let trimmed = content.strip_suffix('\n').unwrap_or(&content);
+                    if line_buffer.is_empty() {
+                        // No current line to append below — insert as-is so an
+                        // empty buffer (e.g. after `dd` on the only line) does
+                        // not gain a leading blank line.
+                        line_buffer.insert_str(trimmed);
+                    } else {
+                        line_buffer.set_insertion_point(line_buffer.len());
+                        line_buffer.insert_str(&format!("\n{trimmed}"));
+                    }
+                }
+            }
         }
     }
 }
@@ -3589,131 +3707,6 @@ mod test {
     }
 
     #[test]
-    fn test_cut_inside_brackets() {
-        let mut editor = editor_with("foo(bar)baz");
-        editor.move_to_position(5, false); // Move inside brackets
-        editor.cut_inside_pair('(', ')');
-        assert_eq!(editor.get_buffer(), "foo()baz");
-        assert_eq!(editor.insertion_point(), 4);
-        assert_eq!(editor.cut_buffer.get().0, "bar");
-
-        // Test with cursor outside brackets
-        let mut editor = editor_with("foo(bar)baz");
-        editor.move_to_position(0, false);
-        editor.cut_inside_pair('(', ')');
-        assert_eq!(editor.get_buffer(), "foo()baz");
-        assert_eq!(editor.insertion_point(), 4);
-        assert_eq!(editor.cut_buffer.get().0, "bar");
-
-        // Test with no matching brackets
-        let mut editor = editor_with("foo bar baz");
-        editor.move_to_position(4, false);
-        editor.cut_inside_pair('(', ')');
-        assert_eq!(editor.get_buffer(), "foo bar baz");
-        assert_eq!(editor.insertion_point(), 4);
-        assert_eq!(editor.cut_buffer.get().0, "");
-    }
-
-    #[test]
-    fn test_cut_inside_quotes() {
-        let mut editor = editor_with("foo\"bar\"baz");
-        editor.move_to_position(5, false); // Move inside quotes
-        editor.cut_inside_pair('"', '"');
-        assert_eq!(editor.get_buffer(), "foo\"\"baz");
-        assert_eq!(editor.insertion_point(), 4);
-        assert_eq!(editor.cut_buffer.get().0, "bar");
-
-        // Test with cursor outside quotes
-        let mut editor = editor_with("foo\"bar\"baz");
-        editor.move_to_position(0, false);
-        editor.cut_inside_pair('"', '"');
-        assert_eq!(editor.get_buffer(), "foo\"\"baz");
-        assert_eq!(editor.insertion_point(), 4);
-        assert_eq!(editor.cut_buffer.get().0, "bar");
-
-        // Test with no matching quotes
-        let mut editor = editor_with("foo bar baz");
-        editor.move_to_position(4, false);
-        editor.cut_inside_pair('"', '"');
-        assert_eq!(editor.get_buffer(), "foo bar baz");
-        assert_eq!(editor.insertion_point(), 4);
-    }
-
-    #[test]
-    fn test_cut_inside_nested() {
-        let mut editor = editor_with("foo(bar(baz)qux)quux");
-        editor.move_to_position(8, false); // Move inside inner brackets
-        editor.cut_inside_pair('(', ')');
-        assert_eq!(editor.get_buffer(), "foo(bar()qux)quux");
-        assert_eq!(editor.insertion_point(), 8);
-        assert_eq!(editor.cut_buffer.get().0, "baz");
-
-        editor.move_to_position(4, false); // Move inside outer brackets
-        editor.cut_inside_pair('(', ')');
-        assert_eq!(editor.get_buffer(), "foo()quux");
-        assert_eq!(editor.insertion_point(), 4);
-        assert_eq!(editor.cut_buffer.get().0, "bar()qux");
-    }
-
-    #[test]
-    fn test_yank_inside_brackets() {
-        let mut editor = editor_with("foo(bar)baz");
-        editor.move_to_position(5, false); // Move inside brackets
-        editor.copy_inside_pair('(', ')');
-        assert_eq!(editor.get_buffer(), "foo(bar)baz"); // Buffer shouldn't change
-        assert_eq!(editor.insertion_point(), 5); // Cursor should return to original position
-
-        // Test yanked content by pasting
-        editor.paste_cut_buffer();
-        assert_eq!(editor.get_buffer(), "foo(bbarar)baz");
-
-        // Test with cursor outside brackets
-        let mut editor = editor_with("foo(bar)baz");
-        editor.move_to_position(0, false);
-        editor.copy_inside_pair('(', ')');
-        assert_eq!(editor.get_buffer(), "foo(bar)baz");
-        assert_eq!(editor.insertion_point(), 0);
-    }
-
-    #[test]
-    fn test_yank_inside_quotes() {
-        let mut editor = editor_with("foo\"bar\"baz");
-        editor.move_to_position(5, false); // Move inside quotes
-        editor.copy_inside_pair('"', '"');
-        assert_eq!(editor.get_buffer(), "foo\"bar\"baz"); // Buffer shouldn't change
-        assert_eq!(editor.insertion_point(), 5); // Cursor should return to original position
-        assert_eq!(editor.cut_buffer.get().0, "bar");
-
-        // Test with no matching quotes
-        let mut editor = editor_with("foo bar baz");
-        editor.move_to_position(4, false);
-        editor.copy_inside_pair('"', '"');
-        assert_eq!(editor.get_buffer(), "foo bar baz");
-        assert_eq!(editor.insertion_point(), 4);
-        assert_eq!(editor.cut_buffer.get().0, "");
-    }
-
-    #[test]
-    fn test_yank_inside_nested() {
-        let mut editor = editor_with("foo(bar(baz)qux)quux");
-        editor.move_to_position(8, false); // Move inside inner brackets
-        editor.copy_inside_pair('(', ')');
-        assert_eq!(editor.get_buffer(), "foo(bar(baz)qux)quux"); // Buffer shouldn't change
-        assert_eq!(editor.insertion_point(), 8);
-        assert_eq!(editor.cut_buffer.get().0, "baz");
-
-        // Test yanked content by pasting
-        editor.paste_cut_buffer();
-        assert_eq!(editor.get_buffer(), "foo(bar(bazbaz)qux)quux");
-
-        editor.move_to_position(4, false); // Move inside outer brackets
-        editor.copy_inside_pair('(', ')');
-        assert_eq!(editor.get_buffer(), "foo(bar(bazbaz)qux)quux");
-        assert_eq!(editor.insertion_point(), 4);
-        assert_eq!(editor.cut_buffer.get().0, "bar(bazbaz)qux");
-    }
-
-    #[test]
     fn test_kill_line() {
         let mut editor = editor_with("foo\nbar");
         editor.move_to_position(1, false);
@@ -3879,6 +3872,7 @@ mod test {
         editor.cut_text_object(TextObject {
             scope: TextObjectScope::Inner,
             object_type: TextObjectType::Word,
+            ..Default::default()
         });
         assert_eq!(editor.get_buffer(), expected_buffer);
         assert_eq!(editor.insertion_point(), expected_cursor);
@@ -3899,6 +3893,7 @@ mod test {
         editor.copy_text_object(TextObject {
             scope: TextObjectScope::Inner,
             object_type: TextObjectType::Word,
+            ..Default::default()
         });
         assert_eq!(editor.get_buffer(), input); // Buffer shouldn't change
         assert_eq!(editor.insertion_point(), cursor_pos); // Cursor should return to original position
@@ -3931,6 +3926,7 @@ mod test {
         editor.cut_text_object(TextObject {
             scope: TextObjectScope::Around,
             object_type: TextObjectType::Word,
+            ..Default::default()
         });
         assert_eq!(editor.get_buffer(), expected_buffer);
         assert_eq!(editor.insertion_point(), expected_cursor);
@@ -3951,6 +3947,7 @@ mod test {
         editor.copy_text_object(TextObject {
             scope: TextObjectScope::Around,
             object_type: TextObjectType::Word,
+            ..Default::default()
         });
         assert_eq!(editor.get_buffer(), input); // Buffer shouldn't change
         assert_eq!(editor.insertion_point(), cursor_pos); // Cursor should return to original position
@@ -3974,6 +3971,7 @@ mod test {
         editor.cut_text_object(TextObject {
             scope: TextObjectScope::Inner,
             object_type: TextObjectType::BigWord,
+            ..Default::default()
         });
 
         assert_eq!(editor.get_buffer(), expected_buffer);
@@ -3999,6 +3997,7 @@ mod test {
         editor.cut_text_object(TextObject {
             scope: TextObjectScope::Inner,
             object_type: TextObjectType::Word,
+            ..Default::default()
         });
         assert_eq!(editor.get_buffer(), expected_buffer);
         assert_eq!(editor.insertion_point(), expected_cursor);
@@ -4030,10 +4029,10 @@ mod test {
     }
 
     #[rstest]
-    #[case("hello-world test", 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "-world test", "hello")] // small word gets just "hello"
-    #[case("hello-world test", 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::BigWord }, " test", "hello-world")] // big word gets "hello-word"
-    #[case("test@example.com", 6, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "test@", "example.com")] // small word in email (UAX#29 extends across punct)
-    #[case("test@example.com", 6, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::BigWord }, "", "test@example.com")] // big word gets entire email
+    #[case("hello-world test", 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, ..Default::default() }, "-world test", "hello")] // small word gets just "hello"
+    #[case("hello-world test", 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::BigWord, ..Default::default() }, " test", "hello-world")] // big word gets "hello-word"
+    #[case("test@example.com", 6, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, ..Default::default() }, "test@", "example.com")] // small word in email (UAX#29 extends across punct)
+    #[case("test@example.com", 6, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::BigWord, ..Default::default() }, "", "test@example.com")] // big word gets entire email
     fn test_word_vs_big_word_comparison(
         #[case] input: &str,
         #[case] cursor_pos: usize,
@@ -4068,6 +4067,7 @@ mod test {
         editor.cut_text_object(TextObject {
             scope: TextObjectScope::Inner,
             object_type: TextObjectType::Word,
+            ..Default::default()
         });
         assert_eq!(editor.cut_buffer.get().0, expected_cut);
     }
@@ -4091,6 +4091,7 @@ mod test {
         editor.cut_text_object(TextObject {
             scope: TextObjectScope::Around,
             object_type: TextObjectType::Word,
+            ..Default::default()
         });
         assert_eq!(editor.cut_buffer.get().0, expected_cut);
     }
@@ -4104,6 +4105,7 @@ mod test {
         editor.cut_text_object(TextObject {
             scope: TextObjectScope::Inner,
             object_type: TextObjectType::Word,
+            ..Default::default()
         }); // Cut the emoji
 
         assert!(editor.line_buffer.is_valid()); // Should not panic or be invalid
@@ -4111,19 +4113,19 @@ mod test {
 
     #[rstest]
     // Test operations when cursor is IN WHITESPACE (middle of spaces)
-    #[case("hello world test", 5, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "helloworld test", 5, " ")] // single space
-    #[case("hello  world", 6, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "helloworld", 5, "  ")] // multiple spaces, cursor on second
-    #[case("hello   world", 7, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "helloworld", 5, "   ")] // multiple spaces, cursor on middle
-    #[case("   hello", 1, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "hello", 0, "   ")] // leading spaces, cursor on middle
-    #[case("hello   ", 7, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "hello", 5, "   ")] // trailing spaces, cursor on middle
-    #[case("hello\tworld", 5, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "helloworld", 5, "\t")] // tab character
-    #[case("hello\nworld", 5, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "helloworld", 5, "\n")] // newline character
-    #[case("hello world test", 5, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::BigWord }, "helloworld test", 5, " ")] // single space (big word)
-    #[case("hello  world", 6, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::BigWord }, "helloworld", 5, "  ")] // multiple spaces (big word)
-    #[case("  ", 0, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "", 0, "  ")] // only whitespace at start
-    #[case("  ", 1, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "", 0, "  ")] // only whitespace at end
-    #[case("hello  ", 5, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "hello", 5, "  ")] // trailing whitespace at string end
-    #[case("  hello", 0, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "hello", 0, "  ")] // leading whitespace at string start
+    #[case("hello world test", 5, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, ..Default::default() }, "helloworld test", 5, " ")] // single space
+    #[case("hello  world", 6, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, ..Default::default() }, "helloworld", 5, "  ")] // multiple spaces, cursor on second
+    #[case("hello   world", 7, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, ..Default::default() }, "helloworld", 5, "   ")] // multiple spaces, cursor on middle
+    #[case("   hello", 1, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, ..Default::default() }, "hello", 0, "   ")] // leading spaces, cursor on middle
+    #[case("hello   ", 7, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, ..Default::default() }, "hello", 5, "   ")] // trailing spaces, cursor on middle
+    #[case("hello\tworld", 5, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, ..Default::default() }, "helloworld", 5, "\t")] // tab character
+    #[case("hello\nworld", 5, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, ..Default::default() }, "helloworld", 5, "\n")] // newline character
+    #[case("hello world test", 5, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::BigWord, ..Default::default() }, "helloworld test", 5, " ")] // single space (big word)
+    #[case("hello  world", 6, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::BigWord, ..Default::default() }, "helloworld", 5, "  ")] // multiple spaces (big word)
+    #[case("  ", 0, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, ..Default::default() }, "", 0, "  ")] // only whitespace at start
+    #[case("  ", 1, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, ..Default::default() }, "", 0, "  ")] // only whitespace at end
+    #[case("hello  ", 5, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, ..Default::default() }, "hello", 5, "  ")] // trailing whitespace at string end
+    #[case("  hello", 0, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word, ..Default::default() }, "hello", 0, "  ")] // leading whitespace at string start
     fn test_text_object_in_whitespace(
         #[case] input: &str,
         #[case] cursor_pos: usize,
@@ -4143,19 +4145,19 @@ mod test {
     #[rstest]
     // Test text object jumping behavior in various scenarios
     // Cursor inside empty pairs should operate on current pair (cursor stays, nothing cut)
-    #[case(r#"foo()bar"#, 4, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets }, "foo()bar", 4, "")] // inside empty brackets
-    #[case(r#"foo""bar"#, 4, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quote }, "foo\"\"bar", 4, "")] // inside empty quotes
+    #[case(r#"foo()bar"#, 4, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets(TextObjectBracket::All), ..Default::default() }, "foo()bar", 4, "")] // inside empty brackets
+    #[case(r#"foo""bar"#, 4, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quotes(TextObjectQuote::All), ..Default::default() }, "foo\"\"bar", 4, "")] // inside empty quotes
     // Cursor outside pairs should jump to next pair (even if empty)
-    #[case(r#"foo ()bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets }, "foo ()bar", 5, "")] // jump to empty brackets
-    #[case(r#"foo ""bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quote }, "foo \"\"bar", 5, "")] // jump to empty quote
-    #[case(r#"foo (content)bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets }, "foo ()bar", 5, "content")] // jump to non-empty brackets
-    #[case(r#"foo "content"bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quote }, "foo \"\"bar", 5, "content")] // jump to non-empty quotes
+    #[case(r#"foo ()bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets(TextObjectBracket::All), ..Default::default() }, "foo ()bar", 5, "")] // jump to empty brackets
+    #[case(r#"foo ""bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quotes(TextObjectQuote::All), ..Default::default() }, "foo \"\"bar", 5, "")] // jump to empty quote
+    #[case(r#"foo (content)bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets(TextObjectBracket::All), ..Default::default() }, "foo ()bar", 5, "content")] // jump to non-empty brackets
+    #[case(r#"foo "content"bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quotes(TextObjectQuote::All), ..Default::default() }, "foo \"\"bar", 5, "content")] // jump to non-empty quotes
     // Cursor between pairs should jump to next pair
-    #[case(r#"(first) (second)"#, 8, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets }, "(first) ()", 9, "second")] // between brackets
-    #[case(r#""first" "second""#, 8, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quote }, "\"first\"\"second\"", 7, " ")] // between quotes
+    #[case(r#"(first) (second)"#, 8, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets(TextObjectBracket::All), ..Default::default() }, "(first) ()", 9, "second")] // between brackets
+    #[case(r#""first" "second""#, 8, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quotes(TextObjectQuote::All), ..Default::default() }, "\"first\"\"second\"", 7, " ")] // between quotes
     // Around scope should include the pair characters
-    #[case(r#"foo (bar)"#, 2, TextObject { scope: TextObjectScope::Around, object_type: TextObjectType::Brackets }, "foo ", 4, "(bar)")] // around includes parentheses
-    #[case(r#"foo "bar""#, 2, TextObject { scope: TextObjectScope::Around, object_type: TextObjectType::Quote }, "foo ", 4, "\"bar\"")] // around includes quotes
+    #[case(r#"foo (bar)"#, 2, TextObject { scope: TextObjectScope::Around, object_type: TextObjectType::Brackets(TextObjectBracket::All), ..Default::default() }, "foo ", 4, "(bar)")] // around includes parentheses
+    #[case(r#"foo "bar""#, 2, TextObject { scope: TextObjectScope::Around, object_type: TextObjectType::Quotes(TextObjectQuote::All), ..Default::default() }, "foo ", 4, "\"bar\"")] // around includes quotes
     fn test_text_object_jumping_behavior(
         #[case] input: &str,
         #[case] cursor_pos: usize,
@@ -4174,74 +4176,132 @@ mod test {
 
     #[rstest]
     // Test bracket_text_object_range with Inner scope - just the content inside brackets
-    #[case("foo(bar)baz", 5, TextObjectScope::Inner, Some(4..7))] // cursor inside brackets
-    #[case("foo[bar]baz", 5, TextObjectScope::Inner, Some(4..7))] // square brackets
-    #[case("foo{bar}baz", 5, TextObjectScope::Inner, Some(4..7))] // square brackets
-    #[case("foo()bar", 4, TextObjectScope::Inner, Some(4..4))] // empty brackets
-    #[case("(nested[inner]outer)", 8, TextObjectScope::Inner, Some(8..13))] // nested, innermost
-    #[case("(nested[mixed{inner}brackets]outer)", 8, TextObjectScope::Inner, Some(8..28))] // nested, innermost
-    #[case("next(nested[mixed{inner}brackets]outer)", 0, TextObjectScope::Inner, Some(5..38))] // next nested mixed
-    #[case("foo (bar)baz", 0, TextObjectScope::Inner, Some(5..8))] // next pair from line start
-    #[case("    (bar)baz", 1, TextObjectScope::Inner, Some(5..8))] // next pair from whitespace
-    #[case("foo(bar)baz", 2, TextObjectScope::Inner, Some(4..7))] // next pair from word
-    #[case("foo(bar\nbaz)qux", 8, TextObjectScope::Inner, Some(4..11))] // multi-line brackets
-    #[case("foo\n(bar\nbaz)qux", 0, TextObjectScope::Inner, Some(5..12))] // next multi-line brackets
-    #[case("foo\n(bar\nbaz)qux", 3, TextObjectScope::Around, Some(4..13))] // next multi-line brackets
-    #[case("{hello}", 3, TextObjectScope::Around, Some(0..7))] // includes curly brackets
-    #[case("foo()bar", 4, TextObjectScope::Around, Some(3..5))] // around empty brackets
-    #[case("(nested(inner)outer)", 8, TextObjectScope::Around, Some(7..14))] // nested around includes delimiters
-    #[case("start(nested(inner)outer)", 2, TextObjectScope::Around, Some(5..25))] // Next outer nested pair
-    #[case("(mixed{nested)brackets", 1, TextObjectScope::Inner, Some(1..13))] // mixed nesting
-    #[case("(unclosed(nested)brackets", 1, TextObjectScope::Inner, Some(10..16))] // unclosed bracket, find next closed
-    #[case("no brackets here", 5, TextObjectScope::Inner, None)] // no brackets found
-    #[case("(unclosed", 1, TextObjectScope::Inner, None)] // unclosed bracket
-    #[case("(mismatched}", 1, TextObjectScope::Inner, None)] // mismatched brackets
+    #[case("foo(bar)baz", 5, TextObjectScope::Inner, TextObjectBracket::All, Some(4..7))] // cursor inside brackets
+    #[case("foo[bar]baz", 5, TextObjectScope::Inner, TextObjectBracket::All, Some(4..7))] // square brackets
+    #[case("foo{bar}baz", 5, TextObjectScope::Inner, TextObjectBracket::All, Some(4..7))] // curly brackets
+    #[case("foo<bar>baz", 5, TextObjectScope::Inner, TextObjectBracket::All, Some(4..7))] // angle brackets
+    #[case("foo(bar)baz", 5, TextObjectScope::Inner, TextObjectBracket::Parenthesis, Some(4..7))] // cursor inside brackets
+    #[case("foo[bar]baz", 5, TextObjectScope::Inner, TextObjectBracket::SquareBracket, Some(4..7))] // square brackets
+    #[case("foo{bar}baz", 5, TextObjectScope::Inner, TextObjectBracket::CurlyBracket, Some(4..7))] // curly brackets
+    #[case("foo<bar>baz", 5, TextObjectScope::Inner, TextObjectBracket::AngleBracket, Some(4..7))] // angle brackets
+    #[case("foo()bar", 4, TextObjectScope::Inner, TextObjectBracket::All, Some(4..4))] // empty brackets
+    #[case("(nested[inner]outer)", 8, TextObjectScope::Inner, TextObjectBracket::All, Some(8..13))] // nested, innermost
+    #[case("(nested[mixed{inner}brackets]outer)", 8, TextObjectScope::Inner, TextObjectBracket::All, Some(8..28))] // nested, innermost
+    #[case("next(nested[mixed{inner}brackets]outer)", 0, TextObjectScope::Inner, TextObjectBracket::All, Some(5..38))] // next nested mixed
+    #[case("foo (bar)baz", 0, TextObjectScope::Inner, TextObjectBracket::All, Some(5..8))] // next pair from line start
+    #[case("    (bar)baz", 1, TextObjectScope::Inner, TextObjectBracket::All, Some(5..8))] // next pair from whitespace
+    #[case("foo(bar)baz", 2, TextObjectScope::Inner, TextObjectBracket::All, Some(4..7))] // next pair from word
+    #[case("foo(bar\nbaz)qux", 8, TextObjectScope::Inner, TextObjectBracket::All, Some(4..11))] // multi-line brackets
+    #[case("foo\n(bar\nbaz)qux", 0, TextObjectScope::Inner, TextObjectBracket::All, Some(5..12))] // next multi-line brackets
+    #[case("foo\n(bar\nbaz)qux", 3, TextObjectScope::Around, TextObjectBracket::All, Some(4..13))] // next multi-line brackets
+    #[case("{hello}", 3, TextObjectScope::Around, TextObjectBracket::All, Some(0..7))] // includes curly brackets
+    #[case("foo()bar", 4, TextObjectScope::Around, TextObjectBracket::All, Some(3..5))] // around empty brackets
+    #[case("(nested(inner)outer)", 8, TextObjectScope::Around, TextObjectBracket::All, Some(7..14))] // nested around includes delimiters
+    #[case("start(nested(inner)outer)", 2, TextObjectScope::Around, TextObjectBracket::All, Some(5..25))] // Next outer nested pair
+    #[case("(mixed{nested)brackets", 1, TextObjectScope::Inner, TextObjectBracket::All, Some(1..13))] // mixed nesting
+    #[case("(unclosed(nested)brackets", 1, TextObjectScope::Inner, TextObjectBracket::All, Some(10..16))] // unclosed bracket, find next closed
+    #[case(
+        "no brackets here",
+        5,
+        TextObjectScope::Inner,
+        TextObjectBracket::All,
+        None
+    )] // no brackets found
+    #[case("(unclosed", 1, TextObjectScope::Inner, TextObjectBracket::All, None)] // unclosed bracket
+    #[case(
+        "(mismatched}",
+        1,
+        TextObjectScope::Inner,
+        TextObjectBracket::All,
+        None
+    )] // mismatched brackets
     fn test_bracket_text_object_range(
         #[case] input: &str,
         #[case] cursor_pos: usize,
         #[case] scope: TextObjectScope,
+        #[case] bracket_type: TextObjectBracket,
         #[case] expected: Option<std::ops::Range<usize>>,
     ) {
         let mut editor = editor_with(input);
         editor.move_to_position(cursor_pos, false);
-        let result = editor.bracket_text_object_range(scope);
+        let result = editor.bracket_text_object_range(scope, bracket_type, true);
         assert_eq!(result, expected);
     }
 
     #[rstest]
     // Test quote_text_object_range with Inner scope - just the content inside quotes
-    #[case(r#"foo"bar"baz"#, 5, TextObjectScope::Inner, Some(4..7))] // cursor inside double quotes
-    #[case("foo'bar'baz", 5, TextObjectScope::Inner, Some(4..7))] // single quotes
-    #[case("foo`bar`baz", 5, TextObjectScope::Inner, Some(4..7))] // backticks
-    #[case(r#"foo""bar"#, 4, TextObjectScope::Inner, Some(4..4))] // empty quotes
-    #[case(r#""nested'inner'outer""#, 8, TextObjectScope::Inner, Some(8..13))] // nested, innermost
-    #[case(r#""nested`mixed'inner'backticks`outer""#, 8, TextObjectScope::Inner, Some(8..29))] // nested, innermost
-    #[case(r#"next"nested'mixed`inner`quotes'outer""#, 0, TextObjectScope::Inner, Some(5..36))] // next nested mixed
-    #[case(r#"foo "bar"baz"#, 0, TextObjectScope::Inner, Some(5..8))] // next pair
-    #[case(r#"foo"bar"baz"#, 2, TextObjectScope::Inner, Some(4..7))] // next from inside word
-    #[case(r#"foo"bar"baz"#, 4, TextObjectScope::Around, Some(3..8))] // around includes quotes
-    #[case(r#"foo"bar"baz"#, 3, TextObjectScope::Around, Some(3..8))] // around on opening quote
-    #[case(r#"foo"bar"baz"#, 2, TextObjectScope::Around, Some(3..8))] // around next quotes
-    #[case(r#"foo""bar"#, 4, TextObjectScope::Around, Some(3..5))] // around empty quotes
-    #[case(r#"foo""bar"#, 1, TextObjectScope::Around, Some(3..5))] // around empty quotes
-    #[case(r#""nested"inner"outer""#, 8, TextObjectScope::Around, Some(7..14))] // nested around includes delimiters
-    #[case(r#"start"nested'inner'outer""#, 2, TextObjectScope::Around, Some(5..25))] // Next outer nested pair
-    #[case("no quotes here", 5, TextObjectScope::Inner, None)] // no quotes found
-    #[case(r#"foo"bar"#, 1, TextObjectScope::Inner, None)] // unclosed quote
-    #[case("foo'bar\nbaz'qux", 5, TextObjectScope::Inner, None)] // quotes don't span multiple lines
-    #[case("foo'bar\nbaz'qux", 0, TextObjectScope::Inner, None)] // quotes don't span multiple lines
-    #[case("foobar\n`baz`qux", 6, TextObjectScope::Inner, None)] // quotes don't span multiple lines
-    #[case("foo\n(bar\nbaz)qux", 0, TextObjectScope::Inner, None)] // next multi-line brackets
-    #[case("foo\n(bar\nbaz)qux", 3, TextObjectScope::Around, None)] // next multi-line brackets
+    #[case(r#"foo"bar"baz"#, 5, TextObjectScope::Inner, TextObjectQuote::All, Some(4..7))] // cursor inside double quotes
+    #[case("foo'bar'baz", 5, TextObjectScope::Inner, TextObjectQuote::All, Some(4..7))] // single quotes
+    #[case("foo`bar`baz", 5, TextObjectScope::Inner, TextObjectQuote::All, Some(4..7))] // backticks
+    #[case(r#"foo"bar"baz"#, 5, TextObjectScope::Inner, TextObjectQuote::DoubleQuote, Some(4..7))] // cursor inside double quotes
+    #[case("foo'bar'baz", 5, TextObjectScope::Inner, TextObjectQuote::SingleQuote, Some(4..7))] // single quotes
+    #[case("foo`bar`baz", 5, TextObjectScope::Inner, TextObjectQuote::Tick, Some(4..7))] // backticks
+    #[case(r#"foo""bar"#, 4, TextObjectScope::Inner, TextObjectQuote::All, Some(4..4))] // empty quotes
+    #[case(r#""nested'inner'outer""#, 8, TextObjectScope::Inner, TextObjectQuote::All, Some(8..13))] // nested, innermost
+    #[case(r#""nested`mixed'inner'backticks`outer""#, 8, TextObjectScope::Inner, TextObjectQuote::All, Some(8..29))] // nested, innermost
+    #[case(r#"next"nested'mixed`inner`quotes'outer""#, 0, TextObjectScope::Inner, TextObjectQuote::All, Some(5..36))] // next nested mixed
+    #[case(r#"foo "bar"baz"#, 0, TextObjectScope::Inner, TextObjectQuote::All, Some(5..8))] // next pair
+    #[case(r#"foo"bar"baz"#, 2, TextObjectScope::Inner, TextObjectQuote::All, Some(4..7))] // next from inside word
+    #[case(r#"foo"bar"baz"#, 4, TextObjectScope::Around, TextObjectQuote::All, Some(3..8))] // around includes quotes
+    #[case(r#"foo"bar"baz"#, 3, TextObjectScope::Around, TextObjectQuote::All, Some(3..8))] // around on opening quote
+    #[case(r#"foo"bar"baz"#, 2, TextObjectScope::Around, TextObjectQuote::All, Some(3..8))] // around next quotes
+    #[case(r#"foo""bar"#, 4, TextObjectScope::Around, TextObjectQuote::All, Some(3..5))] // around empty quotes
+    #[case(r#"foo""bar"#, 1, TextObjectScope::Around, TextObjectQuote::All, Some(3..5))] // around empty quotes
+    #[case(r#""nested"inner"outer""#, 8, TextObjectScope::Around, TextObjectQuote::All, Some(7..14))] // nested around includes delimiters
+    #[case(r#"start"nested'inner'outer""#, 2, TextObjectScope::Around, TextObjectQuote::All, Some(5..25))] // Next outer nested pair
+    #[case(
+        "no quotes here",
+        5,
+        TextObjectScope::Inner,
+        TextObjectQuote::All,
+        None
+    )] // no quotes found
+    #[case(r#"foo"bar"#, 1, TextObjectScope::Inner, TextObjectQuote::All, None)] // unclosed quote
+    #[case(
+        "foo'bar\nbaz'qux",
+        5,
+        TextObjectScope::Inner,
+        TextObjectQuote::All,
+        None
+    )] // quotes don't span multiple lines
+    #[case(
+        "foo'bar\nbaz'qux",
+        0,
+        TextObjectScope::Inner,
+        TextObjectQuote::All,
+        None
+    )] // quotes don't span multiple lines
+    #[case(
+        "foobar\n`baz`qux",
+        6,
+        TextObjectScope::Inner,
+        TextObjectQuote::All,
+        None
+    )] // quotes don't span multiple lines
+    #[case(
+        "foo\n(bar\nbaz)qux",
+        0,
+        TextObjectScope::Inner,
+        TextObjectQuote::All,
+        None
+    )] // next multi-line brackets
+    #[case(
+        "foo\n(bar\nbaz)qux",
+        3,
+        TextObjectScope::Around,
+        TextObjectQuote::All,
+        None
+    )] // next multi-line brackets
     fn test_quote_text_object_range(
         #[case] input: &str,
         #[case] cursor_pos: usize,
         #[case] scope: TextObjectScope,
+        #[case] quote_type: TextObjectQuote,
         #[case] expected: Option<std::ops::Range<usize>>,
     ) {
         let mut editor = editor_with(input);
         editor.line_buffer.set_insertion_point(cursor_pos);
-        let result = editor.quote_text_object_range(scope);
+        let result = editor.quote_text_object_range(scope, quote_type, true);
         assert_eq!(result, expected);
     }
 
@@ -4265,11 +4325,460 @@ mod test {
         let mut editor = editor_with(input);
         editor.move_to_position(cursor_pos, false);
 
-        let bracket_result = editor.bracket_text_object_range(scope);
-        let quote_result = editor.quote_text_object_range(scope);
+        let bracket_result = editor.bracket_text_object_range(scope, TextObjectBracket::All, true);
+        let quote_result = editor.quote_text_object_range(scope, TextObjectQuote::All, true);
 
         assert_eq!(bracket_result, expected_bracket);
         assert_eq!(quote_result, expected_quote);
+    }
+
+    #[rstest]
+    #[case(
+        "",
+        Cursor::new(0, 0),
+        TextObjectType::Quotes(TextObjectQuote::DoubleQuote),
+        "\"\""
+    )] // add text object in an empty buffer
+    #[case(
+        "",
+        Cursor::new(0, 0),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        "{}"
+    )] // add another type of text object in an empty buffer
+    #[case(
+        "text",
+        Cursor::new(0, 4),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        "{text}"
+    )] // add a text object around a word
+    #[case(
+        "text",
+        Cursor::new(0, 1),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        "{t}ext"
+    )] // add a text object around a character
+    #[case("text", Cursor::new(0, 4), TextObjectType::Word, "text")] // Attempting to add a "word" around a word, which won't do anything
+    #[case("text", Cursor::new(0, 4), TextObjectType::BigWord, "text")] // Attempting to add a "big word" around a word, which won't do anything
+    #[case(
+        "text1 text2 text3",
+        Cursor::new(6, 11),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        "text1 {text2} text3"
+    )] // Add a text object around a word in the middle of the buffer
+    #[case(
+        "text1 {text2} text3",
+        Cursor::new(7, 12),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        "text1 {{text2}} text3"
+    )] // Add a new text object around a word inside of the same text object
+    fn test_add_text_object(
+        #[case] input: &str,
+        #[case] cursor: Cursor,
+        #[case] object_type: TextObjectType,
+        #[case] expected_output: &str,
+    ) {
+        let mut editor = editor_with(input);
+        editor.place(cursor);
+
+        editor.run_edit_command(&EditCommand::AddTextObject {
+            text_object: object_type,
+        });
+        let result = editor.get_buffer();
+        assert_eq!(result, expected_output);
+    }
+
+    #[rstest]
+    #[case(
+        "",
+        Cursor::new(0, 0),
+        TextObjectType::Quotes(TextObjectQuote::DoubleQuote),
+        ""
+    )] // remove text object in an empty buffer
+    #[case(
+        "",
+        Cursor::new(0, 0),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        ""
+    )] // remove another type of text object in an empty buffer
+    #[case(
+        "{}",
+        Cursor::new(0, 1),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        ""
+    )] // remove another type of text object in an empty buffer
+    #[case(
+        "{text}",
+        Cursor::new(0, 4),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        "text"
+    )] // remove a text object around a word
+    #[case(
+        "{t}ext",
+        Cursor::new(0, 1),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        "text"
+    )] // remove a text object around a character
+    #[case("{text}", Cursor::new(0, 4), TextObjectType::Word, "{text}")] // Attempting to remove a "word" around a word, which won't do anything
+    #[case("{text}", Cursor::new(0, 4), TextObjectType::BigWord, "{text}")] // Attempting to remove a "big word" around a word, which won't do anything
+    #[case(
+        "text1 {text2} text3",
+        Cursor::new(6, 11),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        "text1 text2 text3"
+    )] // remove a text object around a word in the middle of the buffer
+    #[case(
+        "text1 {{text2}} text3",
+        Cursor::new(7, 12),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        "text1 {text2} text3"
+    )]
+    // remove a new text object around a word inside of the same text object
+    // For the following test, removing a text object may occur only around the cursor head
+    #[case(
+        "text1 {text2} text3",
+        Cursor::new(0, 8),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        "text1 text2 text3"
+    )] // anchor outside (left), head inside
+    #[case(
+        "text1 {text2} text3",
+        Cursor::new(18, 8),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        "text1 text2 text3"
+    )]
+    // anchor outside (right), head inside
+    #[case(
+        "text1 {text2} text3",
+        Cursor::new(0, 2),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        "text1 {text2} text3"
+    )]
+    // anchor outside, head outside (left)
+    #[case(
+        "text1 {text2} text3",
+        Cursor::new(16, 2),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        "text1 {text2} text3"
+    )]
+    // anchor outside (right), head outside (left)
+    #[case(
+        "text1 {text2} text3",
+        Cursor::new(18, 16),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        "text1 {text2} text3"
+    )] // anchor outside, head outside (right)
+    #[case(
+        "text1 {text2} text3",
+        Cursor::new(2, 16),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        "text1 {text2} text3"
+    )] // anchor outside (left), head outside (right)
+    fn test_remove_text_object(
+        #[case] input: &str,
+        #[case] cursor: Cursor,
+        #[case] object_type: TextObjectType,
+        #[case] expected_output: &str,
+    ) {
+        let mut editor = editor_with(input);
+        editor.place(cursor);
+
+        editor.run_edit_command(&EditCommand::RemoveTextObject {
+            text_object: object_type,
+        });
+        let result = editor.get_buffer();
+        assert_eq!(result, expected_output);
+    }
+
+    #[rstest]
+    // `[]` => `[]`
+    #[case("", Cursor::new(0, 0), "", Cursor::new(0, 0))]
+    // Quick test of commit_cursor
+    #[case("", Cursor::new(0, 1), "", Cursor::new(0, 0))]
+    // `[{}]` => `[]`
+    #[case("{}", Cursor::new(0, 1), "", Cursor::new(0, 0))]
+    // `]{}[` => `[]`
+    #[case("{}", Cursor::new(1, 0), "", Cursor::new(0, 0))]
+    // `abc[{}]def` => `ab[c]def`
+    #[case("abc{}def", Cursor::new(3, 4), "abcdef", Cursor::new(2, 2))]
+    // `[abc]` => `[abc]`
+    #[case("abc", Cursor::new(0, 2), "abc", Cursor::new(0, 2))]
+    // `]abc[` => `]abc[`
+    #[case("abc", Cursor::new(2, 0), "abc", Cursor::new(2, 0))]
+    // `{[abc]}` => `[abc]`
+    #[case("{abc}", Cursor::new(1, 3), "abc", Cursor::new(0, 2))]
+    // `[{abc}]` => `[abc]`
+    #[case("{abc}", Cursor::new(0, 4), "abc", Cursor::new(0, 3))]
+    // `[abc]{def}ghi` => `[abc]{def}ghi`
+    #[case("abc{def}ghi", Cursor::new(0, 2), "abc{def}ghi", Cursor::new(0, 2))]
+    // `abc{[def]}ghi` => `abc[def]ghi`
+    #[case("abc{def}ghi", Cursor::new(4, 6), "abcdefghi", Cursor::new(3, 5))]
+    // `abc{]def[}ghi` => `abc]def[ghi`
+    #[case("abc{def}ghi", Cursor::new(6, 4), "abcdefghi", Cursor::new(5, 3))]
+    // `abc{def}[ghi]` => `abc{def}[ghi]`
+    #[case("abc{def}ghi", Cursor::new(8, 10), "abc{def}ghi", Cursor::new(8, 10))]
+    // `[abc{def}ghi]` => `[abc{def}ghi]`
+    #[case("abc{def}ghi", Cursor::new(0, 10), "abc{def}ghi", Cursor::new(0, 10))]
+    // `]abc{def}ghi[` => `]abc{def}ghi[`
+    #[case("abc{def}ghi", Cursor::new(10, 0), "abc{def}ghi", Cursor::new(10, 0))]
+    // `abc[{def}]ghi` => `abc[def]ghi`
+    #[case("abc{def}ghi", Cursor::new(3, 7), "abcdefghi", Cursor::new(3, 6))]
+    // `abc{d[ef}gh]i` => `abc{d[ef}gh]i`
+    // Note : only the head inside a text object can remove the text object
+    #[case("abc{def}ghi", Cursor::new(5, 9), "abc{def}ghi", Cursor::new(5, 9))]
+    // `a[bc{de]f}ghi` => `a[bcde]fghi`
+    #[case("abc{def}ghi", Cursor::new(1, 5), "abcdefghi", Cursor::new(1, 4))]
+    // `abc{de]f}gh[i` => `abcde]fgh[i`
+    #[case("abc{def}ghi", Cursor::new(9, 5), "abcdefghi", Cursor::new(7, 4))]
+    fn test_selection_after_removing_text_object(
+        #[case] input: &str,
+        #[case] input_cursor: Cursor,
+        #[case] expected_buffer: &str,
+        #[case] expected_cursor: Cursor,
+    ) {
+        let mut editor = editor_with(input);
+        editor.place(input_cursor);
+
+        editor.run_edit_command(&EditCommand::RemoveTextObject {
+            text_object: TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        });
+        assert_eq!(editor.line_buffer().cursor(), expected_cursor);
+        assert_eq!(editor.get_buffer(), expected_buffer);
+    }
+
+    #[rstest]
+    #[case("", Cursor::new(0, 0), "{}", Cursor::new(1, 1))]
+    #[case("abc", Cursor::new(0, 3), "{abc}", Cursor::new(1, 4))]
+    #[case("abc", Cursor::new(3, 0), "{abc}", Cursor::new(4, 1))]
+    #[case("abc def ghi", Cursor::new(4, 7), "abc {def} ghi", Cursor::new(5, 8))]
+    #[case("abc def ghi", Cursor::new(7, 4), "abc {def} ghi", Cursor::new(8, 5))]
+    fn test_selection_after_adding_text_object(
+        #[case] input: &str,
+        #[case] input_cursor: Cursor,
+        #[case] expected_buffer: &str,
+        #[case] expected_cursor: Cursor,
+    ) {
+        let mut editor = editor_with(input);
+        editor.place(input_cursor);
+
+        editor.run_edit_command(&EditCommand::AddTextObject {
+            text_object: TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        });
+        assert_eq!(editor.line_buffer().cursor(), expected_cursor);
+        assert_eq!(editor.get_buffer(), expected_buffer);
+    }
+
+    #[rstest]
+    #[case("", Cursor::new(0, 0), "", Cursor::new(0, 0))]
+    #[case("abc", Cursor::new(0, 2), "abc", Cursor::new(0, 2))]
+    #[case("[abc]", Cursor::new(1, 3), "{abc}", Cursor::new(1, 3))]
+    #[case("[abc]", Cursor::new(3, 1), "{abc}", Cursor::new(3, 1))]
+    #[case("abc def ghi", Cursor::new(4, 6), "abc def ghi", Cursor::new(4, 6))]
+    #[case("abc def ghi", Cursor::new(6, 4), "abc def ghi", Cursor::new(6, 4))]
+    #[case("abc [def] ghi", Cursor::new(5, 7), "abc {def} ghi", Cursor::new(5, 7))]
+    #[case("abc [def] ghi", Cursor::new(7, 5), "abc {def} ghi", Cursor::new(7, 5))]
+    fn test_selection_after_replacing_text_object(
+        #[case] input: &str,
+        #[case] input_cursor: Cursor,
+        #[case] expected_buffer: &str,
+        #[case] expected_cursor: Cursor,
+    ) {
+        let mut editor = editor_with(input);
+        editor.place(input_cursor);
+
+        editor.run_edit_command(&EditCommand::ReplaceTextObject {
+            old: TextObjectType::Brackets(TextObjectBracket::SquareBracket),
+            new: TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        });
+        assert_eq!(editor.line_buffer().cursor(), expected_cursor);
+        assert_eq!(editor.get_buffer(), expected_buffer);
+    }
+
+    #[rstest]
+    #[case(
+        "",
+        Cursor::new(0, 0),
+        TextObjectType::Quotes(TextObjectQuote::DoubleQuote),
+        TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        ""
+    )] // replace text object in an empty buffer
+    #[case(
+        "",
+        Cursor::new(0, 0),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        ""
+    )] // replace another type of text object in an empty buffer
+    #[case(
+        "{}",
+        Cursor::new(0, 1),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        "()"
+    )] // replace a text object surrounded by nothing else
+    #[case(
+        "{text}",
+        Cursor::new(0, 4),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        "(text)"
+    )] // replace a text object around a word
+    #[case(
+        "{t}ext",
+        Cursor::new(0, 1),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        "(t)ext"
+    )] // replace a text object around a character
+    #[case(
+        "{text}",
+        Cursor::new(0, 4),
+        TextObjectType::Word,
+        TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        "{text}"
+    )] // Attempting to replace a "word" around a word, which won't do anything
+    #[case(
+        "{text}",
+        Cursor::new(0, 4),
+        TextObjectType::BigWord,
+        TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        "{text}"
+    )] // Attempting to replace a "big word" around a word, which won't do anything
+    #[case(
+        "text1 {text2} text3",
+        Cursor::new(6, 11),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        "text1 (text2) text3"
+    )] // replace a text object around a word in the middle of the buffer
+    #[case(
+        "text1 {{text2}} text3",
+        Cursor::new(7, 12),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        "text1 {(text2)} text3"
+    )]
+    // replace a new text object around a word inside of the same text object
+    // For the following test, replacing a text object may occur only around the cursor head
+    #[case(
+        "text1 {text2} text3",
+        Cursor::new(0, 8),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        "text1 (text2) text3"
+    )] // anchor outside (left), head inside
+    #[case(
+        "text1 {text2} text3",
+        Cursor::new(18, 8),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        "text1 (text2) text3"
+    )]
+    // anchor outside (right), head inside
+    #[case(
+        "text1 {text2} text3",
+        Cursor::new(0, 2),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        "text1 {text2} text3"
+    )]
+    // anchor outside, head outside (left)
+    #[case(
+        "text1 {text2} text3",
+        Cursor::new(16, 2),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        "text1 {text2} text3"
+    )]
+    // anchor outside (right), head outside (left)
+    #[case(
+        "text1 {text2} text3",
+        Cursor::new(18, 16),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        "text1 {text2} text3"
+    )] //
+    #[case(
+        "text1 {text2} text3",
+        Cursor::new(2, 16),
+        TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+        TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        "text1 {text2} text3"
+    )] // anchor outside (left), head outside (right)
+    fn test_replace_text_object(
+        #[case] input: &str,
+        #[case] cursor: Cursor,
+        #[case] old: TextObjectType,
+        #[case] new: TextObjectType,
+        #[case] expected_output: &str,
+    ) {
+        let mut editor = editor_with(input);
+        editor.place(cursor);
+
+        editor.run_edit_command(&EditCommand::ReplaceTextObject { old, new });
+        let result = editor.get_buffer();
+        assert_eq!(result, expected_output);
+    }
+
+    #[allow(clippy::identity_op)]
+    #[test]
+    fn test_custom_pair_unicode_safety() {
+        let (left_char, right_char) = ('𐊢', '»');
+        let left_len = left_char.len_utf8();
+        let custom_pair = TextObjectType::Pair {
+            left: left_char,
+            right: right_char,
+        };
+        let mut editor = editor_with("abc");
+
+        editor.place(Cursor::new(0, 3));
+
+        editor.run_edit_command(&EditCommand::AddTextObject {
+            text_object: custom_pair,
+        });
+        assert_eq!(
+            editor.line_buffer().cursor(),
+            Cursor::new(0 + left_len, 3 + left_len)
+        );
+        assert_eq!(editor.get_buffer(), "𐊢abc»");
+        editor.run_edit_command(&EditCommand::RemoveTextObject {
+            text_object: custom_pair,
+        });
+        assert_eq!(editor.line_buffer().cursor(), Cursor::new(0, 3));
+        assert_eq!(editor.get_buffer(), "abc");
+        editor.set_buffer(String::from("[abc]"), UndoBehavior::NoOp);
+        editor.place(Cursor::new(1, 4));
+        editor.run_edit_command(&EditCommand::ReplaceTextObject {
+            old: TextObjectType::Brackets(TextObjectBracket::SquareBracket),
+            new: custom_pair,
+        });
+        assert_eq!(
+            editor.line_buffer().cursor(),
+            Cursor::new(0 + left_len, 3 + left_len)
+        );
+        assert_eq!(editor.get_buffer(), "𐊢abc»");
+        editor.run_edit_command(&EditCommand::ReplaceTextObject {
+            old: custom_pair,
+            new: TextObjectType::Brackets(TextObjectBracket::SquareBracket),
+        });
+        assert_eq!(editor.line_buffer().cursor(), Cursor::new(1, 4));
+        assert_eq!(editor.get_buffer(), "[abc]");
+        // with reversed cursor
+        editor.place(Cursor::new(4, 1));
+        editor.run_edit_command(&EditCommand::ReplaceTextObject {
+            old: TextObjectType::Brackets(TextObjectBracket::SquareBracket),
+            new: custom_pair,
+        });
+        assert_eq!(
+            editor.line_buffer().cursor(),
+            Cursor::new(3 + left_len, 0 + left_len)
+        );
+        assert_eq!(editor.get_buffer(), "𐊢abc»");
+        editor.run_edit_command(&EditCommand::ReplaceTextObject {
+            old: custom_pair,
+            new: TextObjectType::Brackets(TextObjectBracket::SquareBracket),
+        });
+        assert_eq!(editor.line_buffer().cursor(), Cursor::new(4, 1));
+        assert_eq!(editor.get_buffer(), "[abc]");
     }
 
     // --- MotionTarget verbs (Move / Extend / Cut / Copy / Erase) ---

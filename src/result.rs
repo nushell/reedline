@@ -1,21 +1,17 @@
 use std::fmt::Display;
-use thiserror::Error;
 
 /// non-public (for now)
-#[derive(Error, Debug)]
+#[derive(Debug)]
 pub enum ReedlineErrorVariants {
     // todo: we should probably be more specific here
     #[cfg(feature = "_sqlite")]
     /// Error within history database
-    #[error("error within history database: {0}")]
     HistoryDatabaseError(String),
 
     /// Error within history
-    #[error("error in Reedline history: {0}")]
     OtherHistoryError(&'static str),
 
     /// History does not support a feature
-    #[error("the history {history} does not support feature {feature}")]
     HistoryFeatureUnsupported {
         /// Custom display name for the history
         history: &'static str,
@@ -25,9 +21,32 @@ pub enum ReedlineErrorVariants {
     },
 
     /// I/O error
-    #[error("I/O error: {0}")]
     IOError(std::io::Error),
 }
+
+impl Display for ReedlineErrorVariants {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            #[cfg(feature = "_sqlite")]
+            Self::HistoryDatabaseError(msg) => {
+                write!(f, "error within history database: {msg}")
+            }
+            Self::HistoryFeatureUnsupported { history, feature } => {
+                write!(
+                    f,
+                    "the history {history} does not support feature {feature}"
+                )
+            }
+            Self::OtherHistoryError(msg) => {
+                write!(f, "error in Reedline history: {msg}")
+            }
+            Self::IOError(msg) => {
+                write!(f, "I/O error: {msg}")
+            }
+        }
+    }
+}
+impl std::error::Error for ReedlineErrorVariants {}
 
 /// separate struct to not expose anything to the public (for now)
 #[derive(Debug)]

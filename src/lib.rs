@@ -166,13 +166,38 @@
 //! // Create a reedline object with custom edit mode
 //! // This can define a keybinding setting or enable vi-emulation
 //! use reedline::{
-//!     default_vi_insert_keybindings, default_vi_normal_keybindings, EditMode, Reedline, Vi,
+//!     default_vi_insert_keybindings, default_vi_normal_keybindings,
+//!     default_vi_visual_keybindings, EditMode, Reedline, Vi,
 //! };
 //!
 //! let mut line_editor = Reedline::create().with_edit_mode(Box::new(Vi::new(
 //!     default_vi_insert_keybindings(),
 //!     default_vi_normal_keybindings(),
+//!     default_vi_visual_keybindings(),
 //! )));
+//! ```
+//!
+//! ## Switch between edit modes at runtime
+//!
+//! Register every machine a keybinding may name; the one passed to
+//! `with_edit_mode` starts active, and a `SwitchMode` event activates another.
+//!
+//! ```rust
+//! use reedline::{
+//!     default_emacs_keybindings, Emacs, Helix, KeyCode, KeyModifiers, PromptEditMode,
+//!     PromptHelixMode, Reedline, ReedlineEvent,
+//! };
+//!
+//! let mut emacs = default_emacs_keybindings();
+//! emacs.add_binding(
+//!     KeyModifiers::CONTROL,
+//!     KeyCode::Char('h'),
+//!     ReedlineEvent::SwitchMode(PromptEditMode::Helix(PromptHelixMode::Normal)),
+//! );
+//!
+//! let mut line_editor = Reedline::create()
+//!     .with_edit_mode(Box::new(Emacs::new(emacs)))
+//!     .with_additional_edit_mode(Box::new(Helix::default()));
 //! ```
 //!
 //! ## Enable mouse click-to-cursor
@@ -257,7 +282,8 @@ mod enums;
 pub use enums::{
     Direction, EditCommand, EditCommandDiscriminants, FindStop, Granularity, MotionTarget,
     MouseButton, ReedlineEvent, ReedlineEventDiscriminants, ReedlineRawEvent, Signal, TextObject,
-    TextObjectScope, TextObjectType, UndoBehavior, WordEdge, WordKind,
+    TextObjectBracket, TextObjectQuote, TextObjectScope, TextObjectType, UndoBehavior, WordEdge,
+    WordKind,
 };
 
 mod painting;
@@ -299,7 +325,7 @@ pub use prompt::{
 mod edit_mode;
 pub use edit_mode::{
     default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
-    CursorConfig, EditMode, Emacs, Keybindings, Vi,
+    default_vi_visual_keybindings, CursorConfig, EditMode, Emacs, Keybindings, Vi,
 };
 pub use edit_mode::{
     default_helix_insert_keybindings, default_helix_normal_keybindings,
@@ -325,8 +351,8 @@ pub use validator::{DefaultValidator, ValidationResult, Validator};
 mod menu;
 pub use menu::{
     menu_functions, ColumnarMenu, DescriptionMenu, DescriptionMode, DescriptionPosition, IdeMenu,
-    InputMode, ListMenu, Menu, MenuBuilder, MenuEvent, MenuTextStyle, OutputMode, ReedlineMenu,
-    TraversalDirection,
+    InputMode, ListMenu, Menu, MenuBuilder, MenuEvent, MenuSettings, MenuTextStyle, OutputMode,
+    ReedlineMenu, TraversalDirection,
 };
 
 mod terminal_extensions;

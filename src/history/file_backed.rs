@@ -6,11 +6,12 @@ use crate::{
     HistorySessionId, Result,
 };
 
+#[cfg(target_os = "android")]
+use std::ops::{Deref, DerefMut};
 use std::{
     collections::VecDeque,
     fs::OpenOptions,
     io::{BufRead, BufReader, BufWriter, Seek, SeekFrom, Write},
-    ops::{Deref, DerefMut},
     path::PathBuf,
 };
 
@@ -37,15 +38,8 @@ impl Default for FileBackedHistory {
     /// Creates an in-memory [`History`] with a maximal capacity of [`HISTORY_SIZE`].
     ///
     /// To create a [`History`] that is synchronized with a file use [`FileBackedHistory::with_file()`]
-    ///
-    /// # Panics
-    ///
-    /// If `HISTORY_SIZE == usize::MAX`
     fn default() -> Self {
-        match Self::new(HISTORY_SIZE) {
-            Ok(history) => history,
-            Err(e) => panic!("{}", e),
-        }
+        Self::new(HISTORY_SIZE).expect("HISTORY_SIZE is a valid capacity")
     }
 }
 
@@ -221,17 +215,26 @@ impl History for FileBackedHistory {
                 std::fs::create_dir_all(base_dir)?;
             }
 
-            let mut f_lock = fd_lock::RwLock::new(
-                OpenOptions::new()
-                    .create(true)
-                    .write(true)
-                    .read(true)
-                    .truncate(false)
-                    .open(fname)?,
-            );
-            let mut writer_guard = f_lock.write()?;
+            let mut opts = OpenOptions::new();
+            opts.create(true).write(true).read(true).truncate(false);
+
+            cfg_select! {
+                target_os = "android" => {
+                    let mut f_lock = fd_lock::RwLock::new(opts.open(fname)?);
+                    let mut writer_guard = f_lock.write()?;
+                },
+                _ => {
+                    let mut file = opts.open(fname)?;
+                    file.lock()?;
+                }
+            }
+
             let (mut foreign_entries, truncate) = {
-                let reader = BufReader::new(writer_guard.deref());
+                let reader = cfg_select! {
+                    target_os = "android" => BufReader::new(writer_guard.deref()),
+                    _ => BufReader::new(&file)
+                };
+
                 let mut from_file = reader
                     .lines()
                     .map(|o| o.map(|i| decode_entry(&i)))
@@ -249,7 +252,11 @@ impl History for FileBackedHistory {
             };
 
             {
-                let mut writer = BufWriter::new(writer_guard.deref_mut());
+                let mut writer = cfg_select! {
+                    target_os = "android" => BufWriter::new(writer_guard.deref_mut()),
+                    _ => BufWriter::new(&file)
+                };
+
                 if truncate {
                     writer.rewind()?;
 
@@ -267,6 +274,7 @@ impl History for FileBackedHistory {
                 writer.flush()?;
             }
             if truncate {
+                #[cfg(target_os = "android")]
                 let file = writer_guard.deref_mut();
                 let file_len = file.stream_position()?;
                 file.set_len(file_len)?;
