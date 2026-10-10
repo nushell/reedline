@@ -1046,10 +1046,11 @@ impl Reedline {
         self.history.sync()
     }
 
-    /// Check if any commands have been run.
+    /// Check if the last [`Reedline::read_line`] submitted a command.
     ///
-    /// When no commands have been run, calling [`Self::update_last_command_context`]
-    /// does not make sense and is guaranteed to fail with a "No command run" error.
+    /// The context lasts until the next `read_line` starts. A call that returns
+    /// anything but a non-empty [`Signal::Success`] leaves it unset, and calling
+    /// [`Self::update_last_command_context`] then fails with a "No command run" error.
     pub fn has_last_command_context(&self) -> bool {
         self.history_last_run_id.is_some()
     }
@@ -1163,22 +1164,33 @@ impl Reedline {
         poll
     }
 
-    /// Helper implementing the logic for [`Reedline::read_line()`] to be wrapped
-    /// in a `raw_mode` context.
-    fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
-        self.painter
-            .initialize_prompt_position(self.suspended_state.as_ref())?;
-        if self.suspended_state.is_some() {
-            // Last editor was suspended (ExecuteHostCommand or ExternalBreak),
-            // we are resuming operation now.
-            self.suspended_state = None;
-        }
+    /// Reset the per-call state at the start of a `read_line`, before anything
+    /// can fail.
+    ///
+    /// Returns the state of a suspended editor (ExecuteHostCommand or
+    /// ExternalBreak) for the painter to resume from.
+    fn begin_read(&mut self) -> Option<PainterSuspendedState> {
         self.hide_hints = false;
+
+        // The last command context belongs to the previous call. Only a
+        // submit in this call may set it again, so a host command, Ctrl-C
+        // or an empty Enter can't reach back and update an older entry.
+        // `history_excluded_item` stays: Up still recalls it.
+        self.history_last_run_id = None;
 
         // Repaint requests raised while no read_line was active are stale:
         // the fresh prompt painted below already reflects the latest state.
         self.take_repaint_request();
 
+        self.suspended_state.take()
+    }
+
+    /// Helper implementing the logic for [`Reedline::read_line()`] to be wrapped
+    /// in a `raw_mode` context.
+    fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
+        let suspended_state = self.begin_read();
+        self.painter
+            .initialize_prompt_position(suspended_state.as_ref())?;
         self.repaint(prompt)?;
 
         loop {
@@ -4503,6 +4515,57 @@ mod tests {
                 .and_then(|i| i.exit_status),
             Some(7)
         );
+    }
+
+    // nushell#19188: a `read_line` that ends without a submit must not leave
+    // the previous call's context behind, or the host writes its metadata
+    // onto the older entry.
+    #[rstest]
+    #[case::host_command(&[KeyEvent::new(KeyCode::Char('h'), KeyModifiers::ALT)], "HostCommand")]
+    #[case::ctrl_c(&[KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)], "CtrlC")]
+    #[case::empty_enter(&[key(KeyCode::Enter)], "Success")]
+    fn a_read_without_a_submit_has_no_command_context(
+        #[case] keys: &[KeyEvent],
+        #[case] expected: &str,
+    ) {
+        let mut rl = seam_engine(emacs_with(
+            KeyModifiers::ALT,
+            KeyCode::Char('h'),
+            ReedlineEvent::ExecuteHostCommand("cmd".into()),
+        ));
+        drive_until_signal(&mut rl, &[ch('l'), ch('s'), key(KeyCode::Enter)]);
+        assert!(rl.has_last_command_context(), "the submit sets the context");
+
+        rl.begin_read();
+        let signal = drive_until_signal(&mut rl, keys).expect("the read exits");
+        let name = match signal {
+            Signal::HostCommand(_) => "HostCommand",
+            Signal::CtrlC => "CtrlC",
+            Signal::Success(ref s) if s.is_empty() => "Success",
+            ref other => panic!("unexpected {other:?}"),
+        };
+        assert_eq!(name, expected);
+        assert!(!rl.has_last_command_context());
+    }
+
+    // The painter resumes from a host command's suspended state on the next
+    // read only, so `begin_read` hands it over once.
+    #[test]
+    fn begin_read_hands_over_the_suspended_state_once() {
+        let mut rl = seam_engine(emacs_with(
+            KeyModifiers::ALT,
+            KeyCode::Char('h'),
+            ReedlineEvent::ExecuteHostCommand("cmd".into()),
+        ));
+        assert!(rl.begin_read().is_none(), "nothing suspended yet");
+
+        let signal = drive_until_signal(
+            &mut rl,
+            &[KeyEvent::new(KeyCode::Char('h'), KeyModifiers::ALT)],
+        );
+        assert!(matches!(signal, Some(Signal::HostCommand(_))));
+        assert!(rl.begin_read().is_some(), "the host command suspended");
+        assert!(rl.begin_read().is_none(), "a second read starts fresh");
     }
 
     #[test]
