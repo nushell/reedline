@@ -342,6 +342,28 @@ fn invalidate_anchor_if_host_completer_runs(menu: &ReedlineMenu, painter: &mut P
     }
 }
 
+/// The char a key event contributes to a paste burst: a plain or shifted char
+/// press.
+///
+/// Release events are skipped. With the kitty keyboard enhancement every key
+/// also yields a Release, which reedline's own `try_from` drops, so counting
+/// both would double every char.
+fn burst_char(event: &Event) -> Option<char> {
+    match event {
+        Event::Key(KeyEvent {
+            code: KeyCode::Char(c),
+            modifiers,
+            kind,
+            ..
+        }) if *kind != KeyEventKind::Release
+            && (modifiers.is_empty() || *modifiers == KeyModifiers::SHIFT) =>
+        {
+            Some(*c)
+        }
+        _ => None,
+    }
+}
+
 impl Reedline {
     const FILTERED_ITEM_ID: HistoryItemId = HistoryItemId(i64::MAX);
 
@@ -1192,42 +1214,15 @@ impl Reedline {
                 // paste lands in one batch. Fully gated on an installed hook, so
                 // the no-hook path above is byte-for-byte unchanged.
                 if let Some(hook) = self.paste_burst.clone() {
-                    for event in &events {
-                        if let Event::Key(KeyEvent {
-                            code: KeyCode::Char(c),
-                            modifiers,
-                            kind,
-                            ..
-                        }) = event
-                        {
-                            // Skip key-Release events: with the kitty keyboard
-                            // enhancement enabled, every key yields both a Press
-                            // and a Release, and reedline's own `try_from` drops
-                            // Release — feeding both here would double every char.
-                            if *kind != KeyEventKind::Release
-                                && (modifiers.is_empty() || *modifiers == KeyModifiers::SHIFT)
-                            {
-                                hook.on_char(*c);
-                            }
-                        }
+                    for c in events.iter().filter_map(burst_char) {
+                        hook.on_char(c);
                     }
                     if hook.is_burst_active() {
                         loop {
                             if event::poll(hook.poll_timeout())? {
                                 let event = crossterm::event::read()?;
-                                if let Event::Key(KeyEvent {
-                                    code: KeyCode::Char(c),
-                                    modifiers,
-                                    kind,
-                                    ..
-                                }) = &event
-                                {
-                                    if *kind != KeyEventKind::Release
-                                        && (modifiers.is_empty()
-                                            || *modifiers == KeyModifiers::SHIFT)
-                                    {
-                                        hook.on_char(*c);
-                                    }
+                                if let Some(c) = burst_char(&event) {
+                                    hook.on_char(c);
                                 }
                                 events.push(event);
                             } else {
@@ -1411,17 +1406,11 @@ impl Reedline {
             // already run by the time it is read, so it starts the *next*
             // batch instead, where it is handled as an ordinary submit.
             for event in &events {
+                if let Some(c) = burst_char(event) {
+                    coalesced.push(c);
+                    continue;
+                }
                 match event {
-                    Event::Key(KeyEvent {
-                        code: KeyCode::Char(c),
-                        modifiers,
-                        kind,
-                        ..
-                    }) if *kind != KeyEventKind::Release
-                        && (modifiers.is_empty() || *modifiers == KeyModifiers::SHIFT) =>
-                    {
-                        coalesced.push(*c);
-                    }
                     Event::Key(KeyEvent {
                         code: KeyCode::Enter,
                         modifiers: KeyModifiers::NONE,
