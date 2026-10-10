@@ -60,6 +60,10 @@ required-features = ["sqlite"]
 name = "external_printer"
 required-features = ["external_printer"]
 
+[[example]]
+name = "paste_interceptor"
+required-features = ["system_clipboard"]
+
 [package.metadata.docs.rs]
 # Whether to pass `--all-features` to Cargo (default: false)
 all-features = false

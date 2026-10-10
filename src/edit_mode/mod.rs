@@ -57,7 +57,7 @@ fn is_plain_char(modifiers: KeyModifiers) -> bool {
 /// Modifier sets under which a `KeyCode::Char` is *typed text* (data), not a
 /// chord: everything [`is_plain_char`] accepts, plus the Ctrl-Alt combinations
 /// some terminals report for AltGr.
-fn is_text_char(modifiers: KeyModifiers) -> bool {
+pub(crate) fn is_text_char(modifiers: KeyModifiers) -> bool {
     is_plain_char(modifiers)
         || modifiers == KeyModifiers::CONTROL | KeyModifiers::ALT
         || modifiers == KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT

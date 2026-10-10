@@ -42,7 +42,7 @@ use {
     crossterm::{
         cursor::SetCursorStyle,
         event,
-        event::{Event, KeyCode, KeyEvent, KeyModifiers},
+        event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
         terminal, QueueableCommand,
     },
     std::{
@@ -196,6 +196,17 @@ pub struct Reedline {
     persistent_menus: bool,
     // Completions owed to a menu activation the completer could not answer in time
     deferred_menu_completion: Option<DeferredMenuCompletion>,
+
+    // Optional host hook that intercepts a lone `PasteSystem` paste
+    // (see `crate::PasteInterceptor`). `PasteSystem` only exists under
+    // `system_clipboard`, so the hook is gated on the same feature.
+    #[cfg(feature = "system_clipboard")]
+    paste_interceptor: Option<Arc<dyn crate::PasteInterceptor>>,
+
+    // Optional host hook that classifies a rapid key-event stream as a paste
+    // burst by timing, reclassifying embedded Enters to newlines and coalescing
+    // chunks (see `crate::PasteBurstHook`).
+    paste_burst: Option<Arc<dyn crate::PasteBurstHook>>,
 
     // Highlight the edit buffer
     highlighter: Box<dyn Highlighter>,
@@ -438,6 +449,46 @@ fn invalidate_anchor_if_host_completer_runs(menu: &ReedlineMenu, painter: &mut P
     }
 }
 
+/// The char a key event contributes to a paste burst: a char press under the
+/// modifiers that type text, AltGr's Ctrl-Alt included, since ConPTY reports
+/// a pasted `@` or `{` on such layouts that way.
+///
+/// Release events are skipped. With the kitty keyboard enhancement every key
+/// also yields a Release, which reedline's own `try_from` drops, so counting
+/// both would double every char.
+fn burst_char(event: &Event) -> Option<char> {
+    match event {
+        Event::Key(KeyEvent {
+            code: KeyCode::Char(c),
+            modifiers,
+            kind,
+            ..
+        }) if *kind != KeyEventKind::Release && crate::edit_mode::is_text_char(*modifiers) => {
+            Some(*c)
+        }
+        _ => None,
+    }
+}
+
+/// A key press that stands for a newline in pasted text: a bare `Enter` (CR),
+/// or `Ctrl-J`, which is how a raw LF arrives in raw mode.
+fn is_pasted_newline(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Key(KeyEvent {
+            code: KeyCode::Enter,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            ..
+        }) | Event::Key(KeyEvent {
+            code: KeyCode::Char('j'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            ..
+        })
+    )
+}
+
 impl Reedline {
     /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file.
     #[must_use]
@@ -478,6 +529,9 @@ impl Reedline {
             partial_completions: false,
             persistent_menus: false,
             deferred_menu_completion: None,
+            #[cfg(feature = "system_clipboard")]
+            paste_interceptor: None,
+            paste_burst: None,
             highlighter: buffer_highlighter,
             visual_selection_style,
             visual_selection_cursor_style: None,
@@ -611,6 +665,31 @@ impl Reedline {
     #[must_use]
     pub fn with_quick_completions(mut self, quick_completions: bool) -> Self {
         self.quick_completions = quick_completions;
+        self
+    }
+
+    /// Install a paste interceptor. When set, a lone
+    /// `EditCommand::PasteSystem` (Ctrl+Shift+V by default) calls
+    /// [`PasteInterceptor::on_paste`](crate::PasteInterceptor::on_paste)
+    /// instead of the default clipboard-read-and-insert, and reedline inserts
+    /// whatever [`PasteAction`](crate::PasteAction) the hook returns. Requires
+    /// the `system_clipboard` feature, which is what defines `PasteSystem`.
+    #[cfg(feature = "system_clipboard")]
+    #[must_use]
+    pub fn with_paste_interceptor(mut self, interceptor: Arc<dyn crate::PasteInterceptor>) -> Self {
+        self.paste_interceptor = Some(interceptor);
+        self
+    }
+
+    /// Install a paste-burst timing hook. When set, the read loop feeds each
+    /// just-read plain char to the hook at read time, keeps draining while
+    /// [`PasteBurstHook::is_burst_active`](crate::PasteBurstHook::is_burst_active)
+    /// is true, and reclassifies a bare `Enter` to an inserted newline when
+    /// [`PasteBurstHook::enter_is_newline`](crate::PasteBurstHook::enter_is_newline)
+    /// returns true. When unset, the read loop behaves exactly as before.
+    #[must_use]
+    pub fn with_paste_burst(mut self, hook: Arc<dyn crate::PasteBurstHook>) -> Self {
+        self.paste_burst = Some(hook);
         self
     }
 
@@ -1328,14 +1407,67 @@ impl Reedline {
                         events.push(crossterm::event::read()?);
                     }
                 }
+
+                // Paste-burst oracle. Feed the just-collected plain chars to the
+                // burst detector (a multi-char poll(0) batch is itself a paste
+                // signal — normal typing yields ~1 char per read-loop iteration),
+                // then, while a real burst is coalescing, keep draining the queue
+                // past the `completed()`/`EVENTS_THRESHOLD` stops so a multi-line
+                // paste lands in one batch. Fully gated on an installed hook, so
+                // the no-hook path above is byte-for-byte unchanged.
+                if let Some(hook) = self.paste_burst.clone() {
+                    for c in events.iter().filter_map(burst_char) {
+                        hook.on_char(c);
+                    }
+                    if hook.is_burst_active() {
+                        loop {
+                            if event::poll(hook.poll_timeout())? {
+                                let event = crossterm::event::read()?;
+                                if let Some(c) = burst_char(&event) {
+                                    hook.on_char(c);
+                                }
+                                events.push(event);
+                            } else {
+                                // Idle: the burst has settled, but do NOT reset
+                                // the detector here — `process_input_batch` below
+                                // still needs the live burst flag to reclassify
+                                // this batch's embedded Enters as newlines. The
+                                // reset happens once after the batch is processed
+                                // (see `settle_paste_burst`).
+                                break;
+                            }
+                        }
+                    }
+                }
             }
 
             // Process the batch unconditionally: in `immediately_accept` mode
             // `events` stays empty, but `process_input_batch` still pushes the
             // synthetic `Submit` and returns the buffer. Gating this call behind
             // `!immediately_accept` would spin the loop forever.
-            if let ControlFlow::Break(signal) = self.process_input_batch(prompt, events)? {
+            let batch_result = self.process_input_batch(prompt, events)?;
+            self.settle_paste_burst();
+            if let ControlFlow::Break(signal) = batch_result {
                 return Ok(signal);
+            }
+        }
+    }
+
+    /// Reset the paste-burst detector once the batch that held a burst has been
+    /// processed, which releases the burst flag before the next independent line
+    /// (so a later human Enter submits instead of being absorbed).
+    ///
+    /// A batch without a burst does not reset it: the detector tells typing from
+    /// a paste by its own clock. Some event sources hand over a single event per
+    /// loop iteration, and resetting after each of those batches would keep the
+    /// detector from ever counting up to its threshold.
+    ///
+    /// Kept out of the input loop so it is reachable from tests, which cannot
+    /// drive the loop itself.
+    fn settle_paste_burst(&self) {
+        if let Some(hook) = &self.paste_burst {
+            if hook.is_burst_active() {
+                hook.settle();
             }
         }
     }
@@ -1442,28 +1574,115 @@ impl Reedline {
         // `ReedlineEvent::EditCommand` into one. Also, if there're multiple
         // `ReedlineEvent::Resize`, only keep the last one.
         let mut reedline_events: Vec<ReedlineEvent> = vec![];
-        let mut edits = vec![];
+        // A detected paste burst is handled as ONE unit, bypassing the per-event
+        // parse below. Routing each pasted char through `parse_event` is fragile:
+        // any event that maps to a non-`Edit` reedline event (a `/` slash-menu
+        // trigger, a menu/history action, an un-reclassified Enter) hits the
+        // fusing branch that FLUSHES the accumulated raw edits mid-loop
+        // (`std::mem::take`), committing raw pasted text to the buffer before a
+        // placeholder can replace it — the raw-text-leak + stray-newline bug.
+        // Instead, collect the whole burst's content directly (chars + embedded
+        // newlines, in order) and emit exactly one `InsertString`: a placeholder
+        // from the host, or the raw text if the host declines to reference-ify
+        // it. Fully gated on `burst_batch` (only true when a hook is installed
+        // AND a real burst was detected), so normal typing and the no-hook path
+        // are byte-for-byte unchanged.
+        let burst_batch = self
+            .paste_burst
+            .as_ref()
+            .is_some_and(|h| h.is_burst_active());
+        // A resize is kept whichever arm parses the batch: the burst drain
+        // pushes every event it reads, so a resize arriving mid-paste lands in
+        // the burst batch too and must not be swallowed there.
         let mut resize = None;
-        for event in events {
-            if let Ok(event) = ReedlineRawEvent::try_from(event) {
-                match self.edit_mode.parse_event(event) {
-                    ReedlineEvent::Edit(edit) => edits.extend(edit),
-                    ReedlineEvent::Resize(x, y) => resize = Some((x, y)),
-                    event => {
-                        if !edits.is_empty() {
-                            reedline_events.push(ReedlineEvent::Edit(std::mem::take(&mut edits)));
+        if burst_batch {
+            let mut coalesced = String::new();
+            // Every Enter drained into this batch is coalesced as an embedded
+            // newline, never a submit. An Enter only reaches this loop by
+            // being drained while `is_burst_active` stayed latched true, which
+            // only happens inside the poll-timeout idle window that keeps the
+            // burst coalescing (see the drain loop above) — i.e. it arrived at
+            // machine paste speed, not from a human keypress. A real human
+            // submit Enter, typed after the paste, lands past that idle
+            // window: the drain loop has already stopped and `settle` has
+            // already run by the time it is read, so it starts the *next*
+            // batch instead, where it is handled as an ordinary submit.
+            for event in &events {
+                if let Some(c) = burst_char(event) {
+                    coalesced.push(c);
+                    continue;
+                }
+                if is_pasted_newline(event) {
+                    coalesced.push('\n');
+                    continue;
+                }
+                match event {
+                    // A pasted tab is part of the text. Left to the catch-all
+                    // below it would be dropped from the insert.
+                    Event::Key(KeyEvent {
+                        code: KeyCode::Tab,
+                        modifiers: KeyModifiers::NONE,
+                        kind: KeyEventKind::Press,
+                        ..
+                    }) => {
+                        coalesced.push('\t');
+                    }
+                    Event::Resize(x, y) => resize = Some((*x, *y)),
+                    // Release events and any other keys are paste artifacts here.
+                    _ => {}
+                }
+            }
+            if !coalesced.is_empty() {
+                let insert = self
+                    .paste_burst
+                    .clone()
+                    .and_then(|h| h.resolve_burst(&coalesced))
+                    .unwrap_or(coalesced);
+                reedline_events.push(ReedlineEvent::Edit(vec![EditCommand::InsertString(insert)]));
+            }
+        } else {
+            let mut edits = vec![];
+            for event in events {
+                // Reclassify a newline key (bare `Enter`, or `Ctrl-J` for a raw
+                // LF) that the oracle judges paste-embedded into a newline even
+                // when a full burst was NOT detected (a short fast paste, e.g.
+                // `aa\nbb`, whose lines never reach the burst char threshold),
+                // so it does not submit mid-paste. Only a `Press` is
+                // reclassified (the kitty enhancement also emits a Release); a
+                // Release is rejected downstream by `ReedlineRawEvent::try_from`
+                // and inserts nothing.
+                if let Some(hook) = &self.paste_burst {
+                    if is_pasted_newline(&event) && hook.enter_is_newline() {
+                        edits.push(EditCommand::InsertNewline);
+                        continue;
+                    }
+                }
+                if let Ok(event) = ReedlineRawEvent::try_from(event) {
+                    match self.edit_mode.parse_event(event) {
+                        ReedlineEvent::Edit(edit) => edits.extend(edit),
+                        ReedlineEvent::Resize(x, y) => resize = Some((x, y)),
+                        event => {
+                            if !edits.is_empty() {
+                                reedline_events
+                                    .push(ReedlineEvent::Edit(std::mem::take(&mut edits)));
+                            }
+                            reedline_events.push(event);
                         }
-                        reedline_events.push(event);
                     }
                 }
             }
-        }
-        if !edits.is_empty() {
-            reedline_events.push(ReedlineEvent::Edit(edits));
+            if !edits.is_empty() {
+                reedline_events.push(ReedlineEvent::Edit(edits));
+            }
         }
         if let Some((x, y)) = resize {
             reedline_events.push(ReedlineEvent::Resize(x, y));
         }
+        // The synthetic `Submit` of `immediately_accept` mode is pushed after
+        // both arms: nothing is read in that mode, so `events` is empty and the
+        // burst arm would insert nothing, but a hook that reports
+        // `is_burst_active()` before anything was fed to it must still not
+        // keep `read_line` spinning without a submit.
         if self.immediately_accept {
             reedline_events.push(ReedlineEvent::Submit);
         }
@@ -1890,6 +2109,28 @@ impl Reedline {
                 Ok(EventStatus::Exits(Signal::HostCommand(host_command)))
             }
             ReedlineEvent::Edit(commands) => {
+                // Intercept a lone `PasteSystem` when a paste interceptor
+                // is installed. The hook reads the clipboard itself and decides
+                // what to insert (a reference placeholder, the raw text, or
+                // nothing) — bypassing the default clipboard-read-and-insert.
+                // Only a lone `PasteSystem` command is intercepted; any other
+                // edit (or a compound batch) falls through to the normal path
+                // unchanged. `PasteSystem` only exists under `system_clipboard`,
+                // so gate the whole interception on that feature. The text the
+                // hook returns is run as an ordinary `InsertString` through the
+                // rest of this arm, so an open menu sees the edit exactly as it
+                // would for a plain `PasteSystem`; a `Noop` changes nothing and
+                // is done here.
+                #[cfg(feature = "system_clipboard")]
+                let commands = match (commands.as_slice(), self.paste_interceptor.clone()) {
+                    ([EditCommand::PasteSystem], Some(interceptor)) => match interceptor.on_paste()
+                    {
+                        crate::PasteAction::InsertText(s) => vec![EditCommand::InsertString(s)],
+                        crate::PasteAction::Noop => return Ok(EventStatus::Handled),
+                    },
+                    _ => commands,
+                };
+
                 let status = self.run_edit_commands_with_status(&commands);
 
                 // Ahead of everything below, which would otherwise ask a
@@ -3185,7 +3426,30 @@ impl Reedline {
         // A menu that let the submit through (no suggestions to accept) must
         // not stay active into the next line's editing.
         self.deactivate_menus();
-        let buffer = self.editor.get_buffer().to_string();
+        #[cfg_attr(not(feature = "system_clipboard"), allow(unused_mut))]
+        let mut buffer = self.editor.get_buffer().to_string();
+        // Let an installed paste interceptor replace the line at submit (e.g.
+        // expand paste-reference placeholders — the compact form is only for
+        // composing). Done before the repaint below so reedline itself paints
+        // the expanded (possibly multi-line) buffer with correct
+        // wrapping/continuation; the replacement is also what `Signal::Success`
+        // returns and what history records. A host may leave non-text
+        // placeholders (e.g. an image reference) intact, since a terminal
+        // cannot render them. The `and_then` yields an owned `Option<String>`,
+        // releasing the immutable borrow of `self.paste_interceptor` before the
+        // `&mut self` `run_edit_commands`.
+        #[cfg(feature = "system_clipboard")]
+        if let Some(expanded) = self
+            .paste_interceptor
+            .as_ref()
+            .and_then(|i| i.expand_on_submit(&buffer))
+        {
+            self.run_edit_commands(&[
+                EditCommand::Clear,
+                EditCommand::InsertString(expanded.clone()),
+            ]);
+            buffer = expanded;
+        }
         self.hide_hints = true;
         // Additional repaint to show the content without hints etc.
         if let Some(transient_prompt) = self.transient_prompt.take() {
@@ -4228,6 +4492,557 @@ mod tests {
         match rl.process_input_batch(&prompt, vec![]).expect("batch ok") {
             ControlFlow::Break(Signal::Success(buf)) => assert_eq!(buf, "hi"),
             other => panic!("expected immediate submit, got {other:?}"),
+        }
+    }
+
+    // Stub paste interceptor: records whether `on_paste` fired and returns a
+    // fixed action, so the opt-in interception path can be exercised headlessly.
+    #[cfg(feature = "system_clipboard")]
+    struct StubInterceptor {
+        paste_calls: std::sync::atomic::AtomicUsize,
+        action: crate::PasteAction,
+        expand: Option<String>,
+    }
+    #[cfg(feature = "system_clipboard")]
+    impl crate::PasteInterceptor for StubInterceptor {
+        fn on_paste(&self) -> crate::PasteAction {
+            self.paste_calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.action.clone()
+        }
+        fn expand_on_submit(&self, _buffer: &str) -> Option<String> {
+            self.expand.clone()
+        }
+    }
+
+    #[test]
+    fn no_paste_hooks_installed_by_default() {
+        // The two hooks are strictly opt-in: a freshly built engine carries
+        // neither, so the read loop and edit dispatch behave exactly as before.
+        let rl = Reedline::create();
+        #[cfg(feature = "system_clipboard")]
+        assert!(rl.paste_interceptor.is_none());
+        assert!(rl.paste_burst.is_none());
+    }
+
+    #[cfg(feature = "system_clipboard")]
+    #[test]
+    fn with_paste_interceptor_installs_and_intercepts() {
+        // Installing an interceptor makes a bare `PasteSystem` edit call
+        // `on_paste` and insert the returned text instead of reading the OS
+        // clipboard.
+        let interceptor = Arc::new(StubInterceptor {
+            paste_calls: std::sync::atomic::AtomicUsize::new(0),
+            action: crate::PasteAction::InsertText("XY".into()),
+            expand: None,
+        });
+        let mut rl =
+            seam_engine(Box::<crate::Emacs>::default()).with_paste_interceptor(interceptor.clone());
+        assert!(rl.paste_interceptor.is_some());
+
+        let prompt = DefaultPrompt::default();
+        rl.handle_event(&prompt, ReedlineEvent::Edit(vec![EditCommand::PasteSystem]))
+            .expect("edit ok");
+        assert_eq!(
+            interceptor
+                .paste_calls
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
+        assert_eq!(rl.editor.get_buffer(), "XY");
+    }
+
+    #[cfg(feature = "system_clipboard")]
+    #[test]
+    fn paste_interceptor_noop_inserts_nothing() {
+        // A `Noop` action fires the hook but leaves the buffer untouched.
+        let interceptor = Arc::new(StubInterceptor {
+            paste_calls: std::sync::atomic::AtomicUsize::new(0),
+            action: crate::PasteAction::Noop,
+            expand: None,
+        });
+        let mut rl =
+            seam_engine(Box::<crate::Emacs>::default()).with_paste_interceptor(interceptor.clone());
+        let prompt = DefaultPrompt::default();
+        rl.handle_event(&prompt, ReedlineEvent::Edit(vec![EditCommand::PasteSystem]))
+            .expect("edit ok");
+        assert_eq!(
+            interceptor
+                .paste_calls
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
+        assert_eq!(rl.editor.get_buffer(), "");
+    }
+
+    #[cfg(feature = "system_clipboard")]
+    #[test]
+    fn paste_interceptor_expands_on_submit() {
+        // On submit, an installed interceptor may replace the buffer (compact
+        // placeholder -> full text); the replacement is what `Signal::Success`
+        // returns.
+        let interceptor = Arc::new(StubInterceptor {
+            paste_calls: std::sync::atomic::AtomicUsize::new(0),
+            action: crate::PasteAction::Noop,
+            expand: Some("expanded text".into()),
+        });
+        let mut rl =
+            seam_engine(Box::<crate::Emacs>::default()).with_paste_interceptor(interceptor);
+        rl.run_edit_commands(&[EditCommand::InsertString("[ref #1]".into())]);
+        let prompt = DefaultPrompt::default();
+        match rl.submit_buffer(&prompt).expect("submit ok") {
+            EventStatus::Exits(Signal::Success(buf)) => assert_eq!(buf, "expanded text"),
+            _ => panic!("expected successful submit with expanded buffer"),
+        }
+        assert_eq!(rl.editor.get_buffer(), "");
+    }
+
+    // Stub burst hook: a fixed oracle whose `enter_is_newline` and
+    // `is_burst_active` return configured constants, so both the short-paste
+    // Enter-reclassification seam and the full burst-coalescing seam can be
+    // exercised without real arrival timing.
+    struct StubBurst {
+        enter_newline: bool,
+        active: bool,
+    }
+    impl crate::PasteBurstHook for StubBurst {
+        fn on_char(&self, _c: char) {}
+        fn enter_is_newline(&self) -> bool {
+            self.enter_newline
+        }
+        fn is_burst_active(&self) -> bool {
+            self.active
+        }
+        fn poll_timeout(&self) -> Duration {
+            Duration::from_millis(1)
+        }
+        fn settle(&self) {}
+        fn resolve_burst(&self, _coalesced: &str) -> Option<String> {
+            None
+        }
+    }
+
+    #[test]
+    fn with_paste_burst_installs_hook() {
+        let rl =
+            seam_engine(Box::<crate::Emacs>::default()).with_paste_burst(Arc::new(StubBurst {
+                enter_newline: false,
+                active: false,
+            }));
+        assert!(rl.paste_burst.is_some());
+    }
+
+    #[test]
+    fn paste_burst_reclassifies_enter_as_newline() {
+        // With a burst hook whose oracle says a bare Enter is paste-embedded,
+        // the Enter inserts a newline instead of submitting the line.
+        let mut rl =
+            seam_engine(Box::<crate::Emacs>::default()).with_paste_burst(Arc::new(StubBurst {
+                enter_newline: true,
+                active: false,
+            }));
+        rl.run_edit_commands(&[EditCommand::InsertString("ab".into())]);
+        drive(&mut rl, &[key(KeyCode::Enter)]);
+        assert_eq!(rl.editor.get_buffer(), "ab\n");
+    }
+
+    #[test]
+    fn paste_burst_embedded_enters_coalesce_without_submit() {
+        // In the coalescing path, when the oracle judges every Enter to be
+        // paste-embedded, a multi-line burst folds into one insertion with its
+        // newlines preserved and does NOT submit.
+        let mut rl =
+            seam_engine(Box::<crate::Emacs>::default()).with_paste_burst(Arc::new(StubBurst {
+                enter_newline: true,
+                active: true,
+            }));
+        let prompt = DefaultPrompt::default();
+        let result = rl
+            .process_input_batch(
+                &prompt,
+                vec![
+                    Event::Key(ch('a')),
+                    Event::Key(key(KeyCode::Enter)),
+                    Event::Key(ch('b')),
+                ],
+            )
+            .expect("batch ok");
+        assert!(matches!(result, ControlFlow::Continue(())));
+        assert_eq!(rl.editor.get_buffer(), "a\nb");
+    }
+
+    #[test]
+    fn paste_burst_enter_coalesces_as_newline_without_submit() {
+        // An Enter drained into an active burst batch is always coalesced as
+        // an embedded newline, never a submit: a detected burst never
+        // consults the oracle for its Enters (see `enter_is_newline`'s docs),
+        // it treats every one of them as paste-embedded. The coalescing path
+        // inserts the pasted chars with the Enter folded in as `\n`, and the
+        // line stays unsubmitted.
+        let mut rl =
+            seam_engine(Box::<crate::Emacs>::default()).with_paste_burst(Arc::new(StubBurst {
+                enter_newline: true,
+                active: true,
+            }));
+        let prompt = DefaultPrompt::default();
+        let result = rl
+            .process_input_batch(
+                &prompt,
+                vec![
+                    Event::Key(ch('h')),
+                    Event::Key(ch('i')),
+                    Event::Key(key(KeyCode::Enter)),
+                ],
+            )
+            .expect("batch ok");
+        assert!(matches!(result, ControlFlow::Continue(())));
+        assert_eq!(rl.editor.get_buffer(), "hi\n");
+    }
+
+    #[test]
+    fn paste_burst_batch_keeps_a_resize() {
+        // The burst drain pushes every event it reads, so a resize arriving
+        // mid-paste lands in the burst batch. It must reach the painter like
+        // it does on the ordinary path, not be dropped as a paste artifact.
+        let mut rl =
+            seam_engine(Box::<crate::Emacs>::default()).with_paste_burst(Arc::new(StubBurst {
+                enter_newline: true,
+                active: true,
+            }));
+        let prompt = DefaultPrompt::default();
+        let result = rl
+            .process_input_batch(
+                &prompt,
+                vec![
+                    Event::Key(ch('a')),
+                    Event::Resize(120, 40),
+                    Event::Key(ch('b')),
+                ],
+            )
+            .expect("batch ok");
+        assert!(matches!(result, ControlFlow::Continue(())));
+        assert_eq!(rl.editor.get_buffer(), "ab");
+        assert_eq!(
+            (rl.painter.screen_width(), rl.painter.screen_height()),
+            (120, 40)
+        );
+    }
+
+    #[test]
+    fn paste_burst_settles_only_after_a_burst_batch() {
+        // `settle` follows a batch that held a burst and no other: a batch
+        // without one leaves the detector's count alone, so an event source
+        // that delivers one event per batch can still reach the threshold.
+        struct CountingBurst {
+            active: bool,
+            settles: std::sync::atomic::AtomicUsize,
+        }
+        impl crate::PasteBurstHook for CountingBurst {
+            fn on_char(&self, _c: char) {}
+            fn enter_is_newline(&self) -> bool {
+                false
+            }
+            fn is_burst_active(&self) -> bool {
+                self.active
+            }
+            fn poll_timeout(&self) -> Duration {
+                Duration::from_millis(1)
+            }
+            fn settle(&self) {
+                self.settles
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            fn resolve_burst(&self, _coalesced: &str) -> Option<String> {
+                None
+            }
+        }
+        fn settles_after_one_batch(active: bool) -> usize {
+            let hook = Arc::new(CountingBurst {
+                active,
+                settles: std::sync::atomic::AtomicUsize::new(0),
+            });
+            let mut rl = seam_engine(Box::<crate::Emacs>::default()).with_paste_burst(hook.clone());
+            drive(&mut rl, &[ch('a')]);
+            rl.settle_paste_burst();
+            assert_eq!(rl.editor.get_buffer(), "a");
+            hook.settles.load(std::sync::atomic::Ordering::Relaxed)
+        }
+
+        assert_eq!(settles_after_one_batch(false), 0, "batch without a burst");
+        assert_eq!(settles_after_one_batch(true), 1, "burst batch");
+    }
+
+    #[test]
+    fn paste_burst_typed_line_still_submits() {
+        // With no `settle` after a batch without a burst, the detector's timing
+        // carries into the next batch. A detector that keeps its window below
+        // human typing speed, like the `paste_burst` example's, must still let
+        // a typed line submit; only an Enter inside the window is a newline.
+        // The clock is passed in, and `on_char` is fed by hand, since the read
+        // loop that feeds it needs a terminal.
+        use crate::PasteBurstHook;
+
+        const GAP: Duration = Duration::from_millis(10);
+
+        #[derive(Default)]
+        struct ClockedBurst {
+            // (now, when the last char arrived)
+            clock: std::sync::Mutex<(Duration, Option<Duration>)>,
+        }
+        impl ClockedBurst {
+            fn advance(&self, by: Duration) {
+                self.clock.lock().unwrap().0 += by;
+            }
+        }
+        impl PasteBurstHook for ClockedBurst {
+            fn on_char(&self, _c: char) {
+                let mut clock = self.clock.lock().unwrap();
+                clock.1 = Some(clock.0);
+            }
+            fn enter_is_newline(&self) -> bool {
+                let (now, last) = *self.clock.lock().unwrap();
+                last.is_some_and(|last| now - last < GAP)
+            }
+            fn is_burst_active(&self) -> bool {
+                false
+            }
+            fn poll_timeout(&self) -> Duration {
+                Duration::from_millis(1)
+            }
+            fn settle(&self) {
+                self.clock.lock().unwrap().1 = None;
+            }
+            fn resolve_burst(&self, _coalesced: &str) -> Option<String> {
+                None
+            }
+        }
+
+        // Type `ls` at 100ms a key, one batch per key, then press Enter `wait`
+        // after the last one.
+        fn type_ls_then_enter(wait: Duration) -> (Reedline, Option<Signal>) {
+            let hook = Arc::new(ClockedBurst::default());
+            let mut rl = seam_engine(Box::<crate::Emacs>::default()).with_paste_burst(hook.clone());
+            for c in ['l', 's'] {
+                hook.advance(Duration::from_millis(100));
+                hook.on_char(c);
+                drive(&mut rl, &[ch(c)]);
+                rl.settle_paste_burst();
+            }
+            hook.advance(wait);
+            let signal = drive_until_signal(&mut rl, &[key(KeyCode::Enter)]);
+            (rl, signal)
+        }
+
+        let (_, signal) = type_ls_then_enter(Duration::from_millis(100));
+        assert!(matches!(signal, Some(Signal::Success(ref line)) if line == "ls"));
+
+        let (rl, signal) = type_ls_then_enter(Duration::from_millis(2));
+        assert!(signal.is_none(), "an Enter inside the window inserts");
+        assert_eq!(rl.editor.get_buffer(), "ls\n");
+    }
+
+    #[test]
+    fn paste_burst_batch_keeps_a_tab() {
+        // A tab inside a burst batch is pasted text, so it is coalesced into
+        // the insert as `\t` rather than dropped as a paste artifact.
+        let mut rl =
+            seam_engine(Box::<crate::Emacs>::default()).with_paste_burst(Arc::new(StubBurst {
+                enter_newline: true,
+                active: true,
+            }));
+        let prompt = DefaultPrompt::default();
+        let result = rl
+            .process_input_batch(
+                &prompt,
+                vec![
+                    Event::Key(ch('a')),
+                    Event::Key(key(KeyCode::Tab)),
+                    Event::Key(ch('b')),
+                ],
+            )
+            .expect("batch ok");
+        assert!(matches!(result, ControlFlow::Continue(())));
+        assert_eq!(rl.editor.get_buffer(), "a\tb");
+    }
+
+    // ConPTY reports an AltGr char as Ctrl-Alt, and a raw LF arrives as
+    // Ctrl-J. Both are pasted text, inside a burst and, for the newline, also
+    // outside one when the oracle calls it embedded.
+    #[rstest]
+    #[case::altgr_in_burst(true, KeyEvent::new(KeyCode::Char('@'), KeyModifiers::CONTROL | KeyModifiers::ALT), "a@b")]
+    #[case::lf_in_burst(true, KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL), "a\nb")]
+    #[case::lf_outside_burst(
+        false,
+        KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL),
+        "a\nb"
+    )]
+    fn paste_burst_keeps_the_pasted_key(
+        #[case] active: bool,
+        #[case] pasted: KeyEvent,
+        #[case] expected: &str,
+    ) {
+        let mut rl =
+            seam_engine(Box::<crate::Emacs>::default()).with_paste_burst(Arc::new(StubBurst {
+                enter_newline: true,
+                active,
+            }));
+        let prompt = DefaultPrompt::default();
+        let result = rl
+            .process_input_batch(
+                &prompt,
+                vec![Event::Key(ch('a')), Event::Key(pasted), Event::Key(ch('b'))],
+            )
+            .expect("batch ok");
+        assert!(matches!(result, ControlFlow::Continue(())));
+        assert_eq!(rl.editor.get_buffer(), expected);
+    }
+
+    #[test]
+    fn immediately_accept_submits_with_a_burst_hook_reporting_active() {
+        // Nothing is read in `immediately_accept` mode, so the burst arm has
+        // nothing to insert; the synthetic `Submit` must still be pushed, or a
+        // hook that reports an active burst leaves `read_line` spinning.
+        let mut rl =
+            seam_engine(Box::<crate::Emacs>::default()).with_paste_burst(Arc::new(StubBurst {
+                enter_newline: true,
+                active: true,
+            }));
+        rl.immediately_accept = true;
+        rl.run_edit_commands(&[EditCommand::InsertString("hi".into())]);
+        let prompt = DefaultPrompt::default();
+        match rl.process_input_batch(&prompt, vec![]).expect("batch ok") {
+            ControlFlow::Break(Signal::Success(buf)) => assert_eq!(buf, "hi"),
+            other => panic!("expected immediate submit, got {other:?}"),
+        }
+    }
+
+    #[cfg(feature = "system_clipboard")]
+    #[test]
+    fn intercepted_paste_reaches_an_open_menu() {
+        // The text an interceptor returns is applied as an ordinary edit, so
+        // an open completion menu is sent `MenuEvent::Edit` for it the same
+        // way it is for a plain `PasteSystem`. The queued event is what the
+        // paint cycle reloads the values from (`update_working_details`), so
+        // that is where the difference shows: without the event the menu
+        // keeps the values it had before the paste.
+        fn apply_menu_paint_cycle(rl: &mut Reedline) {
+            let Reedline {
+                menus,
+                editor,
+                completer,
+                history,
+                painter,
+                ..
+            } = rl;
+            for menu in menus.iter_mut().filter(|menu| menu.is_active()) {
+                menu.update_working_details(editor, completer.as_mut(), history.as_ref(), painter);
+            }
+        }
+        fn active_menu_values(rl: &Reedline) -> usize {
+            rl.menus
+                .iter()
+                .find(|menu| menu.is_active())
+                .expect("menu open")
+                .get_values()
+                .len()
+        }
+
+        let interceptor = Arc::new(StubInterceptor {
+            paste_calls: std::sync::atomic::AtomicUsize::new(0),
+            action: crate::PasteAction::InsertText("r".into()),
+            expand: None,
+        });
+        let completer = Box::new(DefaultCompleter::new_with_wordlen(
+            vec![
+                String::from("carpet"),
+                String::from("cattle"),
+                String::from("dog"),
+            ],
+            1,
+        ));
+        let completion_menu = ReedlineMenu::EngineCompleter(Box::new(
+            ColumnarMenu::default().with_name("completion_menu"),
+        ));
+        let mut rl = Reedline::create()
+            .with_completer(completer)
+            .with_menu(completion_menu)
+            .with_paste_interceptor(interceptor);
+        let prompt = DefaultPrompt::default();
+        rl.run_edit_commands(&[EditCommand::InsertString(String::from("ca"))]);
+        rl.handle_event(
+            &prompt,
+            ReedlineEvent::Menu(String::from("completion_menu")),
+        )
+        .expect("menu opens");
+        apply_menu_paint_cycle(&mut rl);
+        assert_eq!(
+            active_menu_values(&rl),
+            2,
+            "\"ca\" matches both carpet and cattle"
+        );
+
+        rl.handle_event(&prompt, ReedlineEvent::Edit(vec![EditCommand::PasteSystem]))
+            .expect("edit ok");
+        assert_eq!(rl.editor.get_buffer(), "car");
+        apply_menu_paint_cycle(&mut rl);
+        assert_eq!(active_menu_values(&rl), 1, "narrowed to \"carpet\"");
+    }
+
+    #[test]
+    fn paste_burst_resolve_burst_inserts_placeholder() {
+        // When the hook's `resolve_burst` reference-ifies the coalesced burst
+        // text, the read loop inserts the placeholder it returned instead of
+        // the raw pasted text.
+        struct PlaceholderBurst;
+        impl crate::PasteBurstHook for PlaceholderBurst {
+            fn on_char(&self, _c: char) {}
+            fn enter_is_newline(&self) -> bool {
+                true
+            }
+            fn is_burst_active(&self) -> bool {
+                true
+            }
+            fn poll_timeout(&self) -> Duration {
+                Duration::from_millis(1)
+            }
+            fn settle(&self) {}
+            fn resolve_burst(&self, _coalesced: &str) -> Option<String> {
+                Some("[Pasted text #1 +2 lines]".into())
+            }
+        }
+
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_paste_burst(Arc::new(PlaceholderBurst));
+        let prompt = DefaultPrompt::default();
+        let result = rl
+            .process_input_batch(
+                &prompt,
+                vec![
+                    Event::Key(ch('a')),
+                    Event::Key(key(KeyCode::Enter)),
+                    Event::Key(ch('b')),
+                    Event::Key(key(KeyCode::Enter)),
+                    Event::Key(ch('c')),
+                ],
+            )
+            .expect("batch ok");
+        assert!(matches!(result, ControlFlow::Continue(())));
+        assert_eq!(rl.editor.get_buffer(), "[Pasted text #1 +2 lines]");
+    }
+
+    #[test]
+    fn no_burst_hook_enter_submits() {
+        // Without a burst hook, a bare Enter submits as before — the opt-in
+        // no-op default guard.
+        let mut rl = seam_engine(Box::<crate::Emacs>::default());
+        rl.run_edit_commands(&[EditCommand::InsertString("ab".into())]);
+        let prompt = DefaultPrompt::default();
+        match rl
+            .process_input_batch(&prompt, vec![Event::Key(key(KeyCode::Enter))])
+            .expect("batch ok")
+        {
+            ControlFlow::Break(Signal::Success(buf)) => assert_eq!(buf, "ab"),
+            other => panic!("expected submit, got {other:?}"),
         }
     }
 
