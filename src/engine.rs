@@ -2993,29 +2993,31 @@ impl Reedline {
                     );
                     if let Some(policy) = self.hint_policy.as_mut() {
                         let candidate = hinter.complete_hint();
-                        let plan = policy.plan(&context, &candidate);
-                        if plan.as_ref().is_some_and(|plan| {
-                            valid_hint_plan(context.source(), &context, &candidate, plan)
-                        }) {
-                            let plan = plan.expect("validated hint plan");
-                            if let Some(preview) = &plan.preview {
-                                hint = render_hint_preview(
-                                    &styled_text,
-                                    preview,
-                                    &rendered,
-                                    prompt,
-                                    use_ansi_coloring,
-                                    self.painter.semantic_markers(),
-                                );
-                                hint_replaces_closers = true;
-                            } else {
-                                hint = rendered.clone();
+                        if !candidate.is_empty() {
+                            let plan = policy.plan(&context, &candidate);
+                            if plan.as_ref().is_some_and(|plan| {
+                                valid_hint_plan(context.source(), &context, &candidate, plan)
+                            }) {
+                                let plan = plan.expect("validated hint plan");
+                                if let Some(preview) = &plan.preview {
+                                    hint = render_hint_preview(
+                                        &styled_text,
+                                        preview,
+                                        &rendered,
+                                        prompt,
+                                        use_ansi_coloring,
+                                        self.painter.semantic_markers(),
+                                    );
+                                    hint_replaces_closers = true;
+                                } else {
+                                    hint = rendered.clone();
+                                }
+                                self.active_hint = Some(ActiveHint {
+                                    stamp: HintSourceStamp::new(&context),
+                                    candidate,
+                                    plan,
+                                });
                             }
-                            self.active_hint = Some(ActiveHint {
-                                stamp: HintSourceStamp::new(&context),
-                                candidate,
-                                plan,
-                            });
                         }
                     } else {
                         hint = rendered;
@@ -3366,10 +3368,33 @@ fn valid_hint_plan(
     }
     match &plan.preview {
         Some(preview) => {
-            plan.edit.range.start == context.cursor()
+            if !(plan.edit.range.start == context.cursor()
                 && preview.overlay_position == context.cursor()
                 && preview.hidden_range.start == context.cursor()
-                && source.get(preview.hidden_range.clone()).is_some()
+                && source.get(preview.hidden_range.clone()).is_some())
+            {
+                return false;
+            }
+            let hidden_end = preview.hidden_range.end;
+            let edit_end = plan.edit.range.end;
+            if hidden_end == edit_end {
+                candidate == plan.edit.replacement
+            } else if hidden_end < edit_end {
+                source.get(hidden_end..edit_end).is_some_and(|between| {
+                    candidate
+                        .bytes()
+                        .chain(between.bytes())
+                        .eq(plan.edit.replacement.bytes())
+                })
+            } else {
+                source.get(edit_end..hidden_end).is_some_and(|between| {
+                    plan.edit
+                        .replacement
+                        .bytes()
+                        .chain(between.bytes())
+                        .eq(candidate.bytes())
+                })
+            }
         }
         None => {
             context.at_buffer_end()
@@ -8407,6 +8432,179 @@ mod tests {
             EventStatus::Inapplicable
         ));
         assert_eq!(rl.editor.get_buffer(), "abc");
+    }
+
+    #[test]
+    fn policy_plan_rejects_preview_that_differs_from_whole_edit_result() {
+        struct MismatchedPreviewPolicy;
+        impl HintPolicy for MismatchedPreviewPolicy {
+            fn plan(&mut self, _: &HintContext<'_>, _: &str) -> Option<HintPlan> {
+                Some(HintPlan::new(
+                    HintEdit::new(3..5, "tat", 6),
+                    Some(HintPreview::new(3..4, 3)),
+                ))
+            }
+
+            fn plan_partial(&mut self, _: &HintContext<'_>, _: &str, _: &str) -> Option<HintEdit> {
+                None
+            }
+        }
+
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_hint_policy(Box::new(MismatchedPreviewPolicy))
+            .with_hinter(Box::new(RecordingHinter {
+                hint: "tat",
+                asked: Arc::default(),
+            }));
+        rl.run_edit_commands(&[EditCommand::InsertString("(gs)x".into())]);
+        rl.run_edit_commands(&[EditCommand::MoveToPosition {
+            position: 3,
+            select: false,
+        }]);
+        rl.buffer_paint(&DefaultPrompt::default()).unwrap();
+
+        assert!(matches!(
+            send(&mut rl, ReedlineEvent::HistoryHintComplete),
+            EventStatus::Inapplicable
+        ));
+        assert_eq!(rl.editor.get_buffer(), "(gs)x");
+        send(
+            &mut rl,
+            ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::HistoryHintComplete,
+                ReedlineEvent::Edit(vec![EditCommand::InsertChar('!')]),
+            ]),
+        );
+        assert_eq!(rl.editor.get_buffer(), "(gs!)x");
+    }
+
+    #[test]
+    fn empty_candidate_never_reaches_hint_policy() {
+        struct CountingPolicy(Arc<std::sync::Mutex<usize>>);
+        impl HintPolicy for CountingPolicy {
+            fn plan(&mut self, context: &HintContext<'_>, _: &str) -> Option<HintPlan> {
+                *self.0.lock().unwrap() += 1;
+                Some(HintPlan::new(
+                    HintEdit::new(
+                        context.cursor()..context.source().len(),
+                        "",
+                        context.cursor(),
+                    ),
+                    Some(HintPreview::new(
+                        context.cursor()..context.source().len(),
+                        context.cursor(),
+                    )),
+                ))
+            }
+
+            fn plan_partial(&mut self, _: &HintContext<'_>, _: &str, _: &str) -> Option<HintEdit> {
+                None
+            }
+        }
+
+        struct EmptyCandidateHinter;
+        impl Hinter for EmptyCandidateHinter {
+            fn handle(&mut self, _: &str, _: usize, _: &dyn History, _: bool, _: &str) -> String {
+                "formatted but not actionable".to_string()
+            }
+
+            fn complete_hint(&self) -> String {
+                String::new()
+            }
+
+            fn next_hint_token(&self) -> String {
+                String::new()
+            }
+        }
+
+        let calls = Arc::new(std::sync::Mutex::new(0));
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_hint_policy(Box::new(CountingPolicy(Arc::clone(&calls))))
+            .with_hinter(Box::new(EmptyCandidateHinter));
+        rl.run_edit_commands(&[EditCommand::InsertString("abc".into())]);
+        rl.run_edit_commands(&[EditCommand::MoveToPosition {
+            position: 1,
+            select: false,
+        }]);
+        rl.buffer_paint(&DefaultPrompt::default()).unwrap();
+
+        assert_eq!(*calls.lock().unwrap(), 0);
+        assert!(matches!(
+            send(&mut rl, ReedlineEvent::HistoryHintComplete),
+            EventStatus::Inapplicable
+        ));
+        assert_eq!(rl.editor.get_buffer(), "abc");
+    }
+
+    #[rstest]
+    #[case::edit_hides_more_than_preview(4, 5, "tat).branch", "tat).branchx", 14)]
+    #[case::preview_hides_more_than_edit(5, 4, "tat).branchx", "tat).branch", 15)]
+    fn unequal_preview_and_edit_ranges_are_valid_when_their_text_matches(
+        #[case] hidden_end: usize,
+        #[case] edit_end: usize,
+        #[case] candidate: &'static str,
+        #[case] replacement: &'static str,
+        #[case] cursor: usize,
+    ) {
+        struct EquivalentPlanPolicy {
+            hidden_end: usize,
+            edit_end: usize,
+            replacement: &'static str,
+        }
+        impl HintPolicy for EquivalentPlanPolicy {
+            fn plan(&mut self, context: &HintContext<'_>, candidate: &str) -> Option<HintPlan> {
+                Some(HintPlan::new(
+                    HintEdit::new(
+                        context.cursor()..self.edit_end,
+                        self.replacement,
+                        context.cursor() + candidate.len(),
+                    ),
+                    Some(HintPreview::new(
+                        context.cursor()..self.hidden_end,
+                        context.cursor(),
+                    )),
+                ))
+            }
+
+            fn plan_partial(&mut self, _: &HintContext<'_>, _: &str, _: &str) -> Option<HintEdit> {
+                None
+            }
+        }
+
+        let mut styled = crate::painting::StyledText::new();
+        styled.push((Style::new(), "(gs)xtail".to_string()));
+        let display = render_hint_preview(
+            &styled,
+            &HintPreview::new(3..hidden_end, 3),
+            candidate,
+            &DefaultPrompt::default(),
+            false,
+            None,
+        );
+        assert_eq!(display, "tat).branchxtail");
+
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_hint_policy(Box::new(EquivalentPlanPolicy {
+                hidden_end,
+                edit_end,
+                replacement,
+            }))
+            .with_hinter(Box::new(RecordingHinter {
+                hint: candidate,
+                asked: Arc::default(),
+            }));
+        rl.run_edit_commands(&[EditCommand::InsertString("(gs)xtail".into())]);
+        rl.run_edit_commands(&[EditCommand::MoveToPosition {
+            position: 3,
+            select: false,
+        }]);
+        rl.buffer_paint(&DefaultPrompt::default()).unwrap();
+        send(&mut rl, ReedlineEvent::HistoryHintComplete);
+
+        assert_eq!(
+            (rl.editor.get_buffer(), rl.editor.insertion_point()),
+            ("(gstat).branchxtail", cursor)
+        );
     }
 
     #[test]

@@ -118,6 +118,12 @@ impl HintEdit {
 }
 
 /// The independent overlay used while painting a hint.
+///
+/// Conceptually, the preview text is the source prefix before the cursor,
+/// followed by the raw candidate, followed by the retained source suffix
+/// after `hidden_range`. That text must match the result of the complete
+/// acceptance edit, or Reedline rejects the plan. Painting uses the formatted
+/// output from `Hinter::handle` for the candidate portion.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HintPreview {
     /// Existing source text hidden by the hint. In the initial API this range
@@ -144,7 +150,8 @@ impl HintPreview {
 /// A plan with `preview: None` is drawn as a conventional hint appended after
 /// the current buffer; Reedline accepts it only as an end-of-buffer append of
 /// the raw candidate. A policy should return `None` from `plan` when it cannot
-/// safely offer the candidate for display and acceptance.
+/// safely offer the candidate for display and acceptance. Reedline calls
+/// `HintPolicy::plan` only for non-empty raw candidates.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HintPlan {
     /// The edit used by whole-hint acceptance.
@@ -172,8 +179,15 @@ pub trait HintPolicy: Send {
     }
 
     /// Plan whole-hint acceptance and, independently, an optional preview.
+    /// Reedline calls this only when `candidate` is non-empty and rejects a
+    /// preview whose text would differ from the resulting whole-edit buffer.
     /// `candidate` is the raw hint suffix returned by
     /// [`crate::Hinter::complete_hint`], not the fully constructed buffer.
+    /// The policy plans edits from that raw text, while Reedline displays the
+    /// formatted string returned by [`crate::Hinter::handle`]. Hinter
+    /// implementations must keep those two outputs semantically aligned;
+    /// Reedline does not strip formatting or compare the displayed string to
+    /// the raw candidate.
     fn plan(&mut self, context: &HintContext<'_>, candidate: &str) -> Option<HintPlan>;
 
     /// Plan one partial acceptance. Called only when partial acceptance is
