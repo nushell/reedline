@@ -1551,16 +1551,15 @@ impl Editor {
         }
     }
 
-    /// Replace the text from the caret to the end of its line with
-    /// `before_caret` followed by `after_caret`, leaving the caret between
-    /// them, as one undo step.
-    pub(crate) fn replace_to_line_end(&mut self, before_caret: &str, after_caret: &str) {
-        let start = self.insertion_point();
-        let end = self.line_buffer.find_current_line_end();
-        self.line_buffer
-            .replace_range(start..end, &format!("{before_caret}{after_caret}"));
-        self.line_buffer
-            .set_cursor(Cursor::point(start + before_caret.len()));
+    /// Apply a validated hint replacement as one undoable edit.
+    pub(crate) fn apply_hint_edit(
+        &mut self,
+        range: std::ops::Range<usize>,
+        replacement: &str,
+        cursor: usize,
+    ) {
+        self.line_buffer.replace_range(range, replacement);
+        self.line_buffer.set_cursor(Cursor::point(cursor));
         self.commit_cursor();
         self.update_undo_state(UndoBehavior::CreateUndoPoint);
     }

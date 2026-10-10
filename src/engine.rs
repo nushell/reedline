@@ -36,8 +36,9 @@ use {
         },
         utils::text_manipulation,
         AbbrExpandContext, AutoPairAction, AutoPairContext, AutoPairs, EditCommand,
-        ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, MouseButton, Prompt,
-        PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult, Validator,
+        ExampleHighlighter, Highlighter, HintContext, HintEdit, HintPolicy, HintQuery, LineBuffer,
+        Menu, MenuEvent, MouseButton, Prompt, PromptHistorySearch, ReedlineMenu, Signal,
+        UndoBehavior, ValidationResult, Validator,
     },
     crossterm::{
         cursor::SetCursorStyle,
@@ -92,6 +93,45 @@ enum InputMode {
     /// Either bash style up/down history or fish style prefix search,
     /// Edits directly switch to [`InputMode::Regular`]
     HistoryTraversal,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct HintSourceStamp {
+    source: String,
+    cursor: usize,
+    selection: Option<std::ops::Range<usize>>,
+    at_buffer_end: bool,
+    edit_mode: PromptEditMode,
+}
+
+impl HintSourceStamp {
+    fn new(context: &HintContext<'_>) -> Self {
+        Self {
+            source: context.source().to_owned(),
+            cursor: context.cursor(),
+            selection: context.selection(),
+            at_buffer_end: context.at_buffer_end(),
+            edit_mode: context.edit_mode().clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ActiveHint {
+    stamp: HintSourceStamp,
+    candidate: String,
+    edit: HintEdit,
+}
+
+impl ActiveHint {
+    fn matches(&self, editor: &Editor, mode: &PromptEditMode) -> bool {
+        let context = make_hint_context(editor, mode, None);
+        self.stamp.source == context.source()
+            && self.stamp.cursor == context.cursor()
+            && self.stamp.selection == context.selection()
+            && self.stamp.at_buffer_end == context.at_buffer_end()
+            && self.stamp.edit_mode == *mode
+    }
 }
 
 /// Configuration for mouse click-to-cursor support.
@@ -185,6 +225,8 @@ pub struct Reedline {
 
     // Showcase hints based on various strategies (history, language-completion, spellcheck, etc)
     hinter: Option<Box<dyn Hinter>>,
+    hint_policy: Option<Box<dyn HintPolicy>>,
+    active_hint: Option<ActiveHint>,
     hide_hints: bool,
 
     // Use ansi coloring or not
@@ -463,6 +505,8 @@ impl Reedline {
             visual_selection_style,
             visual_selection_cursor_style: None,
             hinter,
+            hint_policy: None,
+            active_hint: None,
             hide_hints: false,
             validator,
             use_ansi_coloring: true,
@@ -554,6 +598,23 @@ impl Reedline {
     #[must_use]
     pub fn with_hinter(mut self, hinter: Box<dyn Hinter>) -> Self {
         self.hinter = Some(hinter);
+        self.active_hint = None;
+        self
+    }
+
+    /// Set an optional policy for planning history-hint queries and edits.
+    #[must_use]
+    pub fn with_hint_policy(mut self, policy: Box<dyn HintPolicy>) -> Self {
+        self.hint_policy = Some(policy);
+        self.active_hint = None;
+        self
+    }
+
+    /// Remove the current history-hint policy.
+    #[must_use]
+    pub fn without_hint_policy(mut self) -> Self {
+        self.hint_policy = None;
+        self.active_hint = None;
         self
     }
 
@@ -561,6 +622,7 @@ impl Reedline {
     #[must_use]
     pub fn disable_hints(mut self) -> Self {
         self.hinter = None;
+        self.active_hint = None;
         self
     }
 
@@ -684,6 +746,7 @@ impl Reedline {
     #[must_use]
     pub fn with_auto_pairs(mut self, auto_pairs: AutoPairs) -> Self {
         self.auto_pairs = Some(auto_pairs);
+        self.active_hint = None;
         self
     }
 
@@ -691,6 +754,7 @@ impl Reedline {
     #[must_use]
     pub fn disable_auto_pairs(mut self) -> Self {
         self.auto_pairs = None;
+        self.active_hint = None;
         self
     }
 
@@ -890,6 +954,7 @@ impl Reedline {
     #[must_use]
     pub fn with_edit_mode(mut self, edit_mode: Box<dyn EditMode>) -> Self {
         self.edit_mode = edit_mode;
+        self.active_hint = None;
         self
     }
 
@@ -2448,63 +2513,79 @@ impl Reedline {
         !self.hide_hints && matches!(self.input_mode, InputMode::Regular)
     }
 
-    /// Accept the history hint, all of it when `whole`, else its next word.
-    /// `Handled` only when a non-empty hint applies: hints active, no menu
-    /// open, and the cursor either at the buffer end or followed only by
-    /// auto-pair closers the hint accounts for.
-    ///
-    /// At the buffer end the text is appended, positioned past the last
-    /// grapheme first: a block caret (vi normal) rests *on* it, so a plain
-    /// insert would split it. Before trailing closers it goes in the way
-    /// typing it would with auto-pairs on: each closer it contains steps over
-    /// the matching one, and the closers it does not reach stay after the
-    /// cursor.
+    /// Accept a currently validated policy edit, or use legacy append behavior
+    /// when no policy is registered. Partial edits are requested only here.
     fn accept_history_hint(&mut self, whole: bool) -> EventStatus {
-        let Some(hinter) = self.hinter.as_ref() else {
-            return EventStatus::Inapplicable;
-        };
-        let full = hinter.complete_hint();
-        let accepted = if whole {
-            full.clone()
-        } else {
-            hinter.next_hint_token()
-        };
-        if !self.hints_active() || accepted.is_empty() || self.active_menu().is_some() {
+        if !self.hints_active() || self.active_menu().is_some() {
             return EventStatus::Inapplicable;
         }
-
-        // Checked before the buffer end: a block caret resting on the last
-        // closer counts as at the end, but the text belongs before it.
-        if let Some(closers) = self.trailing_auto_pair_closers().map(str::to_owned) {
-            // A selection would be replaced by the edit, as at the buffer end.
-            if self.editor.cursor_is_a_selection()
-                || closers_stepped_over(&full, &closers) != closers.len()
-            {
+        if self.hint_policy.is_some() {
+            let Some(active_hint) = self.active_hint.as_ref() else {
+                return EventStatus::Inapplicable;
+            };
+            if !active_hint.matches(&self.editor, &self.prompt_edit_mode()) {
                 return EventStatus::Inapplicable;
             }
-            let left_over = &closers[closers_stepped_over(&accepted, &closers)..];
+            let mode = self.prompt_edit_mode();
+            let context = make_hint_context(&self.editor, &mode, self.auto_pairs.as_ref());
+            if context.selection().is_some() {
+                return EventStatus::Inapplicable;
+            }
+            let edit = if whole {
+                Some(active_hint.edit.clone())
+            } else {
+                let Some(hinter) = self.hinter.as_ref() else {
+                    return EventStatus::Inapplicable;
+                };
+                let next_token = hinter.next_hint_token();
+                if next_token.is_empty() {
+                    return EventStatus::Inapplicable;
+                }
+                self.hint_policy.as_mut().and_then(|policy| {
+                    policy.plan_partial(&context, &active_hint.candidate, &next_token)
+                })
+            };
+            let edit_starts_at_visible_position = |edit: &HintEdit| {
+                if whole {
+                    true
+                } else if active_hint.edit.range.start == context.cursor() {
+                    edit.range.start == context.cursor()
+                        && edit.range.end <= active_hint.edit.range.end
+                } else {
+                    context.at_buffer_end()
+                        && edit.range == (context.source().len()..context.source().len())
+                }
+            };
+            let Some(edit) = edit.filter(|edit| {
+                edit_starts_at_visible_position(edit) && valid_hint_edit(context.source(), edit)
+            }) else {
+                return EventStatus::Inapplicable;
+            };
             self.editor.sync_edit_mode(self.edit_mode.edit_mode());
-            self.editor.replace_to_line_end(&accepted, left_over);
-            return EventStatus::Handled;
-        }
-
-        if self.editor.is_cursor_at_buffer_end() {
-            self.editor.prepare_append_at_buffer_end();
-            self.run_edit_commands(&[EditCommand::InsertString(accepted)]);
+            self.editor
+                .apply_hint_edit(edit.range, &edit.replacement, edit.cursor);
+            self.active_hint = None;
             EventStatus::Handled
         } else {
-            EventStatus::Inapplicable
+            let Some(hinter) = self.hinter.as_ref() else {
+                return EventStatus::Inapplicable;
+            };
+            if !self.editor.is_cursor_at_buffer_end() {
+                return EventStatus::Inapplicable;
+            }
+            let accepted = if whole {
+                hinter.complete_hint()
+            } else {
+                hinter.next_hint_token()
+            };
+            if accepted.is_empty() {
+                return EventStatus::Inapplicable;
+            }
+            self.editor.prepare_append_at_buffer_end();
+            self.run_edit_commands(&[EditCommand::InsertString(accepted)]);
+            self.active_hint = None;
+            EventStatus::Handled
         }
-    }
-
-    /// The text after the cursor when it is nothing but closers of the
-    /// configured auto-pairs, like the `)` in `(gs|)`. A history hint for the
-    /// text before the cursor can stand in for them.
-    fn trailing_auto_pair_closers(&self) -> Option<&str> {
-        let auto_pairs = self.auto_pairs.as_ref()?;
-        let after = &self.editor.get_buffer()[self.editor.insertion_point()..];
-        let only_closers = after.chars().all(|c| auto_pairs.closing_pair(c).is_some());
-        (!after.is_empty() && only_closers).then_some(after)
     }
 
     /// Repaint of either the buffer or the parts for reverse history search
@@ -2884,54 +2965,73 @@ impl Reedline {
             self.painter.semantic_markers(),
         );
 
-        // With only auto-pair closers after the cursor, as in `(gs|)`, hint
-        // from the text before them and draw the hint in their place. A hint
-        // that does not close them would drop them on accept, so none shows.
-        let trailing_closers = self.trailing_auto_pair_closers().map(str::to_owned);
-        let hinted_line = match trailing_closers {
-            Some(_) => &buffer_to_paint[..cursor_position_in_buffer],
-            None => buffer_to_paint,
-        };
-
-        // Decided from the hint this paint looked up, never a stale one: the
-        // paint that submit makes with hints hidden must draw the closers.
-        let mut hint_replaces_closers = false;
-        let hint: String = if self.hints_active() {
-            self.hinter.as_mut().map_or_else(String::new, |hinter| {
-                let hint = hinter.handle(
-                    hinted_line,
-                    cursor_position_in_buffer,
-                    self.history.as_ref(),
-                    use_ansi_coloring,
-                    &self.cwd.clone().unwrap_or_else(|| {
-                        std::env::current_dir()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .to_string()
-                    }),
-                );
-                let Some(closers) = trailing_closers.as_deref() else {
-                    return hint;
-                };
-                let full = hinter.complete_hint();
-                hint_replaces_closers =
-                    !full.is_empty() && closers_stepped_over(&full, closers) == closers.len();
-                if hint_replaces_closers {
-                    hint
-                } else {
-                    String::new()
+        let policy_hint_blocked_by_menu =
+            self.hint_policy.is_some() && self.active_menu().is_some();
+        let mode = self.prompt_edit_mode();
+        let context = make_hint_context(&self.editor, &mode, self.auto_pairs.as_ref());
+        let mut hint_replaces_source = false;
+        let mut hint = String::new();
+        self.active_hint = None;
+        if self.hints_active() && !policy_hint_blocked_by_menu {
+            let query = self.hint_policy.as_ref().map_or_else(
+                || HintQuery::whole_buffer(&context),
+                |policy| policy.query(&context),
+            );
+            if valid_hint_query(context.source(), &query) {
+                if let Some(hinter) = self.hinter.as_mut() {
+                    let line = &context.source()[query.range.clone()];
+                    let rendered = hinter.handle(
+                        line,
+                        query.position,
+                        self.history.as_ref(),
+                        use_ansi_coloring,
+                        &self.cwd.clone().unwrap_or_else(|| {
+                            std::env::current_dir()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .to_string()
+                        }),
+                    );
+                    if let Some(policy) = self.hint_policy.as_mut() {
+                        let candidate = hinter.complete_hint();
+                        if !candidate.is_empty() {
+                            let edit = policy.plan(&context, &candidate);
+                            if edit.as_ref().is_some_and(|edit| {
+                                valid_hint_edit_plan(context.source(), &context, &candidate, edit)
+                            }) {
+                                let edit = edit.expect("validated hint edit");
+                                if edit.range.start == context.cursor() {
+                                    hint = render_hint_preview(
+                                        &styled_text,
+                                        &edit.range,
+                                        &rendered,
+                                        prompt,
+                                        use_ansi_coloring,
+                                        self.painter.semantic_markers(),
+                                    );
+                                    hint_replaces_source = true;
+                                } else {
+                                    hint = rendered.clone();
+                                }
+                                self.active_hint = Some(ActiveHint {
+                                    stamp: HintSourceStamp::new(&context),
+                                    candidate,
+                                    edit,
+                                });
+                            }
+                        }
+                    } else {
+                        hint = rendered;
+                    }
                 }
-            })
-        } else {
-            String::new()
-        };
+            }
+        }
 
         // Needs to add return carriage to newlines because when not in raw mode
         // some OS don't fully return the carriage
 
-        let mut lines = if hint_replaces_closers {
-            // The exit path reprints what follows the cursor, which is still
-            // the closers, not the hint drawn over them.
+        let mut lines = if hint_replaces_source {
+            // The exit path reprints the source range covered by the preview.
             PromptLines::new(
                 prompt,
                 self.prompt_edit_mode(),
@@ -3183,16 +3283,94 @@ impl Reedline {
     }
 }
 
-/// How much of `closers` typing `text` before them would step over, in bytes:
-/// the longest prefix of `closers` that `text` contains in order.
-fn closers_stepped_over(text: &str, closers: &str) -> usize {
-    let mut text = text.chars();
-    // Find the first closer the rest of `text` does not contain. `any`
-    // consumes `text`, so each closer must come after the one before it.
-    closers
-        .char_indices()
-        .find(|&(_, closer)| !text.any(|c| c == closer))
-        .map_or(closers.len(), |(index, _)| index)
+fn render_hint_preview(
+    styled_text: &crate::painting::StyledText,
+    hidden_range: &std::ops::Range<usize>,
+    rendered_hint: &str,
+    prompt: &dyn Prompt,
+    use_ansi_coloring: bool,
+    semantic_markers: Option<&dyn SemanticPromptMarkers>,
+) -> String {
+    let (_, retained_suffix) = styled_text.render_around_insertion_point(
+        hidden_range.end,
+        prompt,
+        use_ansi_coloring,
+        semantic_markers,
+    );
+    format!("{rendered_hint}{retained_suffix}")
+}
+
+fn make_hint_context<'a>(
+    editor: &'a Editor,
+    mode: &'a PromptEditMode,
+    auto_pairs: Option<&'a AutoPairs>,
+) -> HintContext<'a> {
+    let selection = editor
+        .cursor_is_a_selection()
+        .then(|| editor.get_selection())
+        .flatten()
+        .map(|(from, to)| from..to);
+    HintContext::new(
+        editor.get_buffer(),
+        editor.insertion_point(),
+        selection,
+        editor.is_cursor_at_buffer_end(),
+        mode,
+        auto_pairs,
+    )
+}
+
+fn valid_hint_query(source: &str, query: &HintQuery) -> bool {
+    source
+        .get(query.range.clone())
+        .is_some_and(|line| query.position <= line.len() && line.is_char_boundary(query.position))
+}
+
+fn valid_hint_edit(source: &str, edit: &HintEdit) -> bool {
+    if source.get(edit.range.clone()).is_none() {
+        return false;
+    }
+    let Some(new_len) = source
+        .len()
+        .checked_sub(edit.range.len())
+        .and_then(|len| len.checked_add(edit.replacement.len()))
+    else {
+        return false;
+    };
+    if edit.cursor > new_len {
+        return false;
+    }
+
+    let Some(inserted_end) = edit.range.start.checked_add(edit.replacement.len()) else {
+        return false;
+    };
+    if edit.cursor < edit.range.start {
+        source.is_char_boundary(edit.cursor)
+    } else if edit.cursor <= inserted_end {
+        edit.replacement
+            .is_char_boundary(edit.cursor - edit.range.start)
+    } else {
+        edit.cursor
+            .checked_sub(edit.replacement.len())
+            .and_then(|cursor| cursor.checked_add(edit.range.len()))
+            .is_some_and(|cursor| source.is_char_boundary(cursor))
+    }
+}
+
+fn valid_hint_edit_plan(
+    source: &str,
+    context: &HintContext<'_>,
+    candidate: &str,
+    edit: &HintEdit,
+) -> bool {
+    if context.selection().is_some()
+        || edit.replacement != candidate
+        || !valid_hint_edit(source, edit)
+    {
+        return false;
+    }
+    edit.range.start == context.cursor()
+        || (context.at_buffer_end() && edit.range == (source.len()..source.len()))
 }
 
 #[cfg(test)]
@@ -7762,6 +7940,60 @@ mod tests {
         assert_eq!(rl.editor.get_buffer(), "abcdef");
     }
 
+    #[rstest]
+    #[case::vi_whole(true, true)]
+    #[case::vi_partial(true, false)]
+    #[case::helix_whole(false, true)]
+    #[case::helix_partial(false, false)]
+    fn registered_policy_appends_at_modal_logical_end(#[case] vi: bool, #[case] whole: bool) {
+        struct IndependentTokenHinter;
+        impl Hinter for IndependentTokenHinter {
+            fn handle(&mut self, _: &str, _: usize, _: &dyn History, _: bool, _: &str) -> String {
+                "def".to_string()
+            }
+
+            fn complete_hint(&self) -> String {
+                "def".to_string()
+            }
+
+            fn next_hint_token(&self) -> String {
+                "XYZ".to_string()
+            }
+        }
+
+        let hinter: Box<dyn Hinter> = if whole {
+            Box::new(RecordingHinter {
+                hint: "def",
+                asked: Arc::default(),
+            })
+        } else {
+            Box::new(IndependentTokenHinter)
+        };
+        let mut rl = seam_engine(if vi {
+            Box::<crate::Vi>::default()
+        } else {
+            Box::<crate::Helix>::default()
+        })
+        .with_hint_policy(Box::new(TestHintPolicy))
+        .with_hinter(hinter);
+        rl.run_edit_commands(&[EditCommand::InsertString("abc".into())]);
+        drive(&mut rl, &[key(KeyCode::Esc)]);
+        rl.buffer_paint(&DefaultPrompt::default()).unwrap();
+
+        let event = if whole {
+            ReedlineEvent::HistoryHintComplete
+        } else {
+            ReedlineEvent::HistoryHintWordComplete
+        };
+        assert!(matches!(send(&mut rl, event), EventStatus::Handled));
+        assert_eq!(
+            rl.editor.get_buffer(),
+            if whole { "abcdef" } else { "abcXYZ" }
+        );
+        assert!(rl.editor.is_cursor_at_buffer_end());
+        assert!(!rl.editor.cursor_is_a_selection());
+    }
+
     /// Regression test for nushell/reedline#1185: `l` accepts the hint like
     /// Right does, and only where a hint applies; mid-line it still moves.
     #[test]
@@ -7804,6 +8036,100 @@ mod tests {
         hint: &'static str,
         asked: Arc<std::sync::Mutex<String>>,
     }
+
+    /// A table-driven policy: fixture data declares which candidate closer
+    /// corresponds to the source's auto-pair closer. The editor does not infer
+    /// this relationship from token contents.
+    struct TestHintPolicy;
+
+    impl TestHintPolicy {
+        fn trailing_closers(context: &HintContext<'_>) -> Option<String> {
+            let after = &context.source()[context.cursor()..];
+            let pairs: Vec<_> = context.auto_pairs().collect();
+            (!after.is_empty()
+                && after
+                    .chars()
+                    .all(|ch| pairs.iter().any(|(_, close)| *close == ch)))
+            .then(|| after.to_string())
+        }
+
+        fn candidate_closer_offset(candidate: &str) -> Option<usize> {
+            match candidate {
+                "tat).branch" => Some(3),
+                ") | lines" | ").branch" => Some(0),
+                r#"")")"# => Some(3),
+                r#")")"# => Some(2),
+                r#"")"# => Some(1),
+                _ => None,
+            }
+        }
+    }
+
+    impl HintPolicy for TestHintPolicy {
+        fn query(&self, context: &HintContext<'_>) -> HintQuery {
+            if Self::trailing_closers(context).is_some() {
+                HintQuery::new(0..context.cursor(), context.cursor())
+            } else {
+                HintQuery::whole_buffer(context)
+            }
+        }
+
+        fn plan(&mut self, context: &HintContext<'_>, candidate: &str) -> Option<HintEdit> {
+            if candidate.is_empty() || context.selection().is_some() {
+                return None;
+            }
+            let tail = Self::trailing_closers(context);
+            let (start, end) = if tail.is_some() {
+                let target = Self::candidate_closer_offset(candidate)?;
+                let candidate_closer = candidate.get(target..)?.chars().next()?;
+                if !tail.as_ref()?.starts_with(candidate_closer) {
+                    return None;
+                }
+                (context.cursor(), context.source().len())
+            } else if context.at_buffer_end() {
+                let end = context.source().len();
+                (end, end)
+            } else {
+                return None;
+            };
+            let cursor = start + candidate.len();
+            Some(HintEdit::new(start..end, candidate, cursor))
+        }
+
+        fn plan_partial(
+            &mut self,
+            context: &HintContext<'_>,
+            candidate: &str,
+            next_token: &str,
+        ) -> Option<HintEdit> {
+            if next_token.is_empty() {
+                return None;
+            }
+            let tail = Self::trailing_closers(context);
+            if tail.is_none() && context.at_buffer_end() {
+                let end = context.source().len();
+                return Some(HintEdit::new(end..end, next_token, end + next_token.len()));
+            }
+            if !candidate.starts_with(next_token) {
+                return None;
+            }
+            let consume_closer = Self::candidate_closer_offset(candidate)
+                .is_some_and(|target| target < next_token.len())
+                && tail.as_ref().is_some_and(|tail| {
+                    Self::candidate_closer_offset(candidate)
+                        .and_then(|target| candidate.get(target..))
+                        .and_then(|suffix| suffix.chars().next())
+                        .is_some_and(|closer| tail.starts_with(closer))
+                });
+            let end = context.cursor() + usize::from(consume_closer);
+            Some(HintEdit::new(
+                context.cursor()..end,
+                next_token,
+                context.cursor() + next_token.len(),
+            ))
+        }
+    }
+
     impl Hinter for RecordingHinter {
         fn handle(&mut self, line: &str, _: usize, _: &dyn History, _: bool, _: &str) -> String {
             *self.asked.lock().unwrap() = line.to_string();
@@ -7823,6 +8149,7 @@ mod tests {
         let asked = Arc::default();
         let mut rl = seam_engine(Box::<crate::Emacs>::default())
             .with_auto_pairs(AutoPairs::new([('(', ')')]))
+            .with_hint_policy(Box::new(TestHintPolicy))
             .with_hinter(Box::new(RecordingHinter {
                 hint,
                 asked: Arc::clone(&asked),
@@ -7833,6 +8160,7 @@ mod tests {
             ("(gs)", 3),
             "setup"
         );
+        rl.buffer_paint(&DefaultPrompt::default()).unwrap();
         (rl, asked)
     }
 
@@ -7844,10 +8172,520 @@ mod tests {
         assert_eq!(*asked.lock().unwrap(), "(gs");
     }
 
-    // Accepting before trailing closers goes in the way typing it would with
-    // auto-pairs on: a closer in the accepted text steps over the one at the
-    // cursor, the rest stay put. A hint that leaves a pair open is refused,
-    // since taking it would drop the closer.
+    #[test]
+    fn cwd_aware_history_hint_accepts_token_closer_then_remainder() {
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_auto_pairs(AutoPairs::new([('(', ')')]))
+            .with_hint_policy(Box::new(TestHintPolicy))
+            .with_hinter(Box::new(crate::CwdAwareHinter::default()));
+        rl.history
+            .save(HistoryItem::from_command_line("(gstat).branch"))
+            .unwrap();
+        drive(&mut rl, &[ch('('), ch('g'), ch('s')]);
+
+        rl.buffer_paint(&DefaultPrompt::default()).unwrap();
+        send(&mut rl, ReedlineEvent::HistoryHintWordComplete);
+        assert_eq!(
+            (rl.editor.get_buffer(), rl.editor.insertion_point()),
+            ("(gstat)", 6)
+        );
+
+        rl.buffer_paint(&DefaultPrompt::default()).unwrap();
+        send(&mut rl, ReedlineEvent::HistoryHintWordComplete);
+        assert_eq!(
+            (rl.editor.get_buffer(), rl.editor.insertion_point()),
+            ("(gstat)", 7)
+        );
+
+        rl.buffer_paint(&DefaultPrompt::default()).unwrap();
+        send(&mut rl, ReedlineEvent::HistoryHintComplete);
+        assert_eq!(
+            (rl.editor.get_buffer(), rl.editor.insertion_point()),
+            ("(gstat).branch", 14)
+        );
+    }
+
+    #[test]
+    fn full_source_query_preserves_external_hinter_line_and_position_contract() {
+        struct FullSourcePolicy;
+        impl HintPolicy for FullSourcePolicy {
+            fn query(&self, context: &HintContext<'_>) -> HintQuery {
+                HintQuery::whole_buffer(context)
+            }
+
+            fn plan(&mut self, context: &HintContext<'_>, candidate: &str) -> Option<HintEdit> {
+                TestHintPolicy.plan(context, candidate)
+            }
+
+            fn plan_partial(
+                &mut self,
+                context: &HintContext<'_>,
+                candidate: &str,
+                next_token: &str,
+            ) -> Option<HintEdit> {
+                TestHintPolicy.plan_partial(context, candidate, next_token)
+            }
+        }
+
+        struct LinePositionHinter {
+            candidate: String,
+            observed: Arc<std::sync::Mutex<Option<(String, usize)>>>,
+        }
+        impl Hinter for LinePositionHinter {
+            fn handle(
+                &mut self,
+                line: &str,
+                pos: usize,
+                _: &dyn History,
+                _: bool,
+                _: &str,
+            ) -> String {
+                *self.observed.lock().unwrap() = Some((line.to_string(), pos));
+                self.candidate = if line == "(gs)" && pos == 3 {
+                    "tat).branch".to_string()
+                } else {
+                    String::new()
+                };
+                self.candidate.clone()
+            }
+
+            fn complete_hint(&self) -> String {
+                self.candidate.clone()
+            }
+
+            fn next_hint_token(&self) -> String {
+                crate::hinter::get_first_token(&self.candidate)
+            }
+        }
+
+        let observed = Arc::default();
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_auto_pairs(AutoPairs::new([('(', ')')]))
+            .with_hint_policy(Box::new(FullSourcePolicy))
+            .with_hinter(Box::new(LinePositionHinter {
+                candidate: String::new(),
+                observed: Arc::clone(&observed),
+            }));
+        drive(&mut rl, &[ch('('), ch('g'), ch('s')]);
+        rl.buffer_paint(&DefaultPrompt::default()).unwrap();
+
+        assert_eq!(*observed.lock().unwrap(), Some(("(gs)".to_string(), 3)));
+        send(&mut rl, ReedlineEvent::HistoryHintComplete);
+        assert_eq!(rl.editor.get_buffer(), "(gstat).branch");
+    }
+
+    #[test]
+    fn retained_suffix_follows_hint_and_original_suffix_is_restored() {
+        struct RetainSuffixPolicy;
+        impl HintPolicy for RetainSuffixPolicy {
+            fn query(&self, context: &HintContext<'_>) -> HintQuery {
+                HintQuery::whole_buffer(context)
+            }
+
+            fn plan(&mut self, context: &HintContext<'_>, candidate: &str) -> Option<HintEdit> {
+                let hidden_end = context.cursor() + 1;
+                Some(HintEdit::new(
+                    context.cursor()..hidden_end,
+                    candidate,
+                    context.cursor() + candidate.len(),
+                ))
+            }
+        }
+
+        let mut styled = crate::painting::StyledText::new();
+        styled.push((Style::new(), "(gs)x".to_string()));
+        let displayed = render_hint_preview(
+            &styled,
+            &(3..4),
+            "tat",
+            &DefaultPrompt::default(),
+            false,
+            None,
+        );
+        assert_eq!(displayed, "tatx");
+
+        let asked = Arc::default();
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_hint_policy(Box::new(RetainSuffixPolicy))
+            .with_hinter(Box::new(RecordingHinter { hint: "tat", asked }));
+        rl.run_edit_commands(&[EditCommand::InsertString("(gs)x".into())]);
+        rl.run_edit_commands(&[EditCommand::MoveToPosition {
+            position: 3,
+            select: false,
+        }]);
+        rl.buffer_paint(&DefaultPrompt::default()).unwrap();
+        assert!(rl
+            .painter
+            .exit_after_cursor_for_test()
+            .is_some_and(|text| text.contains('x')));
+        assert!(matches!(
+            send(&mut rl, ReedlineEvent::HistoryHintWordComplete),
+            EventStatus::Inapplicable
+        ));
+        assert_eq!(rl.editor.get_buffer(), "(gs)x");
+        send(&mut rl, ReedlineEvent::HistoryHintComplete);
+        assert_eq!(
+            (rl.editor.get_buffer(), rl.editor.insertion_point()),
+            ("(gstatx", 6)
+        );
+    }
+
+    #[test]
+    fn policy_overlay_does_not_hide_source_suffix_while_menu_is_active() {
+        let (mut rl, _) = paired_line_with_hint("tat).branch");
+        rl.menus
+            .push(ReedlineMenu::HistoryMenu(Box::new(ListMenu::default())));
+        rl.menus
+            .last_mut()
+            .unwrap()
+            .menu_event(MenuEvent::Activate(false));
+
+        rl.buffer_paint(&DefaultPrompt::default()).unwrap();
+        assert!(rl
+            .painter
+            .exit_after_cursor_for_test()
+            .is_some_and(|text| text.contains(')')));
+        assert!(matches!(
+            send(&mut rl, ReedlineEvent::HistoryHintComplete),
+            EventStatus::Inapplicable
+        ));
+
+        rl.deactivate_menus();
+        rl.buffer_paint(&DefaultPrompt::default()).unwrap();
+        send(&mut rl, ReedlineEvent::HistoryHintComplete);
+        assert_eq!(rl.editor.get_buffer(), "(gstat).branch");
+    }
+
+    #[test]
+    fn policy_rejects_full_edits_outside_cursor_or_logical_end_append() {
+        struct InvalidRangePolicy;
+        impl HintPolicy for InvalidRangePolicy {
+            fn plan(&mut self, context: &HintContext<'_>, candidate: &str) -> Option<HintEdit> {
+                Some(HintEdit::new(
+                    0..context.source().len(),
+                    candidate,
+                    candidate.len(),
+                ))
+            }
+
+            fn plan_partial(&mut self, _: &HintContext<'_>, _: &str, _: &str) -> Option<HintEdit> {
+                None
+            }
+        }
+
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_hint_policy(Box::new(InvalidRangePolicy))
+            .with_hinter(Box::new(RecordingHinter {
+                hint: "tail",
+                asked: Arc::default(),
+            }));
+        rl.run_edit_commands(&[EditCommand::InsertString("abc".into())]);
+        rl.run_edit_commands(&[EditCommand::MoveToPosition {
+            position: 1,
+            select: false,
+        }]);
+        rl.buffer_paint(&DefaultPrompt::default()).unwrap();
+
+        assert!(matches!(
+            send(&mut rl, ReedlineEvent::HistoryHintComplete),
+            EventStatus::Inapplicable
+        ));
+        assert_eq!(rl.editor.get_buffer(), "abc");
+    }
+
+    #[test]
+    fn policy_rejects_full_edit_that_does_not_equal_the_raw_candidate() {
+        struct MismatchedCandidatePolicy;
+        impl HintPolicy for MismatchedCandidatePolicy {
+            fn plan(&mut self, _: &HintContext<'_>, _: &str) -> Option<HintEdit> {
+                Some(HintEdit::new(3..5, "tat)", 7))
+            }
+
+            fn plan_partial(&mut self, _: &HintContext<'_>, _: &str, _: &str) -> Option<HintEdit> {
+                None
+            }
+        }
+
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_hint_policy(Box::new(MismatchedCandidatePolicy))
+            .with_hinter(Box::new(RecordingHinter {
+                hint: "tat",
+                asked: Arc::default(),
+            }));
+        rl.run_edit_commands(&[EditCommand::InsertString("(gs)x".into())]);
+        rl.run_edit_commands(&[EditCommand::MoveToPosition {
+            position: 3,
+            select: false,
+        }]);
+        rl.buffer_paint(&DefaultPrompt::default()).unwrap();
+
+        assert!(matches!(
+            send(&mut rl, ReedlineEvent::HistoryHintComplete),
+            EventStatus::Inapplicable
+        ));
+        assert_eq!(rl.editor.get_buffer(), "(gs)x");
+        send(
+            &mut rl,
+            ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::HistoryHintComplete,
+                ReedlineEvent::Edit(vec![EditCommand::InsertChar('!')]),
+            ]),
+        );
+        assert_eq!(rl.editor.get_buffer(), "(gs!)x");
+    }
+
+    #[rstest]
+    #[case::outside_hidden_range(5, false, "(gs!)x")]
+    #[case::ends_at_hidden_boundary(4, true, "(gstx")]
+    #[case::keeps_hidden_character(3, true, "(gst)x")]
+    fn partial_edit_cannot_extend_past_preview_hidden_range(
+        #[case] partial_end: usize,
+        #[case] accepted: bool,
+        #[case] expected: &'static str,
+    ) {
+        struct PartialRangePolicy(usize);
+        impl HintPolicy for PartialRangePolicy {
+            fn plan(&mut self, context: &HintContext<'_>, candidate: &str) -> Option<HintEdit> {
+                Some(HintEdit::new(
+                    context.cursor()..context.cursor() + 1,
+                    candidate,
+                    context.cursor() + candidate.len(),
+                ))
+            }
+
+            fn plan_partial(
+                &mut self,
+                context: &HintContext<'_>,
+                _: &str,
+                next_token: &str,
+            ) -> Option<HintEdit> {
+                Some(HintEdit::new(
+                    context.cursor()..self.0,
+                    next_token,
+                    context.cursor() + next_token.len(),
+                ))
+            }
+        }
+
+        struct SingleCharacterTokenHinter;
+        impl Hinter for SingleCharacterTokenHinter {
+            fn handle(&mut self, _: &str, _: usize, _: &dyn History, _: bool, _: &str) -> String {
+                "tat".to_string()
+            }
+
+            fn complete_hint(&self) -> String {
+                "tat".to_string()
+            }
+
+            fn next_hint_token(&self) -> String {
+                "t".to_string()
+            }
+        }
+
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_hint_policy(Box::new(PartialRangePolicy(partial_end)))
+            .with_hinter(Box::new(SingleCharacterTokenHinter));
+        rl.run_edit_commands(&[EditCommand::InsertString("(gs)x".into())]);
+        rl.run_edit_commands(&[EditCommand::MoveToPosition {
+            position: 3,
+            select: false,
+        }]);
+        rl.buffer_paint(&DefaultPrompt::default()).unwrap();
+
+        if accepted {
+            send(&mut rl, ReedlineEvent::HistoryHintWordComplete);
+        } else {
+            assert!(matches!(
+                send(&mut rl, ReedlineEvent::HistoryHintWordComplete),
+                EventStatus::Inapplicable
+            ));
+            send(
+                &mut rl,
+                ReedlineEvent::UntilFound(vec![
+                    ReedlineEvent::HistoryHintWordComplete,
+                    ReedlineEvent::Edit(vec![EditCommand::InsertChar('!')]),
+                ]),
+            );
+        }
+        assert_eq!(rl.editor.get_buffer(), expected);
+    }
+
+    #[test]
+    fn empty_candidate_never_reaches_hint_policy() {
+        struct CountingPolicy(Arc<std::sync::Mutex<usize>>);
+        impl HintPolicy for CountingPolicy {
+            fn plan(&mut self, context: &HintContext<'_>, _: &str) -> Option<HintEdit> {
+                *self.0.lock().unwrap() += 1;
+                Some(HintEdit::new(
+                    context.cursor()..context.source().len(),
+                    "",
+                    context.cursor(),
+                ))
+            }
+
+            fn plan_partial(&mut self, _: &HintContext<'_>, _: &str, _: &str) -> Option<HintEdit> {
+                None
+            }
+        }
+
+        struct EmptyCandidateHinter;
+        impl Hinter for EmptyCandidateHinter {
+            fn handle(&mut self, _: &str, _: usize, _: &dyn History, _: bool, _: &str) -> String {
+                "formatted but not actionable".to_string()
+            }
+
+            fn complete_hint(&self) -> String {
+                String::new()
+            }
+
+            fn next_hint_token(&self) -> String {
+                String::new()
+            }
+        }
+
+        let calls = Arc::new(std::sync::Mutex::new(0));
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_hint_policy(Box::new(CountingPolicy(Arc::clone(&calls))))
+            .with_hinter(Box::new(EmptyCandidateHinter));
+        rl.run_edit_commands(&[EditCommand::InsertString("abc".into())]);
+        rl.run_edit_commands(&[EditCommand::MoveToPosition {
+            position: 1,
+            select: false,
+        }]);
+        rl.buffer_paint(&DefaultPrompt::default()).unwrap();
+
+        assert_eq!(*calls.lock().unwrap(), 0);
+        assert!(matches!(
+            send(&mut rl, ReedlineEvent::HistoryHintComplete),
+            EventStatus::Inapplicable
+        ));
+        assert_eq!(rl.editor.get_buffer(), "abc");
+    }
+
+    #[rstest]
+    #[case::hide_one_then_retain_suffix(4, "tat).branch", 14)]
+    #[case::hide_two_then_retain_suffix(5, "tat).branchx", 15)]
+    fn one_edit_range_drives_preview_and_acceptance(
+        #[case] hidden_end: usize,
+        #[case] candidate: &'static str,
+        #[case] cursor: usize,
+    ) {
+        struct RetainedSuffixPolicy(usize);
+        impl HintPolicy for RetainedSuffixPolicy {
+            fn plan(&mut self, context: &HintContext<'_>, candidate: &str) -> Option<HintEdit> {
+                Some(HintEdit::new(
+                    context.cursor()..self.0,
+                    candidate,
+                    context.cursor() + candidate.len(),
+                ))
+            }
+
+            fn plan_partial(&mut self, _: &HintContext<'_>, _: &str, _: &str) -> Option<HintEdit> {
+                None
+            }
+        }
+
+        let mut styled = crate::painting::StyledText::new();
+        styled.push((Style::new(), "(gs)xtail".to_string()));
+        let display = render_hint_preview(
+            &styled,
+            &(3..hidden_end),
+            candidate,
+            &DefaultPrompt::default(),
+            false,
+            None,
+        );
+        assert_eq!(display, "tat).branchxtail");
+
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_hint_policy(Box::new(RetainedSuffixPolicy(hidden_end)))
+            .with_hinter(Box::new(RecordingHinter {
+                hint: candidate,
+                asked: Arc::default(),
+            }));
+        rl.run_edit_commands(&[EditCommand::InsertString("(gs)xtail".into())]);
+        rl.run_edit_commands(&[EditCommand::MoveToPosition {
+            position: 3,
+            select: false,
+        }]);
+        rl.buffer_paint(&DefaultPrompt::default()).unwrap();
+        send(&mut rl, ReedlineEvent::HistoryHintComplete);
+
+        assert_eq!(
+            (rl.editor.get_buffer(), rl.editor.insertion_point()),
+            ("(gstat).branchxtail", cursor)
+        );
+    }
+
+    #[test]
+    fn unregistered_hint_policy_keeps_full_query_and_does_not_consume_closers() {
+        let asked = Arc::default();
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_auto_pairs(AutoPairs::new([('(', ')')]))
+            .with_hinter(Box::new(RecordingHinter {
+                hint: "tat).branch",
+                asked: Arc::clone(&asked),
+            }));
+        drive(&mut rl, &[ch('('), ch('g'), ch('s')]);
+        rl.buffer_paint(&DefaultPrompt::default()).unwrap();
+        assert_eq!(*asked.lock().unwrap(), "(gs)");
+
+        assert!(matches!(
+            send(&mut rl, ReedlineEvent::HistoryHintComplete),
+            EventStatus::Inapplicable
+        ));
+        assert_eq!(rl.editor.get_buffer(), "(gs)");
+    }
+
+    #[test]
+    fn stale_hint_plan_is_rejected_without_requerying_hinter() {
+        let (mut rl, asked) = paired_line_with_hint("tat).branch");
+        rl.run_edit_commands(&[EditCommand::InsertChar('x')]);
+        assert!(matches!(
+            send(&mut rl, ReedlineEvent::HistoryHintComplete),
+            EventStatus::Inapplicable
+        ));
+        assert_eq!(*asked.lock().unwrap(), "(gs");
+    }
+
+    #[test]
+    fn partial_hint_token_is_requested_only_for_partial_acceptance() {
+        struct CountedHinter(Arc<std::sync::Mutex<(usize, usize)>>);
+        impl Hinter for CountedHinter {
+            fn handle(&mut self, _: &str, _: usize, _: &dyn History, _: bool, _: &str) -> String {
+                self.0.lock().unwrap().0 += 1;
+                "tail".to_string()
+            }
+            fn complete_hint(&self) -> String {
+                "tail".to_string()
+            }
+            fn next_hint_token(&self) -> String {
+                self.0.lock().unwrap().1 += 1;
+                "tail".to_string()
+            }
+        }
+
+        let calls = Arc::new(std::sync::Mutex::new((0, 0)));
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_hint_policy(Box::new(TestHintPolicy))
+            .with_hinter(Box::new(CountedHinter(Arc::clone(&calls))));
+        rl.buffer_paint(&DefaultPrompt::default()).unwrap();
+        assert_eq!(*calls.lock().unwrap(), (1, 0));
+        send(&mut rl, ReedlineEvent::HistoryHintComplete);
+        assert_eq!(*calls.lock().unwrap(), (1, 0));
+
+        let calls = Arc::new(std::sync::Mutex::new((0, 0)));
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_hint_policy(Box::new(TestHintPolicy))
+            .with_hinter(Box::new(CountedHinter(Arc::clone(&calls))));
+        rl.buffer_paint(&DefaultPrompt::default()).unwrap();
+        send(&mut rl, ReedlineEvent::HistoryHintWordComplete);
+        assert_eq!(*calls.lock().unwrap(), (1, 1));
+    }
+
+    // The fixture policy explicitly maps candidate closers to the source
+    // closer. Partial insertion can then consume that mapped source character;
+    // a candidate with no declared mapping is refused when a closer is hidden.
     #[rstest]
     #[case::whole_hint(true, "tat).branch", "(gstat).branch", 14)]
     #[case::word_before_the_closer(false, "tat).branch", "(gstat)", 6)]
@@ -7916,6 +8754,7 @@ mod tests {
     fn vi_normal_accepts_a_hint_word_before_trailing_closers() {
         let mut rl = seam_engine(Box::<crate::Vi>::default())
             .with_auto_pairs(AutoPairs::new([('(', ')')]))
+            .with_hint_policy(Box::new(TestHintPolicy))
             .with_hinter(Box::new(RecordingHinter {
                 hint: "tat).branch",
                 asked: Arc::default(),
@@ -7929,6 +8768,7 @@ mod tests {
             ("(gs)", 3),
             "setup: caret on the closer"
         );
+        rl.buffer_paint(&DefaultPrompt::default()).unwrap();
 
         rl.handle_event(
             &DefaultPrompt::default(),
@@ -7954,6 +8794,104 @@ mod tests {
         .unwrap();
 
         assert_eq!(rl.editor.get_buffer(), "(gs)");
+    }
+
+    /// History contains a closer inside a quoted token as well as the
+    /// auto-pair closer already present after the cursor. Accepting the token
+    /// must preserve that trailing closer.
+    #[test]
+    fn history_hint_custom_token_keeps_closer_inside_string() {
+        struct StringTokenHinter {
+            hint: String,
+        }
+        impl Hinter for StringTokenHinter {
+            fn handle(&mut self, _: &str, _: usize, _: &dyn History, _: bool, _: &str) -> String {
+                self.hint.clone()
+            }
+            fn complete_hint(&self) -> String {
+                self.hint.clone()
+            }
+            fn next_hint_token(&self) -> String {
+                r#"")""#.to_string()
+            }
+        }
+
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_auto_pairs(AutoPairs::new([('(', ')')]))
+            .with_hint_policy(Box::new(TestHintPolicy))
+            .with_hinter(Box::new(StringTokenHinter {
+                hint: r#"")")"#.to_string(),
+            }));
+        drive(&mut rl, &[ch('f'), ch('(')]);
+        assert_eq!(
+            (rl.editor.get_buffer(), rl.editor.insertion_point()),
+            ("f()", 2)
+        );
+        rl.buffer_paint(&DefaultPrompt::default()).unwrap();
+
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::HistoryHintWordComplete,
+        )
+        .unwrap();
+
+        assert_eq!(
+            (rl.editor.get_buffer(), rl.editor.insertion_point()),
+            (r#"f(")")"#, 5)
+        );
+    }
+
+    /// The standard tokenization splits the quoted token's inner `)` into a
+    /// later partial acceptance. That inner character must not consume the
+    /// outer auto-pair closer on the next request.
+    #[test]
+    fn history_hint_default_tokens_keep_closer_inside_string() {
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_auto_pairs(AutoPairs::new([('(', ')')]))
+            .with_hint_policy(Box::new(TestHintPolicy))
+            .with_hinter(Box::new(crate::DefaultHinter::default()));
+        rl.history
+            .save(HistoryItem::from_command_line(r#"f(")")"#))
+            .unwrap();
+        drive(&mut rl, &[ch('f'), ch('(')]);
+        assert_eq!(
+            (rl.editor.get_buffer(), rl.editor.insertion_point()),
+            ("f()", 2)
+        );
+        rl.buffer_paint(&DefaultPrompt::default()).unwrap();
+
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::HistoryHintWordComplete,
+        )
+        .unwrap();
+        rl.buffer_paint(&DefaultPrompt::default()).unwrap();
+        assert_eq!(
+            (rl.editor.get_buffer(), rl.editor.insertion_point()),
+            ("f(\")", 3)
+        );
+
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::HistoryHintWordComplete,
+        )
+        .unwrap();
+        rl.buffer_paint(&DefaultPrompt::default()).unwrap();
+        assert_eq!(
+            (rl.editor.get_buffer(), rl.editor.insertion_point()),
+            (r#"f("))"#, 4)
+        );
+
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::HistoryHintWordComplete,
+        )
+        .unwrap();
+
+        assert_eq!(
+            (rl.editor.get_buffer(), rl.editor.insertion_point()),
+            (r#"f(")")"#, 5)
+        );
     }
 
     /// A retained motion selection in helix *normal* (here `b` sweeping back
