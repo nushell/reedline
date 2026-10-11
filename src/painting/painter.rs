@@ -15,7 +15,7 @@ use {
     crossterm::{
         cursor::{self, MoveTo, RestorePosition, SavePosition},
         style::{Attribute, Print, ResetColor, SetAttribute},
-        terminal::{self, Clear, ClearType},
+        terminal::{self, BeginSynchronizedUpdate, Clear, ClearType, EndSynchronizedUpdate},
         QueueableCommand,
     },
     std::io::{Result, Write},
@@ -802,7 +802,7 @@ impl Painter {
 
         // Cursor queries above must finish before the frame begins. End the frame even if
         // drawing fails, so a recoverable write error cannot leave updates suspended.
-        self.stdout.queue(terminal::BeginSynchronizedUpdate)?;
+        self.begin_frame()?;
         let painted = (|| -> Result<()> {
             // Marking the painter state as larger buffer to avoid animations
             self.large_buffer = required_lines >= screen_height;
@@ -878,10 +878,7 @@ impl Painter {
 
             Ok(())
         })();
-        let ended = self
-            .stdout
-            .queue(terminal::EndSynchronizedUpdate)
-            .and_then(|stdout| stdout.flush());
+        let ended = self.end_frame().and_then(|()| self.stdout.flush());
         painted.and(ended)
     }
 
@@ -1410,6 +1407,27 @@ impl Painter {
         Ok(())
     }
 
+    /// Queue the start of a synchronized update: the terminal keeps applying
+    /// what follows but draws none of it until [`Painter::end_frame`], so an
+    /// erase and the redraw after it show as one frame. A terminal that does
+    /// not know the mode ignores it; `TERM=dumb` would print it, so skip it.
+    fn begin_frame(&mut self) -> Result<()> {
+        if !self.term_is_dumb {
+            self.stdout.queue(BeginSynchronizedUpdate)?;
+        }
+        Ok(())
+    }
+
+    /// Queue the end of the frame [`Painter::begin_frame`] opened. Queue it
+    /// before the flush that sends the frame and before any cursor query: an
+    /// end left in the buffer holds the screen until the terminal times out.
+    fn end_frame(&mut self) -> Result<()> {
+        if !self.term_is_dumb {
+            self.stdout.queue(EndSynchronizedUpdate)?;
+        }
+        Ok(())
+    }
+
     /// Show the cursor if the painter hid it, for the paths that end without
     /// a paint.
     ///
@@ -1505,6 +1523,9 @@ impl Painter {
         // repaint that follows shows it again; `hide_cursor` records the hide
         // so a path that ends without that repaint can still undo it.
         self.hide_cursor()?;
+
+        self.begin_frame()?;
+
         self.clear_from_anchor(start)?;
 
         // Count where the cursor lands, for the case the terminal does not
@@ -1520,6 +1541,8 @@ impl Painter {
             self.stdout.queue(Print(line))?.queue(Print("\r\n"))?;
             row = (row + rows).min(max_row);
         }
+
+        self.end_frame()?;
 
         // The lines above are only *queued*, so the terminal's cursor has not
         // moved yet: a row counted forward from `start` names a position the
@@ -2342,6 +2365,35 @@ mod tests {
         assert_eq!(p.prompt_start_row, PromptStartRow::Stale(7));
     }
 
+    /// The commit is a frame of its own: opened before the erase, and
+    /// nothing queued after it closes. It has to close before the cursor
+    /// query, since a terminal that holds back its input during a frame would
+    /// not answer one; the capture writer refuses queries and ignores
+    /// flushes, so that ordering is not checked here.
+    #[test]
+    fn external_messages_are_one_synchronized_frame() {
+        let mut p = capturing_painter_anchored_at(5);
+        p.print_external_message(vec!["one".into()])
+            .expect("print_external_message failed");
+        let out = String::from_utf8_lossy(p.stdout.captured()).into_owned();
+
+        let begin = out.find("\x1b[?2026h").expect("no begin marker");
+        let erase = out.find("\x1b[J").expect("no erase");
+        assert!(begin < erase, "frame opened after the erase: {out:?}");
+        assert!(out.ends_with("\x1b[?2026l"), "{out:?}");
+    }
+
+    #[test]
+    fn term_dumb_external_messages_emit_no_synchronized_update() {
+        let mut p = capturing_painter_anchored_at(5);
+        p.term_is_dumb = true;
+        p.print_external_message(vec!["one".into()])
+            .expect("print_external_message failed");
+        let out = String::from_utf8_lossy(p.stdout.captured()).into_owned();
+
+        assert!(!out.contains("\x1b[?2026"), "{out:?}");
+    }
+
     /// A message wider than the screen takes the rows it wraps onto, so the
     /// anchor moves past all of them, not past one row per message.
     #[test]
@@ -2704,6 +2756,53 @@ mod tests {
             )
             .expect("repaint_buffer failed");
         assert!(painter.exit_right_prompt.is_none());
+    }
+
+    /// A paint is one synchronized frame: the terminal holds the erase and
+    /// the redraw and shows them together. The markers wrap everything that
+    /// draws, on the small- and the large-buffer path alike. The capture
+    /// writer ignores flushes, so where the end sits relative to the final
+    /// flush is not checked here.
+    #[rstest]
+    #[case::small_buffer("abc", false)]
+    #[case::large_buffer("l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10", true)]
+    fn a_paint_is_one_synchronized_frame(#[case] before: &str, #[case] expect_large: bool) {
+        let lines = make_lines("> ", "", "", before, "");
+        let (out, _, large) = capture_repaint(&lines, 0);
+
+        assert_eq!(large, expect_large);
+        // Only the style reset and the cursor hide, which draw nothing, may
+        // come before the frame; the erase must not.
+        let begin = out.find("\x1b[?2026h").expect("no begin marker");
+        let erase = out.find("\x1b[J").expect("no erase");
+        assert!(begin < erase, "{out:?}");
+        assert!(out.ends_with("\x1b[?2026l"), "{out:?}");
+        assert_eq!(out.matches("\x1b[?2026").count(), 2, "{out:?}");
+    }
+
+    /// `TERM=dumb` would print the markers as text.
+    #[test]
+    fn term_dumb_paint_emits_no_synchronized_update() {
+        let mut painter = Painter::new(W::capture());
+        painter.terminal_size = (20, 10);
+        painter.term_is_dumb = true;
+        painter.prompt_start_row.mark_verified(0);
+        painter.prompt_height = 1;
+
+        let lines = make_lines(TEST_PROMPT, "", "", "abc", "");
+        painter
+            .repaint_buffer(
+                &TestPrompt,
+                &lines,
+                PromptEditMode::Default,
+                None,
+                false,
+                &None,
+            )
+            .unwrap();
+
+        let out = String::from_utf8_lossy(painter.stdout.captured());
+        assert!(!out.contains("\x1b[?2026"), "{out:?}");
     }
 
     /// What a terminal ends up in after a byte stream.
