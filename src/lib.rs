@@ -308,8 +308,8 @@ mod history;
 pub use history::SqliteBackedHistory;
 pub use history::{
     CommandLineSearch, FileBackedHistory, History, HistoryItem, HistoryItemExtraInfo,
-    HistoryItemId, HistoryNavigationQuery, HistorySessionId, IgnoreAllExtraInfo, JsonFilterValue,
-    SearchDirection, SearchFilter, SearchQuery, HISTORY_SIZE,
+    HistoryItemId, HistoryNavigationQuery, HistorySessionId, HistoryTimestamp, IgnoreAllExtraInfo,
+    JsonFilterValue, SearchDirection, SearchFilter, SearchQuery, HISTORY_SIZE,
 };
 
 mod prompt;

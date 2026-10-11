@@ -16,6 +16,8 @@ use {
 
 #[cfg(not(feature = "_sqlite"))]
 use reedline::FileBackedHistory;
+#[cfg(feature = "_sqlite")]
+use reedline::HistoryTimestamp;
 use reedline::{
     default_helix_insert_keybindings, default_helix_normal_keybindings,
     default_helix_select_keybindings, Helix,
@@ -43,7 +45,7 @@ fn main() -> reedline::Result<()> {
         reedline::SqliteBackedHistory::with_file(
             "history.sqlite3".into(),
             history_session_id,
-            Some(chrono::Utc::now()),
+            Some(HistoryTimestamp::now()),
         )
         .map_err(std::io::Error::other)?,
     );
@@ -154,7 +156,7 @@ fn main() -> reedline::Result<()> {
                 if !buffer.is_empty() {
                     line_editor
                         .update_last_command_context(&|mut c: reedline::HistoryItem| {
-                            c.start_timestamp = Some(chrono::Utc::now());
+                            c.start_timestamp = Some(HistoryTimestamp::now());
                             c.hostname =
                                 Some(gethostname::gethostname().to_string_lossy().to_string());
                             c.cwd = std::env::current_dir()
