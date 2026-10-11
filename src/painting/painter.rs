@@ -1,6 +1,5 @@
 use crate::terminal_extensions::semantic_prompt::{PromptKind, SemanticPromptMarkers};
-use crate::PromptHelixMode;
-use crate::{CursorConfig, PromptEditMode, PromptViMode};
+use crate::{CursorConfig, PromptEditMode};
 
 use {
     super::utils::{
@@ -565,6 +564,8 @@ pub struct Painter {
     semantic_markers: Option<Box<dyn SemanticPromptMarkers>>,
     /// Layout computed during the last paint cycle.
     pub(crate) last_layout: Option<PromptLayout>,
+    /// Set by `hide_cursor`, cleared by every Show. See [`Painter::show_cursor`].
+    cursor_hidden: bool,
 }
 
 impl Painter {
@@ -583,6 +584,7 @@ impl Painter {
             exit_right_prompt: None,
             semantic_markers: None,
             last_layout: None,
+            cursor_hidden: false,
         }
     }
 
@@ -666,7 +668,8 @@ impl Painter {
             let prompt_indicator_lines = lines.prompt_indicator.lines().count();
             let before_cursor_lines = lines.before_cursor.lines().count();
             let total_lines_before =
-                prompt_rows_after_first + prompt_indicator_lines + before_cursor_lines - 1;
+                (prompt_rows_after_first + prompt_indicator_lines + before_cursor_lines)
+                    .saturating_sub(1);
             let extra = total_lines_before.saturating_sub(screen_height as usize);
             (extra, extra.saturating_sub(prompt_rows_after_first))
         } else {
@@ -824,6 +827,16 @@ impl Painter {
     /// Establishes the prompt's start row for a new line editor invocation by
     /// asking the terminal where the cursor is.
     fn anchor_prompt(&mut self, suspended_state: Option<&PainterSuspendedState>) -> Result<()> {
+        // Hide before asking, not only before painting. The exit path leaves
+        // the cursor shown at column 0 of the row the next prompt lands on,
+        // and the wait for the query's reply is the longest stretch
+        // between that newline and the paint, so a fast terminal renders the
+        // bare cursor for a frame (#1231). Flushed: the query goes out through
+        // crossterm on stdout, unbuffered, and this hide sits in the stderr
+        // buffer until then.
+        self.hide_cursor()?;
+        self.stdout.flush()?;
+
         // The terminal may not answer the cursor-position query in time
         // (crossterm gives it a fixed 2s): a terminal busy repainting, a
         // multiplexer briefly holding the reply, a slow remote link. That is
@@ -916,7 +929,7 @@ impl Painter {
         // Note: Attribute::Reset (SGR 0) resets all attributes including colors
         self.stdout.queue(SetAttribute(Attribute::Reset))?;
 
-        self.stdout.queue(cursor::Hide)?;
+        self.hide_cursor()?;
 
         let screen_width = self.screen_width();
 
@@ -1008,8 +1021,12 @@ impl Painter {
         // The last_required_lines is used to calculate safe range of the current prompt.
         self.last_required_lines = required_lines;
 
-        self.after_cursor_lines = if !lines.after_cursor.is_empty() {
-            Some(lines.after_cursor.to_string())
+        let after_cursor = lines
+            .exit_after_cursor
+            .as_ref()
+            .unwrap_or(&lines.after_cursor);
+        self.after_cursor_lines = if !after_cursor.is_empty() {
+            Some(after_cursor.to_string())
         } else {
             None
         };
@@ -1022,21 +1039,14 @@ impl Painter {
         // neither.
         self.queue_cursor_placement(margin_cursor_row)?;
 
-        if let Some(shapes) = cursor_config {
-            let shape = match &prompt_mode {
-                PromptEditMode::Emacs => shapes.emacs,
-                PromptEditMode::Vi(PromptViMode::Insert) => shapes.vi_insert,
-                PromptEditMode::Vi(PromptViMode::Normal | PromptViMode::Visual) => shapes.vi_normal,
-                PromptEditMode::Helix(PromptHelixMode::Insert) => shapes.hx_insert,
-                PromptEditMode::Helix(PromptHelixMode::Normal) => shapes.hx_normal,
-                PromptEditMode::Helix(PromptHelixMode::Select) => shapes.hx_select,
-                _ => None,
-            };
-            if let Some(shape) = shape {
-                self.stdout.queue(shape)?;
-            }
+        let shape = cursor_config
+            .as_ref()
+            .and_then(|shapes| shapes.shape_for(&prompt_mode));
+        if let Some(shape) = shape {
+            self.stdout.queue(shape)?;
         }
         self.stdout.queue(cursor::Show)?;
+        self.cursor_hidden = false;
 
         self.stdout.flush()
     }
@@ -1559,6 +1569,30 @@ impl Painter {
         self.stdout.flush()
     }
 
+    /// Queue a hide and remember it, so [`Painter::show_cursor`] can undo it.
+    fn hide_cursor(&mut self) -> Result<()> {
+        self.stdout.queue(cursor::Hide)?;
+        self.cursor_hidden = true;
+        Ok(())
+    }
+
+    /// Show the cursor if the painter hid it, for the paths that end without
+    /// a paint.
+    ///
+    /// [`Painter::anchor_prompt`] hides it and the next `repaint_buffer` shows
+    /// it again. Anything that hands the terminal back in between (an exit
+    /// right after a clear, a failed `read_line`, a drop) goes through here.
+    /// Writes nothing when the cursor is already shown, so a host that hid it
+    /// on purpose keeps it hidden.
+    pub(crate) fn show_cursor(&mut self) -> Result<()> {
+        if !self.cursor_hidden {
+            return Ok(());
+        }
+        self.stdout.queue(cursor::Show)?;
+        self.cursor_hidden = false;
+        self.stdout.flush()
+    }
+
     /// Goes to the beginning of the next line
     ///
     /// Also works in raw mode
@@ -1735,13 +1769,25 @@ impl Painter {
             _ => None,
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn cursor_hidden_for_test(&self) -> bool {
+        self.cursor_hidden
+    }
+
+    /// What the exit path will reprint after the cursor.
+    #[cfg(test)]
+    pub(crate) fn exit_after_cursor_for_test(&self) -> Option<&str> {
+        self.after_cursor_lines.as_deref()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::menu::{MenuEvent, MenuSettings};
-    use crate::{Color, Completer, Editor, PromptHistorySearch, Suggestion};
+    use crate::{Color, Completer, Editor, PromptHistorySearch, PromptViMode, Suggestion};
+    use crossterm::cursor::SetCursorStyle;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
     use std::borrow::Cow;
@@ -2044,6 +2090,9 @@ mod tests {
     // and must guess the bottom row: the drift check only repairs a guess
     // that errs high, and the newline printed first has already moved the
     // cursor past any last-known row.
+    //
+    // The leading hide is #1231's: nothing in the anchor runs with the cursor
+    // shown.
     #[test]
     fn test_anchor_prompt_without_answer_assumes_bottom_over_last_known_row() {
         let mut painter = Painter::new(W::capture());
@@ -2054,7 +2103,7 @@ mod tests {
         painter.anchor_prompt(None).unwrap();
 
         assert_eq!(painter.prompt_start_row, PromptStartRow::Stale(9));
-        assert_eq!(painter.stdout.captured(), b"\r\n");
+        assert_eq!(painter.stdout.captured(), b"\x1b[?25l\r\n");
     }
 
     #[test]
@@ -2066,7 +2115,7 @@ mod tests {
         painter.anchor_prompt(None).unwrap();
 
         assert_eq!(painter.prompt_start_row, PromptStartRow::Stale(9));
-        assert_eq!(painter.stdout.captured(), b"\r\n");
+        assert_eq!(painter.stdout.captured(), b"\x1b[?25l\r\n");
     }
 
     #[test]
@@ -2078,7 +2127,70 @@ mod tests {
         painter.anchor_prompt(None).unwrap();
 
         assert_eq!(painter.prompt_start_row, PromptStartRow::Stale(9));
-        assert_eq!(painter.stdout.captured(), b"");
+        assert_eq!(painter.stdout.captured(), b"\x1b[?25l");
+    }
+
+    /// Regression test for nushell/reedline#1231, seen across two lines.
+    ///
+    /// The exit path parks the cursor shown on the row the next prompt takes,
+    /// so the next anchor is where it goes hidden again. The hide has to be
+    /// the first byte after the exit newline, and the paint's closing Show
+    /// the only show after it, so nothing between one line and the next runs
+    /// with a bare cursor.
+    #[test]
+    fn next_anchor_hides_the_cursor_the_exit_path_left_shown() {
+        let mut p = make_painter(20, 10, false);
+        p.stdout = W::capture();
+        let lines = make_lines(TEST_PROMPT, "", "", "pwd", "");
+        let paint = |p: &mut Painter| {
+            p.repaint_buffer(
+                &TestPrompt,
+                &lines,
+                PromptEditMode::Default,
+                None,
+                false,
+                &None,
+            )
+            .expect("repaint_buffer failed");
+        };
+
+        paint(&mut p);
+        p.move_cursor_to_end().expect("move_cursor_to_end failed");
+        let exit_end = p.stdout.captured().len();
+        p.initialize_prompt_position_with_size((20, 10), None)
+            .expect("anchor failed");
+        p.prompt_start_row.mark_verified(0);
+        paint(&mut p);
+
+        let out = String::from_utf8_lossy(p.stdout.captured()).into_owned();
+        let (exit, next) = out.split_at(exit_end);
+        assert!(
+            exit.ends_with("\x1b[?25h\x1b[J\r\n"),
+            "exit path changed what it leaves the cursor as: {exit:?}"
+        );
+        assert!(
+            next.starts_with("\x1b[?25l"),
+            "anchor did not hide the cursor before anything else: {next:?}"
+        );
+        assert!(
+            next.matches("\x1b[?25h").count() == 1 && next.ends_with("\x1b[?25h"),
+            "cursor shown between the exit newline and the end of the next paint: {next:?}"
+        );
+    }
+
+    #[test]
+    fn show_cursor_writes_only_after_a_hide_of_its_own() {
+        let mut p = Painter::new(W::capture());
+        p.term_is_dumb = false;
+
+        p.show_cursor().unwrap();
+        assert_eq!(p.stdout.captured(), b"");
+
+        p.anchor_prompt(None).unwrap();
+        let before_show = p.stdout.captured().len();
+        p.show_cursor().unwrap();
+        p.show_cursor().unwrap();
+        assert_eq!(&p.stdout.captured()[before_show..], b"\x1b[?25h");
     }
 
     #[rstest]
@@ -2469,6 +2581,7 @@ mod tests {
             after_cursor: Cow::Borrowed(after),
             hint: Cow::Borrowed(""),
             right_prompt_on_last_line: false,
+            exit_after_cursor: None,
         }
     }
 
@@ -2499,6 +2612,38 @@ mod tests {
             p.last_required_lines,
             p.large_buffer,
         )
+    }
+
+    /// Vi visual has a cursor shape of its own. A config that leaves it unset
+    /// keeps the normal-mode shape, which is what visual drew before the slot
+    /// existed, so a host that only names `vi_normal` sees no change.
+    #[rstest]
+    #[case::its_own_shape(Some(SetCursorStyle::SteadyUnderScore), "\x1b[4 q")]
+    #[case::unset_follows_vi_normal(None, "\x1b[2 q")]
+    fn test_vi_visual_draws_its_own_cursor_shape(
+        #[case] vi_visual: Option<SetCursorStyle>,
+        #[case] expected: &str,
+    ) {
+        let mut p = make_painter(20, 10, false);
+        p.stdout = W::capture();
+        let shapes = Some(CursorConfig {
+            vi_normal: Some(SetCursorStyle::SteadyBlock),
+            vi_visual,
+            ..CursorConfig::default()
+        });
+
+        p.repaint_buffer(
+            &TestPrompt,
+            &make_lines(TEST_PROMPT, "", "", "abc", ""),
+            PromptEditMode::Vi(PromptViMode::Visual),
+            None,
+            false,
+            &shapes,
+        )
+        .expect("repaint_buffer failed");
+
+        let out = String::from_utf8_lossy(p.stdout.captured()).into_owned();
+        assert!(out.contains(expected), "cursor shape missing: {out:?}");
     }
 
     // #1145 made the exit erase unconditional, and `ClearType::FromCursorDown`
@@ -3216,6 +3361,23 @@ mod tests {
         assert_eq!(layout.extra_rows, 1);
         assert_eq!(layout.extra_rows_after_prompt, 1);
         assert_eq!(layout.first_buffer_col, 0); // scrolled, so col 0
+    }
+
+    #[test]
+    fn test_layout_large_buffer_empty_buffer_does_not_underflow() {
+        // A one-line prompt with an empty indicator and an empty buffer makes
+        // every line count in the large-buffer math zero:
+        // prompt_height(TEST_PROMPT) - 1 = 0
+        // prompt_indicator_lines("") = 0
+        // before_cursor_lines("") = 0
+        // total_lines_before = 0 + 0 + 0 - 1 used to underflow, independent of
+        // screen height. `make_painter(.., true)` forces the large-buffer path.
+        let painter = make_painter(120, 24, true);
+        let lines = make_lines(TEST_PROMPT, "", "", "", "");
+        let layout = painter.compute_layout(&lines, None);
+
+        assert_eq!(layout.extra_rows, 0);
+        assert_eq!(layout.extra_rows_after_prompt, 0);
     }
 
     #[test]

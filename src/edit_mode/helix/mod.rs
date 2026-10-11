@@ -1,27 +1,34 @@
 mod helix_keybindings;
 
-use std::str::FromStr;
-
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 pub use helix_keybindings::{
     default_helix_insert_keybindings, default_helix_normal_keybindings,
     default_helix_select_keybindings,
 };
-use strum::EnumString;
 
 use super::{is_plain_char, is_text_char, parse_non_key_event};
 
 use crate::{
     enums::EventStatus, Direction, EditCommand, EditMode, FindStop, Granularity, Keybindings,
-    MotionTarget, PromptEditMode, PromptHelixMode, ReedlineEvent, WordEdge, WordKind,
+    MotionTarget, PromptEditMode, PromptHelixMode, ReedlineEvent, TextObject, TextObjectScope,
+    TextObjectType, WordEdge, WordKind,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumString)]
-#[strum(serialize_all = "lowercase", ascii_case_insensitive)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HelixMode {
     Normal,
     Insert,
     Select,
+}
+
+impl From<PromptHelixMode> for HelixMode {
+    fn from(mode: PromptHelixMode) -> Self {
+        match mode {
+            PromptHelixMode::Normal => HelixMode::Normal,
+            PromptHelixMode::Insert => HelixMode::Insert,
+            PromptHelixMode::Select => HelixMode::Select,
+        }
+    }
 }
 
 /// A prefix key waiting for its argument.
@@ -39,6 +46,12 @@ enum Pending {
     Replace,
     /// `g` is waiting for the goto target (`h`/`l`/`g`/`e`).
     Goto,
+    /// `m` is waiting for the matching action
+    MatchStepOne,
+    /// `m`-`a`/`i`/`s`/`d`/`r` is waiting for the surrounding character
+    MatchStepTwo(MatchAction),
+    /// `mr` is waiting for the second text object
+    MatchReplace(TextObjectType),
 }
 
 /// Every parse_event will result in one of three outcomes:
@@ -71,10 +84,38 @@ enum Verb {
     /// `x`. Selection-shaped rather than motion-shaped: it moves both edges,
     /// which no [`MotionTarget`] can express.
     SelectLine,
-    /// `j`/`k`. The only verb that does not lower to a [`MotionTarget`]: which
-    /// of line movement and history traversal applies is decided by the engine
-    /// against the *whole* buffer, above where a motion resolves.
+    /// `j`/`k`. Does not lower to a [`MotionTarget`]: which of line movement
+    /// and history traversal applies is decided by the engine against the
+    /// *whole* buffer, above where a motion resolves.
     LineOrHistory(Direction),
+    /// `h`/`l`. A grapheme step that, like `j`/`k`, lets an open menu take the
+    /// key first in normal mode, and for `l` a history hint before that.
+    GraphemeOrMenu(Direction),
+    /// `m`. Apply action onto surrounding characters
+    Match(Match),
+}
+
+/// Every matching action possible
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MatchAction {
+    /// `i`. Selects inside a text object
+    Inner,
+    /// `a`. Select around a text object
+    Around,
+    /// `s`. Insert a text object around the selection
+    Set,
+    /// `d`. Delete the nearest text object around the cursor head
+    Delete,
+    /// `r`. Replace a text object by another around the cursor head
+    Replace,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Match {
+    text_object: TextObjectType,
+    /// Useful for replace match action
+    text_object2: Option<TextObjectType>,
+    action: MatchAction,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,7 +179,7 @@ pub struct Helix {
     mode: HelixMode,
     /// Count prefix being accumulated (`3w`).
     count: Option<usize>,
-    /// Prefix key waiting for its argument (`f`/`r`/`g`).
+    /// Prefix key waiting for its argument (`f`/`r`/`g`/`m`).
     pending: Option<Pending>,
 }
 
@@ -161,19 +202,15 @@ impl EditMode for Helix {
     }
     fn handle_mode_specific_event(&mut self, event: ReedlineEvent) -> EventStatus {
         match event {
-            ReedlineEvent::HelixChangeMode(mode_str) => match HelixMode::from_str(&mode_str) {
-                Ok(mode) => {
-                    // An invariant, not a path reachable today: `dispatch`
-                    // skips the keybinding table while `pending` or `count` is
-                    // set, so no binding fires mid-sequence. Reset anyway,
-                    // rather than lean on that guarantee from over here.
-                    self.pending = None;
-                    self.count = None;
-                    self.mode = mode;
-                    EventStatus::Handled
-                }
-                Err(_) => EventStatus::Inapplicable,
-            },
+            ReedlineEvent::SwitchMode(PromptEditMode::Helix(target)) => {
+                // `dispatch` drops the sequence before a bound chord fires, so
+                // no binding gets here with one armed. Reset anyway, rather
+                // than lean on that guarantee from over here.
+                self.pending = None;
+                self.count = None;
+                self.mode = HelixMode::from(target);
+                EventStatus::Handled
+            }
             _ => EventStatus::Inapplicable,
         }
     }
@@ -216,9 +253,41 @@ impl Helix {
         self
     }
 
+    /// The keybinding table `dispatch` reads, so normal or select.
+    fn keybindings(&self) -> &Keybindings {
+        match self.mode {
+            HelixMode::Select => &self.select_keybindings,
+            _ => &self.normal_keybindings,
+        }
+    }
+
     fn dispatch(&mut self, key: KeyEvent) -> ReedlineEvent {
         // Insert should never use this code-path.
         debug_assert!(self.mode != HelixMode::Insert);
+
+        // The table comes first, except for a key the machine claims:
+        // - `Esc` always reaches it, otherwise modes get stranded;
+        // - a plain `1`-`9` starts or continues a count;
+        // - a half-typed sequence takes any character, which is its next count
+        //   digit or its pending argument, so a binding cannot steal it.
+        // Anything else mid-sequence would only be rejected, so a chord bound
+        // in the table fires instead of being eaten and abandons the sequence,
+        // which is how vi treats its own `cache`.
+        let mid_sequence = self.pending.is_some() || self.count.is_some();
+        let claimed = match key.code {
+            KeyCode::Esc => true,
+            KeyCode::Char('1'..='9') if key.modifiers == KeyModifiers::NONE => true,
+            KeyCode::Char(_) => mid_sequence && is_text_char(key.modifiers),
+            _ => false,
+        };
+        if !claimed {
+            if let Some(event) = self.keybindings().find_binding(key.modifiers, key.code) {
+                self.pending = None;
+                self.count = None;
+                return event;
+            }
+        }
+
         let outcome = match (self.pending.take(), key.code) {
             // Handle a pending key event
             (Some(pending), _) => complete_pending(pending, self.count.unwrap_or(1), key),
@@ -237,21 +306,8 @@ impl Helix {
                 );
                 return ReedlineEvent::None;
             }
-            // Do a table lookup, else use the helix machine,
-            // we don't handle insert mode in dispatch.
-            // Esc must always reach the machine, otherwise modes get stranded.
-            (None, code) => {
-                if self.count.is_none() && code != KeyCode::Esc {
-                    let table = match self.mode {
-                        HelixMode::Select => &self.select_keybindings,
-                        _ => &self.normal_keybindings,
-                    };
-                    if let Some(event) = table.find_binding(key.modifiers, code) {
-                        return event;
-                    }
-                }
-                interpret(self.mode, self.count, key)
-            }
+            // Unbound or claimed, so the helix machine reads it.
+            (None, _) => interpret(self.mode, self.count, key),
         };
 
         match outcome {
@@ -336,6 +392,58 @@ fn complete_pending(pending: Pending, count: usize, key: KeyEvent) -> Outcome {
             };
             exec(count, Verb::CollapsingMotion(target), None)
         }
+        Pending::MatchStepOne => {
+            let target = match ch {
+                'a' => MatchAction::Around,
+                'i' => MatchAction::Inner,
+                's' => MatchAction::Set,
+                'd' => MatchAction::Delete,
+                'r' => MatchAction::Replace,
+                _ => return Outcome::Reject,
+            };
+            Outcome::Absorb(Pending::MatchStepTwo(target))
+        }
+        Pending::MatchStepTwo(action) => {
+            let Some(text_object) = TextObjectType::from_char(ch) else {
+                return Outcome::Reject;
+            };
+            if matches!(action, MatchAction::Replace) {
+                return Outcome::Absorb(Pending::MatchReplace(text_object));
+            }
+            if matches!(
+                (action, text_object),
+                (
+                    MatchAction::Set | MatchAction::Delete | MatchAction::Replace,
+                    TextObjectType::Word | TextObjectType::BigWord
+                )
+            ) {
+                return Outcome::Reject;
+            }
+            exec(
+                count,
+                Verb::Match(Match {
+                    text_object,
+                    text_object2: None,
+                    action,
+                }),
+                None,
+            )
+        }
+        Pending::MatchReplace(old) => {
+            let Some(new) = TextObjectType::from_char(ch) else {
+                return Outcome::Reject;
+            };
+
+            exec(
+                count,
+                Verb::Match(Match {
+                    text_object: old,
+                    text_object2: Some(new),
+                    action: MatchAction::Replace,
+                }),
+                None,
+            )
+        }
     }
 }
 
@@ -376,6 +484,7 @@ fn interpret(mode: HelixMode, count: Option<usize>, key: KeyEvent) -> Outcome {
                 stop: FindStop::Before,
             }),
             'r' => Outcome::Absorb(Pending::Replace),
+            'm' => Outcome::Absorb(Pending::MatchStepOne),
             'w' => exec(
                 count,
                 Verb::SelectingMotion(word(WordKind::Word, WordEdge::Start, Direction::Forward)),
@@ -414,16 +523,8 @@ fn interpret(mode: HelixMode, count: Option<usize>, key: KeyEvent) -> Outcome {
                 Verb::SelectingMotion(word(WordKind::LongWord, WordEdge::End, Direction::Forward)),
                 None,
             ),
-            'l' => exec(
-                count,
-                Verb::CollapsingMotion(MotionTarget::Grapheme(Direction::Forward)),
-                None,
-            ),
-            'h' => exec(
-                count,
-                Verb::CollapsingMotion(MotionTarget::Grapheme(Direction::Backward)),
-                None,
-            ),
+            'l' => exec(count, Verb::GraphemeOrMenu(Direction::Forward), None),
+            'h' => exec(count, Verb::GraphemeOrMenu(Direction::Backward), None),
             'j' => exec(count, Verb::LineOrHistory(Direction::Forward), None),
             'k' => exec(count, Verb::LineOrHistory(Direction::Backward), None),
             'x' => exec(count, Verb::SelectLine, None),
@@ -556,6 +657,34 @@ fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
         // command repeated: it re-reads the selection every time.
         Verb::SelectAll => ReedlineEvent::Edit(vec![EditCommand::SelectAll]),
         Verb::SelectLine => action.repeated(EditCommand::SelectLine),
+        Verb::Match(m) => match m.action {
+            MatchAction::Inner => action.repeated(EditCommand::SelectTextObject(TextObject {
+                scope: TextObjectScope::Inner,
+                object_type: m.text_object,
+                check_next: false,
+            })),
+            MatchAction::Around => action.repeated(EditCommand::SelectTextObject(TextObject {
+                scope: TextObjectScope::Around,
+                object_type: m.text_object,
+                check_next: false,
+            })),
+            MatchAction::Set => ReedlineEvent::Edit(vec![EditCommand::AddTextObject {
+                text_object: m.text_object,
+            }]),
+            MatchAction::Delete => ReedlineEvent::Edit(vec![EditCommand::RemoveTextObject {
+                text_object: m.text_object,
+            }]),
+            MatchAction::Replace => {
+                let Some(new) = m.text_object2 else {
+                    // Should not happened, but just in case...
+                    return ReedlineEvent::None;
+                };
+                ReedlineEvent::Edit(vec![EditCommand::ReplaceTextObject {
+                    old: m.text_object,
+                    new,
+                }])
+            }
+        },
         Verb::Deselect => ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint]),
         Verb::ChangeMode => ReedlineEvent::None,
         // `Up`/`Down` already carry the whole rule: move by line while another
@@ -582,6 +711,26 @@ fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
             };
             ReedlineEvent::Multiple(vec![event; action.count])
         }
+        // As `j`/`k`, and as vi's `h`/`l` and the arrow keys: an open menu takes
+        // the key first, and `l` takes a history hint before that (#1185). Select
+        // mode only extends, since accepting a hint inserts text.
+        Verb::GraphemeOrMenu(direction) => {
+            let target = MotionTarget::Grapheme(direction);
+            if mode == HelixMode::Select {
+                action.repeated(EditCommand::Extend(target))
+            } else {
+                let motion = ReedlineEvent::Edit(vec![EditCommand::Move(target)]);
+                let step = ReedlineEvent::UntilFound(match direction {
+                    Direction::Forward => vec![
+                        ReedlineEvent::HistoryHintComplete,
+                        ReedlineEvent::MenuRight,
+                        motion,
+                    ],
+                    Direction::Backward => vec![ReedlineEvent::MenuLeft, motion],
+                });
+                ReedlineEvent::Multiple(vec![step; action.count])
+            }
+        }
         // Collapse forward first, as `a` does. The resting selection outlives the
         // `next_mode` flip to insert, so `InsertNewline` on incomplete input
         // opens with `delete_selection` and eats the covered grapheme, and
@@ -607,7 +756,7 @@ fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::ReedlineRawEvent;
+    use crate::{ReedlineRawEvent, TextObjectBracket};
     use pretty_assertions::assert_eq;
     use rstest::rstest;
 
@@ -712,6 +861,34 @@ mod test {
         );
     }
 
+    #[rstest]
+    #[case("mi(", EditCommand::SelectTextObject(TextObject {
+        scope: TextObjectScope::Inner,
+        object_type: TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        check_next: false,
+    }))]
+    #[case("ma(", EditCommand::SelectTextObject(TextObject {
+        scope: TextObjectScope::Around,
+        object_type: TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+        check_next: false,
+    }))]
+    #[case("ms(", EditCommand::AddTextObject{text_object: TextObjectType::Brackets(TextObjectBracket::Parenthesis)})]
+    #[case("md(", EditCommand::RemoveTextObject{text_object: TextObjectType::Brackets(TextObjectBracket::Parenthesis)})]
+    #[case("mr([", EditCommand::ReplaceTextObject{old: TextObjectType::Brackets(TextObjectBracket::Parenthesis), new: TextObjectType::Brackets(TextObjectBracket::SquareBracket)})]
+    fn match_in_normal_mode(#[case] inputs: &str, #[case] expected_event: EditCommand) {
+        let mut helix = normal();
+        for c in inputs[0..inputs.len() - 1].chars() {
+            assert_eq!(helix.parse_event(chr(c)), ReedlineEvent::None);
+        }
+        let Some(c) = inputs.chars().last() else {
+            unreachable!();
+        };
+        assert_eq!(
+            helix.parse_event(chr(c)),
+            ReedlineEvent::Edit(vec![expected_event])
+        );
+    }
+
     #[test]
     fn word_motion_extends_in_select_mode() {
         let mut helix = normal();
@@ -722,14 +899,38 @@ mod test {
         );
     }
 
+    /// What normal-mode `l` emits per count step: take a history hint, else
+    /// step an open menu, else move.
+    fn l_step() -> ReedlineEvent {
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::HistoryHintComplete,
+            ReedlineEvent::MenuRight,
+            ReedlineEvent::Edit(vec![EditCommand::Move(MotionTarget::Grapheme(
+                Direction::Forward,
+            ))]),
+        ])
+    }
+
+    /// What normal-mode `h` emits per count step: step an open menu, else move.
+    fn h_step() -> ReedlineEvent {
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::MenuLeft,
+            ReedlineEvent::Edit(vec![EditCommand::Move(MotionTarget::Grapheme(
+                Direction::Backward,
+            ))]),
+        ])
+    }
+
     #[test]
-    fn h_and_l_collapse_in_normal_extend_in_select() {
+    fn h_and_l_fall_back_in_normal_extend_in_select() {
         let mut helix = normal();
         assert_eq!(
+            helix.parse_event(chr('h')),
+            ReedlineEvent::Multiple(vec![h_step()])
+        );
+        assert_eq!(
             helix.parse_event(chr('l')),
-            ReedlineEvent::Edit(vec![EditCommand::Move(MotionTarget::Grapheme(
-                Direction::Forward
-            ))])
+            ReedlineEvent::Multiple(vec![l_step()])
         );
         let _ = helix.parse_event(chr('v'));
         assert_eq!(
@@ -737,6 +938,22 @@ mod test {
             ReedlineEvent::Edit(vec![EditCommand::Extend(MotionTarget::Grapheme(
                 Direction::Backward
             ))])
+        );
+        assert_eq!(
+            helix.parse_event(chr('l')),
+            ReedlineEvent::Edit(vec![EditCommand::Extend(MotionTarget::Grapheme(
+                Direction::Forward
+            ))])
+        );
+    }
+
+    #[test]
+    fn counted_l_repeats_the_fallback_chain() {
+        let mut helix = normal();
+        let _ = helix.parse_event(chr('2'));
+        assert_eq!(
+            helix.parse_event(chr('l')),
+            ReedlineEvent::Multiple(vec![l_step(), l_step()])
         );
     }
 
@@ -791,15 +1008,17 @@ mod test {
     }
 
     #[test]
-    fn live_count_suppresses_table_bindings() {
-        // rule from #693: live sequence state wins over the lookup table
+    fn a_bound_chord_ends_a_live_count() {
+        // #693 lets live sequence state win over the table so a binding cannot
+        // hijack an argument. A `Ctrl` chord is no argument, so it fires, and
+        // `Ctrl-C` after a count is not swallowed.
         let mut helix = normal();
         let _ = helix.parse_event(chr('3'));
         assert_eq!(
             helix.parse_event(key(KeyCode::Char('c'), KeyModifiers::CONTROL)),
-            ReedlineEvent::None
+            ReedlineEvent::CtrlC
         );
-        // the rejected chord killed the count
+        // the chord killed the count
         assert_eq!(
             helix.parse_event(chr('w')),
             ReedlineEvent::Edit(vec![EditCommand::Select(w())])
@@ -1072,9 +1291,7 @@ mod test {
         // `h` is a grapheme step again, not a goto target
         assert_eq!(
             helix.parse_event(chr('h')),
-            ReedlineEvent::Edit(vec![EditCommand::Move(MotionTarget::Grapheme(
-                Direction::Backward
-            ))])
+            ReedlineEvent::Multiple(vec![h_step()])
         );
     }
 
@@ -1477,33 +1694,99 @@ mod test {
         assert_eq!(helix.count, None);
     }
 
-    // ---- change mode event ----
+    // ---- switch mode event ----
 
     #[rstest]
-    #[case("insert", HelixMode::Insert)]
-    #[case("Insert", HelixMode::Insert)]
-    #[case("SELECT", HelixMode::Select)]
-    #[case("select", HelixMode::Select)]
-    #[case("normal", HelixMode::Normal)]
-    #[case("NoRmAl", HelixMode::Normal)]
-    fn change_mode_event_switches_the_machine(#[case] name: &str, #[case] expected: HelixMode) {
+    #[case(PromptHelixMode::Insert, HelixMode::Insert)]
+    #[case(PromptHelixMode::Select, HelixMode::Select)]
+    #[case(PromptHelixMode::Normal, HelixMode::Normal)]
+    fn switch_mode_event_switches_the_machine(
+        #[case] target: PromptHelixMode,
+        #[case] expected: HelixMode,
+    ) {
         let mut helix = normal();
-        let status = helix.handle_mode_specific_event(ReedlineEvent::HelixChangeMode(name.into()));
+        let status = helix
+            .handle_mode_specific_event(ReedlineEvent::SwitchMode(PromptEditMode::Helix(target)));
         assert!(matches!(status, EventStatus::Handled));
         assert_eq!(helix.mode, expected);
     }
 
     #[test]
-    fn change_mode_event_rejects_an_unknown_mode() {
+    fn switch_mode_event_declines_another_machine() {
         let mut helix = normal();
         let status =
-            helix.handle_mode_specific_event(ReedlineEvent::HelixChangeMode("emacs".into()));
+            helix.handle_mode_specific_event(ReedlineEvent::SwitchMode(PromptEditMode::Emacs));
         assert!(matches!(status, EventStatus::Inapplicable));
         assert_eq!(helix.mode, HelixMode::Normal);
     }
 
+    // ---- bindings during a half-typed sequence ----
+
+    /// A key that can be neither part of a count nor a pending argument goes
+    /// to the table even mid-sequence, as it does in vi, so a chord like the
+    /// demo's F5 is never eaten. The abandoned sequence must not leak into
+    /// the next key.
+    #[rstest]
+    #[case::after_a_count(&['3'])]
+    #[case::after_a_pending_find(&['f'])]
+    #[case::after_a_pending_goto(&['g'])]
+    #[case::after_a_count_and_a_pending_find(&['3', 'f'])]
+    fn a_bound_chord_fires_during_a_half_typed_sequence(
+        #[case] prefix: &[char],
+        #[values(
+            (KeyCode::F(5), KeyModifiers::NONE, ReedlineEvent::ClearScreen),
+            (KeyCode::Char('t'), KeyModifiers::CONTROL, ReedlineEvent::ClearScrollback),
+            (KeyCode::Char('d'), KeyModifiers::ALT, ReedlineEvent::ClearScreen)
+        )]
+        chord: (KeyCode, KeyModifiers, ReedlineEvent),
+    ) {
+        let (code, modifiers, bound) = chord;
+        let mut bindings = default_helix_normal_keybindings();
+        bindings.add_binding(modifiers, code, bound.clone());
+        let mut helix = normal().with_normal_keybindings(bindings);
+        for c in prefix {
+            helix.parse_event(chr(*c));
+        }
+
+        assert_eq!(helix.parse_event(key(code, modifiers)), bound);
+        assert_eq!(helix.pending, None);
+        assert_eq!(helix.count, None);
+    }
+
+    /// A character key still belongs to the sequence: a binding on a letter
+    /// must not steal the argument of `f`.
     #[test]
-    fn change_mode_event_abandons_a_half_typed_sequence() {
+    fn a_bound_character_does_not_steal_a_pending_argument() {
+        let mut bindings = default_helix_normal_keybindings();
+        bindings.add_binding(
+            KeyModifiers::NONE,
+            KeyCode::Char('x'),
+            ReedlineEvent::ClearScreen,
+        );
+        let mut helix = normal().with_normal_keybindings(bindings);
+
+        helix.parse_event(chr('f'));
+        assert_ne!(helix.parse_event(chr('x')), ReedlineEvent::ClearScreen);
+    }
+
+    /// An unbound chord mid-sequence stays what it was: the sequence is
+    /// rejected and nothing fires.
+    #[test]
+    fn an_unbound_chord_still_rejects_a_half_typed_sequence() {
+        let mut helix = normal();
+        helix.parse_event(chr('3'));
+        helix.parse_event(chr('f'));
+
+        assert_eq!(
+            helix.parse_event(key(KeyCode::F(9), KeyModifiers::NONE)),
+            ReedlineEvent::None
+        );
+        assert_eq!(helix.pending, None);
+        assert_eq!(helix.count, None);
+    }
+
+    #[test]
+    fn switch_mode_event_abandons_a_half_typed_sequence() {
         let mut helix = normal();
         // Arm a count and a pending find; the switch must clear both so the
         // next key is not eaten as the find argument in the new mode.
@@ -1511,7 +1794,9 @@ mod test {
         helix.parse_event(chr('f'));
         assert!(helix.pending.is_some(), "setup: find is armed");
 
-        helix.handle_mode_specific_event(ReedlineEvent::HelixChangeMode("insert".into()));
+        helix.handle_mode_specific_event(ReedlineEvent::SwitchMode(PromptEditMode::Helix(
+            PromptHelixMode::Insert,
+        )));
         assert_eq!(helix.pending, None);
         assert_eq!(helix.count, None);
         assert_eq!(helix.mode, HelixMode::Insert);

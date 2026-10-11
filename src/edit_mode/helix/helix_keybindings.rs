@@ -3,9 +3,9 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use crate::{
     edit_mode::keybindings::{
         add_common_control_bindings, add_common_edit_bindings, add_common_navigation_bindings,
-        add_common_selection_bindings, edit_bind, Keybindings,
+        add_common_selection_bindings, add_extending_navigation_bindings, edit_bind, Keybindings,
     },
-    Direction, EditCommand, MotionTarget, WordEdge, WordKind,
+    Direction, EditCommand, MotionTarget,
 };
 
 /// Default Helix normal-mode keybindings.
@@ -61,73 +61,15 @@ pub fn default_helix_normal_keybindings() -> Keybindings {
 /// `Ctrl-Right`: accepting a hint inserts text, which select mode must not do.
 pub fn default_helix_select_keybindings() -> Keybindings {
     use Direction as D;
-    use KeyCode as KC;
-    use KeyModifiers as KM;
     use MotionTarget as MT;
 
     let mut kb = default_helix_normal_keybindings();
 
-    let extend = |target: MT| edit_bind(EditCommand::Extend(target));
-    let word = |direction: D| MT::Word {
-        kind: WordKind::Word,
-        edge: WordEdge::Start,
-        direction,
-    };
-
-    // Arrows: the modal `h`/`l` extend by grapheme, `j`/`k` by line.
-    kb.add_binding(KM::NONE, KC::Left, extend(MT::Grapheme(D::Backward)));
-    kb.add_binding(KM::NONE, KC::Right, extend(MT::Grapheme(D::Forward)));
-    kb.add_binding(
-        KM::NONE,
-        KC::Up,
-        edit_bind(EditCommand::MoveLineUp { select: true }),
+    add_extending_navigation_bindings(
+        &mut kb,
+        EditCommand::Extend(MT::Grapheme(D::Backward)),
+        EditCommand::Extend(MT::Grapheme(D::Forward)),
     );
-    kb.add_binding(
-        KM::NONE,
-        KC::Down,
-        edit_bind(EditCommand::MoveLineDown { select: true }),
-    );
-    // The emacs-style aliases of Up/Down follow them.
-    kb.add_binding(
-        KM::CONTROL,
-        KC::Char('p'),
-        edit_bind(EditCommand::MoveLineUp { select: true }),
-    );
-    kb.add_binding(
-        KM::CONTROL,
-        KC::Char('n'),
-        edit_bind(EditCommand::MoveLineDown { select: true }),
-    );
-    // Word chords, the `b`/`w` twins.
-    kb.add_binding(KM::CONTROL, KC::Left, extend(word(D::Backward)));
-    kb.add_binding(KM::CONTROL, KC::Right, extend(word(D::Forward)));
-    // Line edges (`gh`/`gl`) on Home/End and their emacs aliases.
-    kb.add_binding(KM::NONE, KC::Home, extend(MT::LineEdge(D::Backward)));
-    kb.add_binding(KM::NONE, KC::End, extend(MT::LineEdge(D::Forward)));
-    kb.add_binding(
-        KM::CONTROL,
-        KC::Char('a'),
-        extend(MT::LineEdge(D::Backward)),
-    );
-    kb.add_binding(KM::CONTROL, KC::Char('e'), extend(MT::LineEdge(D::Forward)));
-    // Buffer edges (`gg`/`ge`) on Ctrl-Home/End and the Alt-</> jumps.
-    kb.add_binding(KM::CONTROL, KC::Home, extend(MT::BufferEdge(D::Backward)));
-    kb.add_binding(KM::CONTROL, KC::End, extend(MT::BufferEdge(D::Forward)));
-    kb.add_binding(KM::ALT, KC::Char('<'), extend(MT::BufferEdge(D::Backward)));
-    kb.add_binding(KM::ALT, KC::Char('>'), extend(MT::BufferEdge(D::Forward)));
-    // The kitty keyboard protocol spellings of Alt-</>.
-    kb.add_binding(
-        KM::SHIFT | KM::ALT,
-        KC::Char(','),
-        extend(MT::BufferEdge(D::Backward)),
-    );
-    kb.add_binding(
-        KM::SHIFT | KM::ALT,
-        KC::Char('.'),
-        extend(MT::BufferEdge(D::Forward)),
-    );
-    // Backspace follows `h`, as it follows normal mode's collapsing left step.
-    kb.add_binding(KM::NONE, KC::Backspace, extend(MT::Grapheme(D::Backward)));
 
     kb
 }
