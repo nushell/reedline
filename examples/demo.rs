@@ -20,7 +20,7 @@ use reedline::FileBackedHistory;
 use reedline::HistoryTimestamp;
 use reedline::{
     default_helix_insert_keybindings, default_helix_normal_keybindings,
-    default_helix_select_keybindings, Helix,
+    default_helix_select_keybindings, DefaultPromptSegment, Helix,
 };
 use reedline::{CursorConfig, MenuBuilder, OutputMode};
 use reedline::{PromptEditMode, PromptHelixMode, PromptViMode};
@@ -93,6 +93,15 @@ fn main() -> reedline::Result<()> {
         hx_select: Some(SetCursorStyle::SteadyUnderScore),
     };
 
+    let prompt = DefaultPrompt::new(
+        DefaultPromptSegment::WorkingDirectory,
+        DefaultPromptSegment::Dynamic(|| {
+            jiff::Zoned::now()
+                .strftime("%m/%d/%Y %I:%M:%S %p")
+                .to_string()
+        }),
+    );
+
     let mut line_editor = Reedline::create()
         .with_history_session_id(history_session_id)
         .with_history(history)
@@ -138,8 +147,6 @@ fn main() -> reedline::Result<()> {
     let mut command = Command::new("vi");
     command.arg(&temp_file);
     line_editor = line_editor.with_buffer_editor(command, temp_file);
-
-    let prompt = DefaultPrompt::default();
 
     loop {
         let sig = line_editor.read_line(&prompt);
