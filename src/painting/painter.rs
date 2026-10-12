@@ -390,6 +390,13 @@ pub struct Painter {
     pub(crate) last_layout: Option<PromptLayout>,
     /// Set by `hide_cursor`, cleared by every Show. See [`Painter::show_cursor`].
     cursor_hidden: bool,
+    /// The screen height whose last row an external-message commit measured
+    /// as the real bottom. Until then a commit that scrolls past the last row
+    /// asks where it ended, since a short reported height would put the real
+    /// cursor below the counted one (#1206). Keyed on the height rather than
+    /// reset: a resize, a new reported size or a measured growth changes the
+    /// height, and with it the answer.
+    bottom_confirmed_at: Option<u16>,
 }
 
 impl Painter {
@@ -409,6 +416,7 @@ impl Painter {
             semantic_markers: None,
             last_layout: None,
             cursor_hidden: false,
+            bottom_confirmed_at: None,
         }
     }
 
@@ -1527,6 +1535,9 @@ impl Painter {
     /// the row it starts from. From any other (an idle callback had the tty,
     /// a resize is unresolved, the first query went unanswered) the commit
     /// ends its frame, flushes and asks instead, and pays the second frame.
+    /// So does a commit that scrolls past the last row of a height not yet
+    /// confirmed as the real one: past the reported bottom the count only
+    /// holds if the report is right (#1206).
     ///
     /// Starting at the anchor rather than at the cursor is the point. The
     /// anchor is the one row the painter trusts, and every part of the block
@@ -1555,8 +1566,12 @@ impl Painter {
         // more than one row; an empty one still takes its `\r\n`. Once the
         // cursor is on the last row a newline scrolls instead of moving,
         // hence the cap.
-        let max_row = self.screen_height().saturating_sub(1);
+        let height = self.screen_height();
+        let max_row = height.saturating_sub(1);
         let mut row = start;
+        // Whether the count ran past the last row, so the terminal scrolled.
+        // Landing exactly on it takes no scroll and holds at any real height.
+        let mut scrolled = false;
 
         for line in messages {
             // max(1) on the width: a mid-resize terminal can report 0 (#842).
@@ -1565,16 +1580,28 @@ impl Painter {
             self.stdout.queue(Print(line))?.queue(Print("\r\n"))?;
             // Saturating: a height grown to fit a measured row can sit near
             // `u16::MAX` (#1236).
-            row = row.saturating_add(rows).min(max_row);
+            let next = row.saturating_add(rows);
+            scrolled |= next > max_row;
+            row = next.min(max_row);
         }
 
-        if !start_verified {
-            // Counted from a row nobody checked, so ask. Flushed first, so
-            // the answer is the cursor after the messages, not before them.
+        let bottom_trusted = !scrolled || self.bottom_confirmed_at == Some(height);
+        if !start_verified || !bottom_trusted {
+            // Counted from a row nobody checked, or capped at a bottom
+            // nobody checked, so ask. Flushed first, so the answer is the
+            // cursor after the messages, not before them.
             self.end_frame()?;
             self.stdout.flush()?;
             self.prompt_start_row = match self.measure_cursor_position() {
-                Ok(Some((_, actual))) => PromptStartRow::Verified(actual),
+                Ok(Some((_, actual))) => {
+                    // A scroll that ends on the counted last row means it is
+                    // the real one; later commits can trust the cap. Lower
+                    // down, the measure has already grown the height.
+                    if scrolled && actual == max_row {
+                        self.bottom_confirmed_at = Some(height);
+                    }
+                    PromptStartRow::Verified(actual)
+                }
                 // No answer: the count is all there is. `Stale` keeps the
                 // next paint checking it, which is safe now that the bytes
                 // have gone out.
@@ -2502,13 +2529,63 @@ mod tests {
 
     /// Once the cursor is on the last row a line break scrolls instead of
     /// moving, so the counted anchor stops there whatever the batch size.
+    /// The bottom is confirmed here, so the cap is trusted without a query.
     #[test]
     fn external_messages_at_the_bottom_cap_the_anchor_at_the_last_row() {
         let mut p = capturing_painter_anchored_at(9);
+        p.bottom_confirmed_at = Some(10);
         p.print_external_message(vec!["a".into(), "b".into(), "c".into()])
             .expect("print_external_message failed");
 
         assert_eq!(p.prompt_start_row, PromptStartRow::Verified(9));
+        let out = String::from_utf8_lossy(p.stdout.captured()).into_owned();
+        assert!(
+            !out.contains("\x1b[?2026l"),
+            "commit closed its frame: {out:?}"
+        );
+    }
+
+    /// Regression test for nushell/reedline#1206, at the commit.
+    ///
+    /// A reported height of 10 on a taller window: the batch scrolls past the
+    /// believed bottom, but the real cursor is further down. The cap would
+    /// anchor the prompt over the messages, so the commit asks, takes the
+    /// answer, and grows the height to fit it.
+    #[test]
+    fn external_messages_past_a_short_reported_bottom_grow_to_fit_the_cursor() {
+        let mut p = Painter::new(W::sink_with_cursor_at((0, 40)));
+        p.terminal_size = (80, 10);
+        p.term_is_dumb = false;
+        p.prompt_start_row.mark_verified(9);
+
+        p.print_external_message(vec!["a".into(), "b".into()])
+            .expect("print_external_message failed");
+
+        assert_eq!(p.screen_height(), 41);
+        assert_eq!(p.prompt_start_row, PromptStartRow::Verified(40));
+        assert_eq!(p.bottom_confirmed_at, None);
+    }
+
+    /// The first scroll past the bottom asks once; an answer on the last row
+    /// confirms the height, and the next batch trusts the cap. The writer is
+    /// then swapped for one that would answer row 40, to show no one asks.
+    #[test]
+    fn external_messages_ask_once_per_height_whether_the_bottom_is_real() {
+        let mut p = Painter::new(W::sink_with_cursor_at((0, 9)));
+        p.terminal_size = (80, 10);
+        p.term_is_dumb = false;
+        p.prompt_start_row.mark_verified(9);
+
+        p.print_external_message(vec!["a".into()])
+            .expect("print_external_message failed");
+        assert_eq!(p.prompt_start_row, PromptStartRow::Verified(9));
+        assert_eq!(p.bottom_confirmed_at, Some(10));
+
+        p.stdout = W::sink_with_cursor_at((0, 40));
+        p.print_external_message(vec!["b".into()])
+            .expect("print_external_message failed");
+        assert_eq!(p.prompt_start_row, PromptStartRow::Verified(9));
+        assert_eq!(p.screen_height(), 10);
     }
 
     /// The case from a real terminal: a left prompt long enough that the
