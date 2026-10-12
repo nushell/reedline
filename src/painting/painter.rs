@@ -1428,6 +1428,14 @@ impl Painter {
         Ok(())
     }
 
+    /// End a frame and send it, for a caller that has nothing to paint after
+    /// [`Painter::print_external_message`] left one open. With no frame open
+    /// the end resets a mode that is already off, which no terminal shows.
+    pub(crate) fn finish_frame(&mut self) -> Result<()> {
+        self.end_frame()?;
+        self.stdout.flush()
+    }
+
     /// Show the cursor if the painter hid it, for the paths that end without
     /// a paint.
     ///
@@ -1503,8 +1511,22 @@ impl Painter {
     ///
     /// The block itself, prompt, buffer and anything under
     /// them, is erased from the anchor down and the messages take its place.
-    /// On return the cursor is on the first free row below them and
-    /// `prompt_start_row` names that row; the caller repaints the block there.
+    /// `prompt_start_row` names the first free row below them, counted rather
+    /// than asked for, and the caller repaints the block there.
+    ///
+    /// Nothing is flushed, and the synchronized frame opened here is left
+    /// open: the caller's repaint closes it and sends the commit and the
+    /// redrawn block as one frame. Ending it here, or asking the terminal for
+    /// the cursor in between, splits them into two, and the screen shows the
+    /// messages without a prompt under them for a frame. A cursor query
+    /// cannot go inside the frame either: Alacritty and Rio hold back all
+    /// input during one, so the answer only comes at their 150 ms timeout.
+    /// Should the repaint never come, that same timeout ends the frame.
+    ///
+    /// That holds only from a verified anchor: a count is only as good as
+    /// the row it starts from. From any other (an idle callback had the tty,
+    /// a resize is unresolved, the first query went unanswered) the commit
+    /// ends its frame, flushes and asks instead, and pays the second frame.
     ///
     /// Starting at the anchor rather than at the cursor is the point. The
     /// anchor is the one row the painter trusts, and every part of the block
@@ -1514,6 +1536,7 @@ impl Painter {
     /// and left a copy of the prompt row on screen per batch.
     pub(crate) fn print_external_message(&mut self, messages: Vec<String>) -> Result<()> {
         let start = self.prompt_start_row.last_known_row();
+        let start_verified = matches!(self.prompt_start_row, PromptStartRow::Verified(_));
         // Invalidate before the first queued byte: a `?` early-return below
         // must not leave bytes in the buffer with the cache still claiming
         // `Verified`.
@@ -1528,42 +1551,51 @@ impl Painter {
 
         self.clear_from_anchor(start)?;
 
-        // Count where the cursor lands, for the case the terminal does not
-        // say. A line wider than the screen takes more than one row; an empty
-        // one still takes its `\r\n`. Once the cursor is on the last row a
-        // newline scrolls instead of moving, hence the cap.
+        // Count where the cursor lands. A line wider than the screen takes
+        // more than one row; an empty one still takes its `\r\n`. Once the
+        // cursor is on the last row a newline scrolls instead of moving,
+        // hence the cap.
         let max_row = self.screen_height().saturating_sub(1);
         let mut row = start;
 
         for line in messages {
             // max(1) on the width: a mid-resize terminal can report 0 (#842).
-            let rows = estimate_required_lines(&line, self.screen_width().max(1)).max(1) as u16;
+            let rows = estimate_required_lines(&line, self.screen_width().max(1)).max(1);
+            let rows = u16::try_from(rows).unwrap_or(u16::MAX);
             self.stdout.queue(Print(line))?.queue(Print("\r\n"))?;
-            row = (row + rows).min(max_row);
+            // Saturating: a height grown to fit a measured row can sit near
+            // `u16::MAX` (#1236).
+            row = row.saturating_add(rows).min(max_row);
         }
 
-        self.end_frame()?;
+        if !start_verified {
+            // Counted from a row nobody checked, so ask. Flushed first, so
+            // the answer is the cursor after the messages, not before them.
+            self.end_frame()?;
+            self.stdout.flush()?;
+            self.prompt_start_row = match self.measure_cursor_position() {
+                Ok(Some((_, actual))) => PromptStartRow::Verified(actual),
+                // No answer: the count is all there is. `Stale` keeps the
+                // next paint checking it, which is safe now that the bytes
+                // have gone out.
+                Ok(None) | Err(_) => PromptStartRow::Stale(row),
+            };
+            return Ok(());
+        }
 
-        // The lines above are only *queued*, so the terminal's cursor has not
-        // moved yet: a row counted forward from `start` names a position the
-        // terminal has not reached. Recorded as `Stale`, the next paint would
-        // re-verify it against the real, still-earlier cursor, read that as
-        // the prompt having scrolled off the top, and re-anchor by printing a
-        // whole screen of newlines -- wiping the display (#1005).
+        // The count is the anchor, with no query to check it (see above for
+        // why there can be none). It measures the text with the same widths
+        // the painter uses for the prompt and buffer, escape sequences
+        // stripped, so it is as good as every other row the painter draws.
+        // A tab or a message's own cursor movement still fools it: the
+        // terminal moves where the count sees zero width.
         //
-        // The count is also only as good as `estimate_required_lines`, which
-        // a message carrying its own control sequences can fool. Flush and
-        // ask instead: one round-trip per batch of messages, not per message.
-        self.stdout.flush()?;
-        self.prompt_start_row = match self.measure_cursor_position() {
-            // Measured, so later paints can skip the drift check.
-            Ok(Some((_, actual))) => PromptStartRow::Verified(actual),
-            // No answer, so all that is left is the count this function stopped
-            // trusting. `Stale` at least keeps the next paint checking it;
-            // `Verified` would skip the check and paint against a row the
-            // terminal may never have reached.
-            Ok(None) | Err(_) => PromptStartRow::Stale(row),
-        };
+        // `Verified`, not `Stale`: the lines above are only queued, so the
+        // terminal's cursor has not moved yet. A `Stale` row would make the
+        // next paint check it against that still-earlier cursor, read it as
+        // the prompt having scrolled off the top, and re-anchor by printing a
+        // whole screen of newlines, wiping the display (#1005).
+        self.prompt_start_row = PromptStartRow::Verified(row);
         Ok(())
     }
 
@@ -2317,12 +2349,33 @@ mod tests {
         assert_eq!(painter.prompt_start_row, PromptStartRow::Verified(60000));
     }
 
-    // Covers the `print_external_message` call site: messages printed mid-line
-    // leave the cursor below a short screen just as the prompt does.
+    /// The commit never asks the terminal where the cursor is: a query would
+    /// split it from the repaint into two frames. A terminal that would
+    /// answer row 40 is ignored, and the anchor is the counted row.
     #[test]
-    fn test_print_external_message_grows_to_fit_the_cursor() {
+    fn external_messages_trust_the_count_over_the_cursor() {
         let mut painter = Painter::new(W::sink_with_cursor_at((0, 40)));
         painter.terminal_size = (80, 10);
+        painter.prompt_start_row.mark_verified(2);
+
+        painter
+            .print_external_message(vec!["msg".to_string()])
+            .expect("print_external_message failed");
+
+        assert_eq!(painter.screen_height(), 10);
+        assert_eq!(painter.prompt_start_row, PromptStartRow::Verified(3));
+    }
+
+    /// From an anchor nobody checked, such as the one an idle callback
+    /// leaves, the count would inherit its error, so the commit asks. The
+    /// answer wins, and it can also raise a height the terminal
+    /// under-reported.
+    #[test]
+    fn external_messages_from_a_stale_anchor_ask_for_the_row() {
+        let mut painter = Painter::new(W::sink_with_cursor_at((0, 40)));
+        painter.terminal_size = (80, 10);
+        painter.term_is_dumb = false;
+        painter.prompt_start_row = PromptStartRow::Stale(2);
 
         painter
             .print_external_message(vec!["msg".to_string()])
@@ -2332,9 +2385,22 @@ mod tests {
         assert_eq!(painter.prompt_start_row, PromptStartRow::Verified(40));
     }
 
-    /// A painter anchored at `row` whose bytes a test can read back. The
-    /// capture writer refuses a cursor query, so the commit path lands on its
-    /// counted `Stale` anchor, which is the arithmetic under test.
+    /// The fallback closes its own frame, since the query after it has to
+    /// get through, and with no answer keeps the count but leaves it `Stale`
+    /// for the next paint to check.
+    #[test]
+    fn external_messages_from_a_stale_anchor_close_their_frame() {
+        let mut p = capturing_painter_anchored_at(5);
+        p.prompt_start_row = PromptStartRow::Stale(5);
+        p.print_external_message(vec!["one".into()])
+            .expect("print_external_message failed");
+        let out = String::from_utf8_lossy(p.stdout.captured()).into_owned();
+
+        assert!(out.ends_with("\x1b[?2026l"), "{out:?}");
+        assert_eq!(p.prompt_start_row, PromptStartRow::Stale(6));
+    }
+
+    /// A painter anchored at `row` whose bytes a test can read back.
     fn capturing_painter_anchored_at(row: u16) -> Painter {
         let mut p = Painter::new(W::capture());
         p.terminal_size = (20, 10);
@@ -2362,24 +2428,40 @@ mod tests {
         let replayed = replay(&out, 20, false);
         assert_eq!(replayed.screen, "onetwo");
         assert_eq!(replayed.cursor, (7, 0, false));
-        assert_eq!(p.prompt_start_row, PromptStartRow::Stale(7));
+        assert_eq!(p.prompt_start_row, PromptStartRow::Verified(7));
     }
 
-    /// The commit is a frame of its own: opened before the erase, and
-    /// nothing queued after it closes. It has to close before the cursor
-    /// query, since a terminal that holds back its input during a frame would
-    /// not answer one; the capture writer refuses queries and ignores
-    /// flushes, so that ordering is not checked here.
+    /// The commit opens a frame before its erase and leaves it open; the
+    /// repaint after it closes it, so the two reach the screen as one frame
+    /// with no end marker between them for the terminal to draw at.
     #[test]
-    fn external_messages_are_one_synchronized_frame() {
+    fn external_messages_and_the_repaint_share_one_frame() {
         let mut p = capturing_painter_anchored_at(5);
         p.print_external_message(vec!["one".into()])
             .expect("print_external_message failed");
+        let commit = String::from_utf8_lossy(p.stdout.captured()).into_owned();
+
+        let begin = commit.find("\x1b[?2026h").expect("no begin marker");
+        let erase = commit.find("\x1b[J").expect("no erase");
+        assert!(begin < erase, "frame opened after the erase: {commit:?}");
+        assert!(
+            !commit.contains("\x1b[?2026l"),
+            "commit closed its frame: {commit:?}"
+        );
+
+        let lines = make_lines(TEST_PROMPT, "", "", "abc", "");
+        p.repaint_buffer(
+            &TestPrompt,
+            &lines,
+            PromptEditMode::Default,
+            None,
+            false,
+            &None,
+        )
+        .expect("repaint_buffer failed");
         let out = String::from_utf8_lossy(p.stdout.captured()).into_owned();
 
-        let begin = out.find("\x1b[?2026h").expect("no begin marker");
-        let erase = out.find("\x1b[J").expect("no erase");
-        assert!(begin < erase, "frame opened after the erase: {out:?}");
+        assert_eq!(out.matches("\x1b[?2026l").count(), 1, "{out:?}");
         assert!(out.ends_with("\x1b[?2026l"), "{out:?}");
     }
 
@@ -2404,7 +2486,7 @@ mod tests {
         let out = String::from_utf8_lossy(p.stdout.captured()).into_owned();
 
         assert_eq!(replay(&out, 20, false).cursor, (4, 0, false));
-        assert_eq!(p.prompt_start_row, PromptStartRow::Stale(4));
+        assert_eq!(p.prompt_start_row, PromptStartRow::Verified(4));
     }
 
     /// An empty message is still a row: the terminal spends one on its line
@@ -2415,7 +2497,7 @@ mod tests {
         p.print_external_message(vec![String::new(), "after".into()])
             .expect("print_external_message failed");
 
-        assert_eq!(p.prompt_start_row, PromptStartRow::Stale(4));
+        assert_eq!(p.prompt_start_row, PromptStartRow::Verified(4));
     }
 
     /// Once the cursor is on the last row a line break scrolls instead of
@@ -2426,7 +2508,7 @@ mod tests {
         p.print_external_message(vec!["a".into(), "b".into(), "c".into()])
             .expect("print_external_message failed");
 
-        assert_eq!(p.prompt_start_row, PromptStartRow::Stale(9));
+        assert_eq!(p.prompt_start_row, PromptStartRow::Verified(9));
     }
 
     /// The case from a real terminal: a left prompt long enough that the

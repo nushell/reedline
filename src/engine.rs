@@ -3119,6 +3119,10 @@ impl Reedline {
                 use_ansi_coloring,
                 &self.cursor_shapes,
             )?;
+        } else {
+            // Nothing to paint, but a commit just before may have left its
+            // frame open and its bytes unsent, waiting for this repaint.
+            self.painter.finish_frame()?;
         }
 
         Ok(())
