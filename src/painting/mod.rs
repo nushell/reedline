@@ -1,6 +1,8 @@
 mod painter;
 mod prompt_lines;
 mod styled_text;
+#[cfg(test)]
+mod test_screen;
 mod utils;
 
 pub use painter::{Painter, PainterSuspendedState, RenderSnapshot, W};
