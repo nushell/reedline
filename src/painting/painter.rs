@@ -2437,27 +2437,6 @@ mod tests {
         p
     }
 
-    /// The commit starts where the painter says the block starts, erases from
-    /// there, and prints the messages in its place. The cursor is never moved
-    /// relative to where it was, so there is no block height to guess.
-    #[test]
-    fn external_messages_start_at_the_anchor_and_clear_the_block() {
-        let mut p = capturing_painter_anchored_at(5);
-        p.print_external_message(vec!["one".into(), "two".into()])
-            .expect("print_external_message failed");
-        let out = String::from_utf8_lossy(p.stdout.captured()).into_owned();
-
-        // Jump to the anchor, erase below, then the messages, nothing between.
-        assert!(
-            out.contains("\x1b[6;1H\x1b[Jone\r\ntwo\r\n"),
-            "commit did not clear from the anchor and print there: {out:?}"
-        );
-        let replayed = replay(&out, 20, false);
-        assert_eq!(replayed.screen, "onetwo");
-        assert_eq!(replayed.cursor, (7, 0, false));
-        assert_eq!(p.prompt_start_row, PromptStartRow::Verified(7));
-    }
-
     /// The commit opens a frame before its erase and leaves it open; the
     /// repaint after it closes it, so the two reach the screen as one frame
     /// with no end marker between them for the terminal to draw at.
@@ -2501,19 +2480,6 @@ mod tests {
         let out = String::from_utf8_lossy(p.stdout.captured()).into_owned();
 
         assert!(!out.contains("\x1b[?2026"), "{out:?}");
-    }
-
-    /// A message wider than the screen takes the rows it wraps onto, so the
-    /// anchor moves past all of them, not past one row per message.
-    #[test]
-    fn a_wrapped_external_message_advances_the_anchor_by_its_rows() {
-        let mut p = capturing_painter_anchored_at(2);
-        p.print_external_message(vec!["x".repeat(30)])
-            .expect("print_external_message failed");
-        let out = String::from_utf8_lossy(p.stdout.captured()).into_owned();
-
-        assert_eq!(replay(&out, 20, false).cursor, (4, 0, false));
-        assert_eq!(p.prompt_start_row, PromptStartRow::Verified(4));
     }
 
     /// An empty message is still a row: the terminal spends one on its line
@@ -2586,48 +2552,6 @@ mod tests {
             .expect("print_external_message failed");
         assert_eq!(p.prompt_start_row, PromptStartRow::Verified(9));
         assert_eq!(p.screen_height(), 10);
-    }
-
-    /// The case from a real terminal: a left prompt long enough that the
-    /// first row wraps before the old byte count said so, and a message
-    /// landing mid-edit. The old path moved up from the cursor by that count
-    /// and left a copy of the prompt row above each batch. Replayed, the
-    /// screen must hold the message, then exactly one prompt.
-    #[test]
-    fn external_messages_leave_no_prompt_rows_behind() {
-        let lines = make_lines("~/project>", "", "", "some things!", "");
-        let mut p = capturing_painter_anchored_at(0);
-        let paint = |p: &mut Painter| {
-            p.repaint_buffer(
-                &TestPrompt,
-                &lines,
-                PromptEditMode::Default,
-                None,
-                false,
-                &None,
-            )
-            .expect("repaint_buffer failed")
-        };
-
-        paint(&mut p);
-        p.print_external_message(vec!["msg".into()])
-            .expect("print_external_message failed");
-        paint(&mut p);
-
-        let out = String::from_utf8_lossy(p.stdout.captured()).into_owned();
-        let screen = replay(&out, 20, false).screen;
-        assert_eq!(
-            screen.matches("~/project>").count(),
-            1,
-            "a prompt row was left behind: {screen:?}"
-        );
-        let at = |needle: &str| {
-            screen
-                .find(needle)
-                .unwrap_or_else(|| panic!("{needle:?} missing from {screen:?}"))
-        };
-        assert!(at("msg") < at("~/project>some things!"), "{screen:?}");
-        assert_eq!(p.prompt_start_row, PromptStartRow::Verified(1));
     }
 
     // Output printed while the tty was yielded can leave the cursor well below

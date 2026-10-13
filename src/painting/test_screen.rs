@@ -71,6 +71,30 @@ impl TestScreen {
         (column, row)
     }
 
+    /// The rows pushed off the top into scrollback, oldest first, trailing
+    /// blanks trimmed.
+    pub(crate) fn scrollback_rows(&mut self) -> Vec<String> {
+        let total = self.scrolled();
+        let (_, width) = self.parser.screen().size();
+        let screen = self.parser.screen_mut();
+        // With the view `offset` rows up, its top row is the one `offset`
+        // rows above the screen.
+        let rows = (1..=total)
+            .rev()
+            .map(|offset| {
+                screen.set_scrollback(offset);
+                screen
+                    .rows(0, width)
+                    .next()
+                    .unwrap_or_default()
+                    .trim_end()
+                    .to_owned()
+            })
+            .collect();
+        screen.set_scrollback(0);
+        rows
+    }
+
     pub(crate) fn cursor_visible(&self) -> bool {
         !self.parser.screen().hide_cursor()
     }
