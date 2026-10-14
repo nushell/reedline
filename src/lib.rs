@@ -305,11 +305,11 @@ pub use result::{ReedlineError, ReedlineErrorVariants, Result};
 
 mod history;
 #[cfg(feature = "_sqlite")]
-pub use history::SqliteBackedHistory;
+pub use history::{SqliteBackedHistory, SqliteBackedArchivalData, SqliteBackedArchivalHandler};
 pub use history::{
     CommandLineSearch, FileBackedHistory, History, HistoryItem, HistoryItemExtraInfo,
     HistoryItemId, HistoryNavigationQuery, HistorySessionId, IgnoreAllExtraInfo, JsonFilterValue,
-    SearchDirection, SearchFilter, SearchQuery, HISTORY_SIZE,
+    SearchDirection, SearchFilter, SearchQuery, HISTORY_SIZE, FileBackedArchivalHandler,
 };
 
 mod prompt;

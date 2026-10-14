@@ -22,6 +22,35 @@ pub struct SqliteBackedHistory {
     db: rusqlite::Connection,
     session: Option<HistorySessionId>,
     session_timestamp: Option<chrono::DateTime<Utc>>,
+    archival_handler: Option<ArchivalHandlerData>,
+}
+
+struct ArchivalHandlerData {
+    handler: Box<dyn SqliteBackedArchivalHandler>,
+    trigger_len: i64,
+}
+
+/// Handler for Sqlite Backed history archival
+pub trait SqliteBackedArchivalHandler: Send + 'static {
+    /// Archival callback, use when the history passes the max capacity, `input`
+    /// has direct access to the database, the handler is responsible to use it
+    /// to remove entries in such a way that fewer than `max_capacity` number
+    /// of entries are left in the database.
+    fn archive(&mut self, input: SqliteBackedArchivalData) -> Result<()>;
+    /// Similar to archive, but it's responsible to empty the database,
+    /// consuming all entries.
+    fn archive_all(&mut self, input: SqliteBackedArchivalData) -> Result<()>;
+}
+impl<F: FnMut(SqliteBackedArchivalData, bool) -> Result<()> + Send + 'static>
+    SqliteBackedArchivalHandler for F
+{
+    fn archive(&mut self, input: SqliteBackedArchivalData) -> Result<()> {
+        self(input, false)
+    }
+
+    fn archive_all(&mut self, input: SqliteBackedArchivalData) -> Result<()> {
+        self(input, true)
+    }
 }
 
 fn deserialize_history_item<E: HistoryItemExtraInfo>(
@@ -125,6 +154,13 @@ fn save_with_extra_conn<E: HistoryItemExtraInfo>(
 
 impl History for SqliteBackedHistory {
     fn save(&mut self, entry: HistoryItem) -> Result<HistoryItem> {
+        if self.archival_handler.is_some() {
+            let num_entries = self.count_all()?;            let archival_data = self.archival_handler.as_mut().unwrap();
+            if num_entries >= archival_data.trigger_len {
+                let archival = SqliteBackedArchivalData::new(&self.db, num_entries)?;
+                archival_data.handler.archive(archival)?;
+            }
+        }
         self.save_with_extra(entry)
     }
 
@@ -326,7 +362,22 @@ impl SqliteBackedHistory {
             db,
             session,
             session_timestamp,
+            archival_handler: None,
         })
+    }
+
+    /// Set the archive handler that will be executed each time the database
+    /// exceeds `trigger_len` entries, or in case of inevitable lost of history
+    /// entries, such as when closing a in memory database.
+    pub fn set_archival_handler(
+        &mut self,
+        handler: impl SqliteBackedArchivalHandler,
+        trigger_len: i64,
+    ) {
+        self.archival_handler = Some(ArchivalHandlerData {
+            handler: Box::new(handler),
+            trigger_len,
+        });
     }
 
     fn construct_query<'a>(
@@ -613,6 +664,96 @@ impl SqliteBackedHistory {
             .map_err(map_sqlite_err)?
             .collect::<rusqlite::Result<Vec<HistoryItem<E>>>>()
             .map_err(map_sqlite_err)
+    }
+
+    /// Close the history database, sync/archive all pending entries. Using the
+    /// Drop implementation also calls this function, but doing so will silently
+    /// ignore any errors that may happen
+    pub fn close(self) -> Result<()> {
+        // NOTE not using ManuallyDrop will trigger close_inner twice
+        std::mem::ManuallyDrop::new(self).close_inner()
+    }
+
+    fn close_inner(&mut self) -> Result<()> {
+        if matches!(self.db.path(), None | Some("")) && self.archival_handler.is_some() {
+            // if in memory database, call history to archive all entries
+            let num_entries = self.count_all()?;
+            let archival = SqliteBackedArchivalData::new(&self.db, num_entries)?;
+            self.archival_handler
+                .as_mut()
+                .unwrap()
+                .handler
+                .archive_all(archival)?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for SqliteBackedHistory {
+    fn drop(&mut self) {
+        // NOTE if you change this function, please also check SqliteBackedHistory::close
+        let _res = self.close_inner();
+    }
+}
+
+/// Used for removing and returning elements from the database during the
+/// archival process for [SqliteBackedHistory]
+pub struct SqliteBackedArchivalData<'a> {
+    db: &'a Connection,
+    stmt: rusqlite::Statement<'a>,
+    num_entries: i64,
+}
+
+impl<'a> SqliteBackedArchivalData<'a> {
+    fn new(db: &'a Connection, num_entries: i64) -> Result<Self> {
+        let stmt = db
+            .prepare(
+                "DELETE FROM history WHERE start_timestamp <= (
+                    SELECT start_timestamp FROM history ORDER BY start_timestamp ASC LIMIT 1 OFFSET :offset
+                ) RETURNING *",
+            )
+            .map_err(map_sqlite_err)?;
+        Ok(Self {
+            db,
+            stmt,
+            num_entries,
+        })
+    }
+
+    /// Remove `remove_len` entries from the database and return the removed
+    /// data, the callers of this function are expected to archive those
+    /// entries.
+    pub fn consume(&mut self, remove_len: i64) -> Result<Vec<HistoryItem>> {
+        if remove_len == 0 {
+            return Ok(vec![]);
+        }
+        let removed = self
+            .stmt
+            .query_map(
+                named_params! {
+                    ":offset": remove_len.saturating_sub(1),
+                },
+                deserialize_history_item::<IgnoreAllExtraInfo>
+                    as fn(&rusqlite::Row) -> rusqlite::Result<HistoryItem>,
+            )
+            .map_err(map_sqlite_err)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(map_sqlite_err)?;
+        // necessary to make sure the history file
+        // (.sqlite3, .sqlite3-shm, and .sqlite3-wal) is synced
+        self.db
+            .query_one("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
+            .map_err(map_sqlite_err)?;
+        self.num_entries = self
+            .num_entries
+            .saturating_sub(i64::try_from(removed.len()).unwrap());
+        Ok(removed)
+    }
+
+    /// Return the number of entries in the database that caused the archival
+    /// to trigger.
+    pub fn number_of_entries(&self) -> i64 {
+        self.num_entries
     }
 }
 
@@ -1286,5 +1427,256 @@ mod tests {
             })
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{History, HistoryItem, SearchDirection, SearchQuery, SqliteBackedHistory};
+    use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
+
+    fn insert_and_test(sqlite: &mut SqliteBackedHistory, id: i64, result: &[String]) {
+        let mut item = HistoryItem::from_command_line(&format!("line{id}"));
+        item.start_timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(id);
+        sqlite.save(item).unwrap();
+        let results: Vec<_> = sqlite
+            .search(SearchQuery::everything(SearchDirection::Forward, None))
+            .unwrap()
+            .into_iter()
+            .map(|x| x.command_line)
+            .collect();
+        assert_eq!(results, result);
+    }
+
+    fn reopen_and_recheck_file(file: SqliteBackedHistory, file_path: PathBuf, expected: &[String]) {
+        // this will force file to sync
+        file.close().unwrap();
+        // if file backed, reopen/reload the file and check the content
+        let entries: Vec<_> = SqliteBackedHistory::with_file(file_path, None, None)
+            .unwrap()
+            .search(SearchQuery::everything(
+                crate::SearchDirection::Forward,
+                None,
+            ))
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.command_line)
+            .collect();
+        assert_eq!(&entries, expected);
+    }
+
+    fn test_archive_full_capacity_and_close(capacity: i64, file_path: Option<PathBuf>) {
+        let mut sqlite = if let Some(file_path) = file_path.clone() {
+            SqliteBackedHistory::with_file(file_path, None, None).unwrap()
+        } else {
+            SqliteBackedHistory::in_memory().unwrap()
+        };
+        let archived = Arc::new(Mutex::new(vec![]));
+        let moved_archived = Arc::clone(&archived);
+        let has_file = file_path.is_some();
+        let handler = move |mut conn: crate::SqliteBackedArchivalData, all: bool| {
+            if has_file {
+                unreachable!("archival should not be called");
+            }
+            assert!(all);
+            let len = conn.number_of_entries();
+            moved_archived
+                .lock()
+                .unwrap()
+                .extend(conn.consume(len).unwrap());
+            Ok(())
+        };
+        sqlite.set_archival_handler(handler, capacity);
+
+        let mut expected_iter = (0..capacity).map(|i| (i, format!("line{i}")));
+        let mut expected_file: Vec<_> = vec![];
+
+        // first fill the history to capacity
+        for (i, expected) in (&mut expected_iter).take(capacity.try_into().unwrap()) {
+            expected_file.push(expected.clone());
+            insert_and_test(&mut sqlite, i, &expected_file);
+            assert!(archived.lock().unwrap().is_empty());
+        }
+
+        if let Some(file_path) = file_path {
+            // check that closing the database keep the database contents
+            // in disk
+            reopen_and_recheck_file(sqlite, file_path, &expected_file);
+        } else {
+            // check that closing the database will trigger the archival
+            sqlite.close().unwrap();
+            assert_eq!(
+                archived
+                    .lock()
+                    .unwrap()
+                    .drain(..)
+                    .map(|x| x.command_line)
+                    .collect::<Vec<_>>(),
+                &expected_file[..]
+            );
+        }
+    }
+
+    // test the archival process by triggering it multiple times
+    fn test_archive_multiple_calls(capacity: i64, file_path: Option<PathBuf>) {
+        if capacity < 3 {
+            panic!("test doesn't work with very small capacity")
+        }
+        let mut file = if let Some(path) = file_path.clone() {
+            SqliteBackedHistory::with_file(path, None, None).unwrap()
+        } else {
+            SqliteBackedHistory::in_memory().unwrap()
+        };
+        let archived = Arc::new(Mutex::new(vec![]));
+        let moved_archived = Arc::clone(&archived);
+        let handler = move |mut conn: crate::SqliteBackedArchivalData, all| {
+            // consume all leaving only 1 behind
+            let consume_len = conn.number_of_entries() - if all { 0 } else { 1 };
+            moved_archived.lock().unwrap().extend(
+                conn.consume(consume_len)
+                    .unwrap()
+                    .into_iter()
+                    .map(|h| h.command_line),
+            );
+            Ok(())
+        };
+        file.set_archival_handler(handler, capacity);
+
+        let mut expected_iter = (0..).map(|i| (i, format!("line{i}")));
+
+        let mut expected_file: Vec<_> = vec![];
+        let mut expected_archived: Vec<_> = vec![];
+
+        // first fill the history to capacity
+        for (i, expected) in (&mut expected_iter).take(capacity.try_into().unwrap()) {
+            expected_file.push(expected.clone());
+            insert_and_test(&mut file, i, &expected_file);
+            assert_eq!(&*archived.lock().unwrap(), &expected_archived);
+        }
+
+        // insert one more, this needs to call archiver
+        expected_archived.extend(expected_file.drain(0..expected_file.len() - 1));
+        let (next_idx, next_entry) = expected_iter.next().unwrap();
+        expected_file.push(next_entry);
+        insert_and_test(&mut file, next_idx, &expected_file);
+        // now the database have 2 entries, the one left behind by the archiver
+        // and the other that was added.
+        assert_eq!(&*archived.lock().unwrap(), &expected_archived);
+
+        // sync to test file write/load
+        file.sync().unwrap();
+
+        // Add more entries, so we go to capacity again
+        for (i, expected) in (&mut expected_iter).take((capacity - 2).try_into().unwrap()) {
+            expected_file.push(expected.clone());
+            insert_and_test(&mut file, i, &expected_file);
+        }
+
+        // add one more entry to trigger the archiver again
+        expected_archived.extend(expected_file.drain(0..expected_file.len() - 1));
+        let (next_idx, next_entry) = expected_iter.next().unwrap();
+        expected_file.push(next_entry);
+        insert_and_test(&mut file, next_idx, &expected_file);
+        assert_eq!(&*archived.lock().unwrap(), &expected_archived);
+
+        if let Some(file_path) = file_path {
+            // check that closing the file will write the file to disk
+            reopen_and_recheck_file(file, file_path, &expected_file);
+        } else {
+            // check that closing the file will trigger the archival
+            expected_archived.extend(expected_file);
+            file.close().unwrap();
+            assert_eq!(&*archived.lock().unwrap(), &expected_archived);
+        }
+    }
+
+    #[test]
+    fn test_archive_full_capacity_and_close_in_memory() {
+        test_archive_full_capacity_and_close(5, None)
+    }
+
+    #[test]
+    fn test_archive_full_capacity_and_close_in_database() {
+        let tmp_file = tempfile::Builder::new()
+            .make(|path| std::fs::File::create(path))
+            .unwrap();
+        test_archive_full_capacity_and_close(5, Some(tmp_file.path().to_path_buf()))
+    }
+
+    #[test]
+    fn test_archive_multiple_calls_in_memory() {
+        test_archive_multiple_calls(5, None)
+    }
+
+    #[test]
+    fn test_archive_multiple_calls_in_file() {
+        let tmp_file = tempfile::Builder::new()
+            .make(|path| std::fs::File::create(path))
+            .unwrap();
+        test_archive_multiple_calls(5, Some(tmp_file.path().to_path_buf()))
+    }
+
+    fn test_archive_one_capacity(file_path: Option<PathBuf>) {
+        // if the file have zero capacity, then all new entries should call
+        // the archiver
+        let mut file = if let Some(path) = file_path.clone() {
+            SqliteBackedHistory::with_file(path, None, None).unwrap()
+        } else {
+            SqliteBackedHistory::in_memory().unwrap()
+        };
+        let archived = Arc::new(Mutex::new(vec![]));
+        let moved_archived = Arc::clone(&archived);
+        let handler = move |mut conn: crate::SqliteBackedArchivalData, _all: bool| {
+            let consume_len = conn.number_of_entries();
+            assert_eq!(consume_len, 1);
+            moved_archived
+                .lock()
+                .unwrap()
+                .extend(conn.consume(consume_len).unwrap());
+            Ok(())
+        };
+        file.set_archival_handler(handler, 1);
+
+        let expected_results: Vec<String> = (0..5).map(|i| format!("line{i}")).collect();
+        for i in 0..expected_results.len() {
+            insert_and_test(
+                &mut file,
+                i.try_into().unwrap(),
+                &expected_results[i..i + 1],
+            );
+            assert_eq!(
+                &*archived
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .map(|x| x.command_line.to_string())
+                    .collect::<Vec<_>>(),
+                &expected_results[0..i]
+            );
+        }
+        file.close().unwrap();
+        assert_eq!(
+            &*archived
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|x| x.command_line.to_string())
+                .collect::<Vec<_>>(),
+            &expected_results[0..if file_path.is_some() { 4 } else { 5 }]
+        );
+    }
+
+    #[test]
+    fn test_archive_one_capacity_in_memory() {
+        test_archive_one_capacity(None);
+    }
+
+    #[test]
+    fn test_archive_one_capacity_in_file() {
+        let tmp_file = tempfile::Builder::new()
+            .make(|path| std::fs::File::create(path))
+            .unwrap();
+        test_archive_one_capacity(Some(tmp_file.path().to_path_buf()));
     }
 }
