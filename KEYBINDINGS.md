@@ -54,6 +54,7 @@ tables.
 | --- | --- |
 | `Up`, `Ctrl-p` | Move up in an open menu, otherwise move one line up, walking history backwards from the first line |
 | `Down`, `Ctrl-n` | Move down in an open menu, otherwise move one line down, walking history forwards from the last line |
+| `PageUp`, `PageDown` | Move one page up or down in an open menu, stopping at the first or last entry |
 | `Left` | Move left in an open menu, otherwise move one grapheme left |
 | `Right` | Accept a history hint, otherwise move right in an open menu, otherwise move one grapheme right |
 | `Ctrl-Left` | Move one word left |

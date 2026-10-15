@@ -124,6 +124,8 @@ struct IdeMenuDetails {
     pub space_right: u16,
     /// Corrected description offset, based on the available space
     pub description_offset: u16,
+    /// Number of suggestions that fit on screen, used as the page size
+    pub visible_items: u16,
 }
 
 /// Menu to present suggestions like similar to Ide completion menus
@@ -303,6 +305,22 @@ impl IdeMenu {
         } else {
             self.selected = self.completions.suggestions().len().saturating_sub(1) as u16;
         }
+    }
+
+    /// Move the selection one page down, stopping at the last suggestion
+    fn move_next_page(&mut self) {
+        let last = (self.completions.suggestions().len() as u16).saturating_sub(1);
+        self.selected = self
+            .selected
+            .saturating_add(self.working_details.visible_items.max(1))
+            .min(last);
+    }
+
+    /// Move the selection one page up, stopping at the first suggestion
+    fn move_previous_page(&mut self) {
+        self.selected = self
+            .selected
+            .saturating_sub(self.working_details.visible_items.max(1));
     }
 
     fn index(&self) -> usize {
@@ -569,10 +587,9 @@ impl IdeMenu {
             MenuEvent::Deactivate => {}
             MenuEvent::NextElement | MenuEvent::MoveDown => self.move_next(),
             MenuEvent::PreviousElement | MenuEvent::MoveUp => self.move_previous(),
-            MenuEvent::MoveLeft
-            | MenuEvent::MoveRight
-            | MenuEvent::PreviousPage
-            | MenuEvent::NextPage => {}
+            MenuEvent::NextPage => self.move_next_page(),
+            MenuEvent::PreviousPage => self.move_previous_page(),
+            MenuEvent::MoveLeft | MenuEvent::MoveRight => {}
         }
     }
 
@@ -614,6 +631,7 @@ impl IdeMenu {
             + self.working_details.description_width;
 
         let visible_items = available_lines.saturating_sub(border_width);
+        self.working_details.visible_items = visible_items;
         self.skip_values = scroll_offset(self.selected, self.skip_values, visible_items);
     }
 
@@ -1407,6 +1425,31 @@ mod tests {
     }
 
     #[test]
+    fn page_moves_stop_at_first_and_last_suggestion() {
+        let vs: Vec<String> = (0..10).map(|v| v.to_string()).collect();
+        let vs: Vec<_> = vs.iter().map(|v| v.as_ref()).collect();
+        let mut completer = FakeCompleter::new(&vs);
+        let mut menu = IdeMenu::default().with_name("testmenu");
+        menu.working_details.visible_items = 4;
+        let mut editor = Editor::default();
+        menu.update_values(&mut editor, &mut completer);
+
+        let mut selected = vec![];
+        for _ in 0..4 {
+            menu.move_next_page();
+            selected.push(menu.index());
+        }
+        assert_eq!(selected, [4, 8, 9, 9]);
+
+        selected.clear();
+        for _ in 0..4 {
+            menu.move_previous_page();
+            selected.push(menu.index());
+        }
+        assert_eq!(selected, [5, 1, 0, 0]);
+    }
+
+    #[test]
     fn test_menu_replace_backtick() {
         // https://github.com/nushell/nushell/issues/7885
         let mut completer = FakeCompleter::new(&["file1.txt", "file2.txt"]);
@@ -1449,6 +1492,7 @@ mod tests {
             space_left: 50,
             space_right: 50,
             description_offset: 50,
+            ..Default::default()
         };
         let mut editor = Editor::default();
         // backtick at the end of the line
@@ -1476,6 +1520,7 @@ mod tests {
             space_left: 50,
             space_right: 50,
             description_offset: 50,
+            ..Default::default()
         };
         let mut editor = Editor::default();
 
