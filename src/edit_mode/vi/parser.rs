@@ -787,10 +787,10 @@ mod tests {
     #[case(&['g', 'g'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Extend(MotionTarget::BufferEdge(Direction::Backward))])]))]
     #[case(&['G'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Extend(MotionTarget::BufferEdge(Direction::Forward))])]))]
     #[case(&['i'], ReedlineEvent::Multiple(vec![ReedlineEvent::Repaint]))]
-    #[case(&['p'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::PasteCutBufferAfter])]))]
+    #[case(&['p'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::ReplaceSelection { new_line_before: true }])]))]
     #[case(&['2', 'p'], ReedlineEvent::Multiple(vec![
-        ReedlineEvent::Edit(vec![EditCommand::PasteCutBufferAfter]),
-        ReedlineEvent::Edit(vec![EditCommand::PasteCutBufferAfter])
+        ReedlineEvent::Edit(vec![EditCommand::ReplaceSelection { new_line_before: true }]),
+        ReedlineEvent::Edit(vec![EditCommand::ReplaceSelection { new_line_before: true }])
         ]))]
     #[case(&['u'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Undo])]))]
     #[case(&['2', 'u'], ReedlineEvent::Multiple(vec![
