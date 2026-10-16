@@ -80,6 +80,9 @@ pub enum W {
     /// output-level invariant).
     #[cfg(test)]
     Capture(Vec<u8>),
+    /// Fails once after the given number of bytes, then captures later writes.
+    #[cfg(test)]
+    FailOnce(Vec<u8>, usize, bool),
 }
 
 impl W {
@@ -129,6 +132,19 @@ impl Write for W {
             W::Sink(w, _) => w.write(buf),
             #[cfg(test)]
             W::Capture(w) => w.write(buf),
+            #[cfg(test)]
+            W::FailOnce(w, remaining, failed) => {
+                if *failed {
+                    return w.write(buf);
+                }
+                if *remaining == 0 {
+                    *failed = true;
+                    return Err(std::io::Error::other("injected paint failure"));
+                }
+                let written = w.write(&buf[..buf.len().min(*remaining)])?;
+                *remaining -= written;
+                Ok(written)
+            }
         }
     }
 
@@ -139,6 +155,8 @@ impl Write for W {
             W::Sink(w, _) => w.flush(),
             #[cfg(test)]
             W::Capture(w) => w.flush(),
+            #[cfg(test)]
+            W::FailOnce(w, ..) => w.flush(),
         }
     }
 }
@@ -159,6 +177,8 @@ impl W {
             }
             #[cfg(test)]
             W::Capture(_) => Err(std::io::Error::other("no terminal attached")),
+            #[cfg(test)]
+            W::FailOnce(..) => Err(std::io::Error::other("no terminal attached")),
         }
     }
 }
@@ -781,79 +801,89 @@ impl Painter {
         let remaining_lines = self.remaining_lines();
         let required_lines = lines.required_lines(screen_width, false, menu);
 
-        // Marking the painter state as larger buffer to avoid animations
-        self.large_buffer = required_lines >= screen_height;
+        // Cursor queries above must finish before the frame begins. End the frame even if
+        // drawing fails, so a recoverable write error cannot leave updates suspended.
+        self.stdout.queue(terminal::BeginSynchronizedUpdate)?;
+        let painted = (|| -> Result<()> {
+            // Marking the painter state as larger buffer to avoid animations
+            self.large_buffer = required_lines >= screen_height;
 
-        // Moving the start position of the cursor based on the size of the required lines
-        if self.large_buffer || anchor_uninitialized {
-            for _ in 0..screen_height.saturating_sub(lines_before_cursor) {
-                self.stdout.queue(Print(&coerce_crlf("\n")))?;
+            // Moving the start position of the cursor based on the size of the required lines
+            if self.large_buffer || anchor_uninitialized {
+                for _ in 0..screen_height.saturating_sub(lines_before_cursor) {
+                    self.stdout.queue(Print(&coerce_crlf("\n")))?;
+                }
+                // The reset puts the prompt at row 0; cache is back in sync.
+                self.prompt_start_row.mark_verified(0);
+            } else if required_lines >= remaining_lines {
+                let extra = required_lines.saturating_sub(remaining_lines);
+                self.queue_universal_scroll(extra)?;
+                let scrolled_row = self.prompt_start_row.last_known_row().saturating_sub(extra);
+                self.prompt_start_row.mark_verified(scrolled_row);
             }
-            // The reset puts the prompt at row 0; cache is back in sync.
-            self.prompt_start_row.mark_verified(0);
-        } else if required_lines >= remaining_lines {
-            let extra = required_lines.saturating_sub(remaining_lines);
-            self.queue_universal_scroll(extra)?;
-            let scrolled_row = self.prompt_start_row.last_known_row().saturating_sub(extra);
-            self.prompt_start_row.mark_verified(scrolled_row);
-        }
 
-        // Moving the cursor to the start of the prompt
-        // from this position everything will be printed
-        let anchor_row = self.prompt_start_row.last_known_row();
-        self.clear_from_anchor(anchor_row)?;
+            // Moving the cursor to the start of the prompt
+            // from this position everything will be printed
+            let anchor_row = self.prompt_start_row.last_known_row();
+            self.clear_from_anchor(anchor_row)?;
 
-        let layout = self.compute_layout(lines, menu);
+            let layout = self.compute_layout(lines, menu);
 
-        let margin_cursor_row = if self.large_buffer {
-            self.print_large_buffer(prompt, lines, menu, use_ansi_coloring, &layout)?
-        } else {
-            self.print_small_buffer(prompt, lines, menu, use_ansi_coloring, &layout)?
-        };
-
-        self.exit_right_prompt = layout.right_prompt.map(|rp| {
-            let text = coerce_crlf(&lines.prompt_str_right);
-            let text = if use_ansi_coloring {
-                format!("{}{}", prompt.get_prompt_right_color().prefix(), text)
+            let margin_cursor_row = if self.large_buffer {
+                self.print_large_buffer(prompt, lines, menu, use_ansi_coloring, &layout)?
             } else {
-                text.into_owned()
+                self.print_small_buffer(prompt, lines, menu, use_ansi_coloring, &layout)?
             };
-            (text, rp)
-        });
 
-        self.last_layout = Some(layout);
+            self.exit_right_prompt = layout.right_prompt.map(|rp| {
+                let text = coerce_crlf(&lines.prompt_str_right);
+                let text = if use_ansi_coloring {
+                    format!("{}{}", prompt.get_prompt_right_color().prefix(), text)
+                } else {
+                    text.into_owned()
+                };
+                (text, rp)
+            });
 
-        // The last_required_lines is used to calculate safe range of the current prompt.
-        self.last_required_lines = required_lines;
+            self.last_layout = Some(layout);
 
-        let after_cursor = lines
-            .exit_after_cursor
-            .as_ref()
-            .unwrap_or(&lines.after_cursor);
-        self.after_cursor_lines = if !after_cursor.is_empty() {
-            Some(after_cursor.to_string())
-        } else {
-            None
-        };
+            // The last_required_lines is used to calculate safe range of the current prompt.
+            self.last_required_lines = required_lines;
 
-        // It has to happen *here*, after every print: the position
-        // `SavePosition` recorded is also the print head for the text after the
-        // cursor, so disambiguating it earlier either writes a glyph onto an
-        // unreserved row or overwrites the cell the next row's first grapheme
-        // belongs in. Nothing is drawn at this point, so a bare move disturbs
-        // neither.
-        self.queue_cursor_placement(margin_cursor_row)?;
+            let after_cursor = lines
+                .exit_after_cursor
+                .as_ref()
+                .unwrap_or(&lines.after_cursor);
+            self.after_cursor_lines = if !after_cursor.is_empty() {
+                Some(after_cursor.to_string())
+            } else {
+                None
+            };
 
-        let shape = cursor_config
-            .as_ref()
-            .and_then(|shapes| shapes.shape_for(&prompt_mode));
-        if let Some(shape) = shape {
-            self.stdout.queue(shape)?;
-        }
-        self.stdout.queue(cursor::Show)?;
-        self.cursor_hidden = false;
+            // It has to happen *here*, after every print: the position
+            // `SavePosition` recorded is also the print head for the text after the
+            // cursor, so disambiguating it earlier either writes a glyph onto an
+            // unreserved row or overwrites the cell the next row's first grapheme
+            // belongs in. Nothing is drawn at this point, so a bare move disturbs
+            // neither.
+            self.queue_cursor_placement(margin_cursor_row)?;
 
-        self.stdout.flush()
+            let shape = cursor_config
+                .as_ref()
+                .and_then(|shapes| shapes.shape_for(&prompt_mode));
+            if let Some(shape) = shape {
+                self.stdout.queue(shape)?;
+            }
+            self.stdout.queue(cursor::Show)?;
+            self.cursor_hidden = false;
+
+            Ok(())
+        })();
+        let ended = self
+            .stdout
+            .queue(terminal::EndSynchronizedUpdate)
+            .and_then(|stdout| stdout.flush());
+        painted.and(ended)
     }
 
     /// Captures the current screen layout into a [`RenderSnapshot`] that records
@@ -1944,7 +1974,7 @@ mod tests {
         let out = String::from_utf8_lossy(p.stdout.captured()).into_owned();
         let (exit, next) = out.split_at(exit_end);
         assert!(
-            exit.ends_with("\x1b[?25h\x1b[J\r\n"),
+            exit.ends_with("\x1b[?25h\x1b[?2026l\x1b[J\r\n"),
             "exit path changed what it leaves the cursor as: {exit:?}"
         );
         assert!(
@@ -1952,9 +1982,81 @@ mod tests {
             "anchor did not hide the cursor before anything else: {next:?}"
         );
         assert!(
-            next.matches("\x1b[?25h").count() == 1 && next.ends_with("\x1b[?25h"),
+            next.matches("\x1b[?25h").count() == 1 && next.ends_with("\x1b[?25h\x1b[?2026l"),
             "cursor shown between the exit newline and the end of the next paint: {next:?}"
         );
+    }
+
+    #[test]
+    fn large_repaint_is_bracketed_as_one_synchronized_frame() {
+        let mut painter = make_painter(1000, 20, false);
+        painter.stdout = W::capture();
+        let content = "x".repeat(9000); // Larger than the terminal writer's 8 KiB buffer.
+        let lines = make_lines(">", " ", "", &content, "");
+        painter
+            .repaint_buffer(
+                &TestPrompt,
+                &lines,
+                PromptEditMode::Default,
+                None,
+                false,
+                &None,
+            )
+            .expect("large repaint");
+
+        let output = painter.stdout.captured();
+        let start = b"\x1b[?2026h";
+        let end = b"\x1b[?2026l";
+        let starts = output
+            .windows(start.len())
+            .filter(|bytes| *bytes == start)
+            .count();
+        let ends = output
+            .windows(end.len())
+            .filter(|bytes| *bytes == end)
+            .count();
+        let first_content = output
+            .iter()
+            .position(|byte| *byte == b'x')
+            .expect("painted text");
+        let last_content = output
+            .iter()
+            .rposition(|byte| *byte == b'x')
+            .expect("painted text");
+        let frame_start = output
+            .windows(start.len())
+            .position(|bytes| bytes == start)
+            .expect("frame start");
+        let frame_end = output
+            .windows(end.len())
+            .position(|bytes| bytes == end)
+            .expect("frame end");
+        assert_eq!((starts, ends), (1, 1));
+        assert!(frame_start < first_content && last_content < frame_end);
+    }
+
+    #[test]
+    fn failed_repaint_ends_the_synchronized_frame() {
+        let mut painter = make_painter(80, 10, false);
+        painter.stdout = W::FailOnce(Vec::new(), 25, false);
+        let lines = make_lines(">", " ", "", "prompt", "");
+        assert!(painter
+            .repaint_buffer(
+                &TestPrompt,
+                &lines,
+                PromptEditMode::Default,
+                None,
+                false,
+                &None,
+            )
+            .is_err());
+
+        let W::FailOnce(output, _, failed) = &painter.stdout else {
+            panic!("test writer changed");
+        };
+        assert!(*failed);
+        assert!(output.windows(8).any(|bytes| bytes == b"\x1b[?2026h"));
+        assert!(output.ends_with(b"\x1b[?2026l"));
     }
 
     #[test]
