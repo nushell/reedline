@@ -1614,71 +1614,79 @@ impl Painter {
         self.hide_cursor()?;
 
         self.begin_frame()?;
+        let committed = (|| -> Result<()> {
+            self.clear_from_anchor(start)?;
 
-        self.clear_from_anchor(start)?;
+            // Count where the cursor lands. A line wider than the screen takes
+            // more than one row; an empty one still takes its `\r\n`. Once the
+            // cursor is on the last row a newline scrolls instead of moving,
+            // hence the cap.
+            let height = self.screen_height();
+            let max_row = height.saturating_sub(1);
+            let mut row = start;
+            // Whether the count ran past the last row, so the terminal scrolled.
+            // Landing exactly on it takes no scroll and holds at any real height.
+            let mut scrolled = false;
 
-        // Count where the cursor lands. A line wider than the screen takes
-        // more than one row; an empty one still takes its `\r\n`. Once the
-        // cursor is on the last row a newline scrolls instead of moving,
-        // hence the cap.
-        let height = self.screen_height();
-        let max_row = height.saturating_sub(1);
-        let mut row = start;
-        // Whether the count ran past the last row, so the terminal scrolled.
-        // Landing exactly on it takes no scroll and holds at any real height.
-        let mut scrolled = false;
+            for line in messages {
+                // max(1) on the width: a mid-resize terminal can report 0 (#842).
+                let rows = estimate_required_lines(&line, self.screen_width().max(1)).max(1);
+                let rows = u16::try_from(rows).unwrap_or(u16::MAX);
+                self.stdout.queue(Print(line))?.queue(Print("\r\n"))?;
+                // Saturating: a height grown to fit a measured row can sit near
+                // `u16::MAX` (#1236).
+                let next = row.saturating_add(rows);
+                scrolled |= next > max_row;
+                row = next.min(max_row);
+            }
 
-        for line in messages {
-            // max(1) on the width: a mid-resize terminal can report 0 (#842).
-            let rows = estimate_required_lines(&line, self.screen_width().max(1)).max(1);
-            let rows = u16::try_from(rows).unwrap_or(u16::MAX);
-            self.stdout.queue(Print(line))?.queue(Print("\r\n"))?;
-            // Saturating: a height grown to fit a measured row can sit near
-            // `u16::MAX` (#1236).
-            let next = row.saturating_add(rows);
-            scrolled |= next > max_row;
-            row = next.min(max_row);
-        }
-
-        let bottom_trusted = !scrolled || self.bottom_confirmed_at == Some(height);
-        if !start_verified || !bottom_trusted {
-            // Counted from a row nobody checked, or capped at a bottom
-            // nobody checked, so ask. Flushed first, so the answer is the
-            // cursor after the messages, not before them.
-            self.end_frame()?;
-            self.stdout.flush()?;
-            self.prompt_start_row = match self.measure_cursor_position() {
-                Ok(Some((_, actual))) => {
-                    // A scroll that ends on the counted last row means it is
-                    // the real one; later commits can trust the cap. Lower
-                    // down, the measure has already grown the height.
-                    if scrolled && actual == max_row {
-                        self.bottom_confirmed_at = Some(height);
+            let bottom_trusted = !scrolled || self.bottom_confirmed_at == Some(height);
+            if !start_verified || !bottom_trusted {
+                // Counted from a row nobody checked, or capped at a bottom
+                // nobody checked, so ask. Flushed first, so the answer is the
+                // cursor after the messages, not before them.
+                self.end_frame()?;
+                self.stdout.flush()?;
+                self.prompt_start_row = match self.measure_cursor_position() {
+                    Ok(Some((_, actual))) => {
+                        // A scroll that ends on the counted last row means it is
+                        // the real one; later commits can trust the cap. Lower
+                        // down, the measure has already grown the height.
+                        if scrolled && actual == max_row {
+                            self.bottom_confirmed_at = Some(height);
+                        }
+                        PromptStartRow::Verified(actual)
                     }
-                    PromptStartRow::Verified(actual)
-                }
-                // No answer: the count is all there is. `Stale` keeps the
-                // next paint checking it, which is safe now that the bytes
-                // have gone out.
-                Ok(None) | Err(_) => PromptStartRow::Stale(row),
-            };
-            return Ok(());
-        }
+                    // No answer: the count is all there is. `Stale` keeps the
+                    // next paint checking it, which is safe now that the bytes
+                    // have gone out.
+                    Ok(None) | Err(_) => PromptStartRow::Stale(row),
+                };
+                return Ok(());
+            }
 
-        // The count is the anchor, with no query to check it (see above for
-        // why there can be none). It measures the text with the same widths
-        // the painter uses for the prompt and buffer, escape sequences
-        // stripped, so it is as good as every other row the painter draws.
-        // A tab or a message's own cursor movement still fools it: the
-        // terminal moves where the count sees zero width.
-        //
-        // `Verified`, not `Stale`: the lines above are only queued, so the
-        // terminal's cursor has not moved yet. A `Stale` row would make the
-        // next paint check it against that still-earlier cursor, read it as
-        // the prompt having scrolled off the top, and re-anchor by printing a
-        // whole screen of newlines, wiping the display (#1005).
-        self.prompt_start_row = PromptStartRow::Verified(row);
-        Ok(())
+            // The count is the anchor, with no query to check it (see above for
+            // why there can be none). It measures the text with the same widths
+            // the painter uses for the prompt and buffer, escape sequences
+            // stripped, so it is as good as every other row the painter draws.
+            // A tab or a message's own cursor movement still fools it: the
+            // terminal moves where the count sees zero width.
+            //
+            // `Verified`, not `Stale`: the lines above are only queued, so the
+            // terminal's cursor has not moved yet. A `Stale` row would make the
+            // next paint check it against that still-earlier cursor, read it as
+            // the prompt having scrolled off the top, and re-anchor by printing a
+            // whole screen of newlines, wiping the display (#1005).
+            self.prompt_start_row = PromptStartRow::Verified(row);
+            Ok(())
+        })();
+        if committed.is_err() {
+            // A write failed with the frame open, and no repaint follows to
+            // close it: end it here, or the screen stays held until the
+            // terminal's timeout. The first error is the one to report.
+            let _ = self.end_frame().and_then(|()| self.stdout.flush());
+        }
+        committed
     }
 
     /// Queue scroll of `num` lines to `self.stdout`.
@@ -2480,6 +2488,24 @@ mod tests {
 
         assert!(out.ends_with("\x1b[?2026l"), "{out:?}");
         assert_eq!(p.prompt_start_row, PromptStartRow::Stale(6));
+    }
+
+    /// A write that fails mid-commit leaves no repaint to close the frame, so
+    /// the commit closes it itself rather than hold the screen.
+    #[test]
+    fn a_failed_external_message_commit_ends_its_frame() {
+        let mut p = capturing_painter_anchored_at(5);
+        // Room for the cursor hide and the frame's start, not the erase.
+        p.stdout = W::FailOnce(Vec::new(), 16, false);
+
+        assert!(p.print_external_message(vec!["one".into()]).is_err());
+
+        let W::FailOnce(output, _, failed) = &p.stdout else {
+            panic!("test writer changed");
+        };
+        assert!(*failed);
+        assert!(output.windows(8).any(|bytes| bytes == b"\x1b[?2026h"));
+        assert!(output.ends_with(b"\x1b[?2026l"), "{output:?}");
     }
 
     /// A painter anchored at `row` whose bytes a test can read back.
