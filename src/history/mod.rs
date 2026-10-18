@@ -13,7 +13,8 @@ pub use base::{
 };
 pub use cursor::HistoryCursor;
 pub use item::{
-    HistoryItem, HistoryItemExtraInfo, HistoryItemId, HistorySessionId, IgnoreAllExtraInfo,
+    HistoryItem, HistoryItemExtraInfo, HistoryItemId, HistorySessionId, HistoryTimestamp,
+    IgnoreAllExtraInfo,
 };
 
 pub use file_backed::{FileBackedHistory, HISTORY_SIZE};
