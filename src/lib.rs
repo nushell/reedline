@@ -304,13 +304,13 @@ mod result;
 pub use result::{ReedlineError, ReedlineErrorVariants, Result};
 
 mod history;
-#[cfg(feature = "_sqlite")]
-pub use history::{SqliteBackedHistory, SqliteBackedArchivalData, SqliteBackedArchivalHandler};
 pub use history::{
-    CommandLineSearch, FileBackedHistory, History, HistoryItem, HistoryItemExtraInfo,
-    HistoryItemId, HistoryNavigationQuery, HistorySessionId, IgnoreAllExtraInfo, JsonFilterValue,
-    SearchDirection, SearchFilter, SearchQuery, HISTORY_SIZE, FileBackedArchivalHandler,
+    CommandLineSearch, FileBackedArchivalHandler, FileBackedHistory, History, HistoryItem,
+    HistoryItemExtraInfo, HistoryItemId, HistoryNavigationQuery, HistorySessionId,
+    IgnoreAllExtraInfo, JsonFilterValue, SearchDirection, SearchFilter, SearchQuery, HISTORY_SIZE,
 };
+#[cfg(feature = "_sqlite")]
+pub use history::{SqliteBackedArchivalData, SqliteBackedArchivalHandler, SqliteBackedHistory};
 
 mod prompt;
 pub use prompt::PromptHelixMode;

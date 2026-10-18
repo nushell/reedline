@@ -429,7 +429,10 @@ mod test {
         Ok(())
     }
 
-    fn clear_history_test(open_history: fn(usize) -> Box<dyn History>, check_max: bool) -> Result<()> {
+    fn clear_history_test(
+        open_history: fn(usize) -> Box<dyn History>,
+        check_max: bool,
+    ) -> Result<()> {
         // create history, add a few entries
         let mut history = open_history(4);
         history.save(create_item(1, "/home/me", "cd ~/Downloads", 0))?; // 1

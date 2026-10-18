@@ -155,7 +155,8 @@ fn save_with_extra_conn<E: HistoryItemExtraInfo>(
 impl History for SqliteBackedHistory {
     fn save(&mut self, entry: HistoryItem) -> Result<HistoryItem> {
         if self.archival_handler.is_some() {
-            let num_entries = self.count_all()?;            let archival_data = self.archival_handler.as_mut().unwrap();
+            let num_entries = self.count_all()?;
+            let archival_data = self.archival_handler.as_mut().unwrap();
             if num_entries >= archival_data.trigger_len {
                 let archival = SqliteBackedArchivalData::new(&self.db, num_entries)?;
                 archival_data.handler.archive(archival)?;
