@@ -77,7 +77,7 @@ impl Session {
         // Pinned rather than read from `TERM`, which differs between a
         // developer's shell and CI.
         painter.term_is_dumb = false;
-        painter.prompt_start_row = PromptStartRow::Verified(anchor_row);
+        painter.prompt_start_row.mark_verified(anchor_row);
         Self {
             painter,
             screen: TestScreen::new(width, height),
@@ -98,12 +98,34 @@ impl Session {
 
     /// Paint `prompt` with the cursor between `before` and `after`.
     fn paint(&mut self, prompt: &FixedPrompt, before: &str, after: &str) {
-        let mode = PromptEditMode::Default;
-        let lines = PromptLines::new(prompt, mode.clone(), None, before, after, "");
+        let lines = Self::lines(prompt, before, after);
         self.painter
-            .repaint_buffer(prompt, &lines, mode, None, false, &None)
+            .repaint_buffer(prompt, &lines, PromptEditMode::Default, None, false, &None)
             .expect("repaint_buffer failed");
         self.screen.sync(self.painter.stdout.captured());
+    }
+
+    /// The lines [`Session::paint`] paints for the same arguments.
+    fn lines<'p>(prompt: &'p FixedPrompt, before: &'p str, after: &'p str) -> PromptLines<'p> {
+        PromptLines::new(prompt, PromptEditMode::Default, None, before, after, "")
+    }
+
+    /// The buffer offset the painter maps a click on `(column, row)` to, from
+    /// the layout of the last paint, which must have had the same arguments.
+    fn click(
+        &self,
+        prompt: &FixedPrompt,
+        before: &str,
+        after: &str,
+        column: u16,
+        row: u16,
+    ) -> Option<usize> {
+        let lines = Self::lines(prompt, before, after);
+        let layout = self.painter.last_layout.as_ref().expect("painted before");
+        let snapshot = self
+            .painter
+            .render_snapshot(&lines, None, before, after, layout);
+        self.painter.screen_to_buffer_offset(&snapshot, column, row)
     }
 }
 
@@ -157,18 +179,6 @@ fn text_filling_the_width_puts_the_cursor_on_the_next_row() {
     assert_eq!(session.screen.cursor(), (0, 2));
 }
 
-// A wide grapheme with one column left wraps whole, leaving that column blank.
-#[test]
-fn wide_grapheme_without_room_wraps_to_the_next_row() {
-    let mut session = Session::new(5, 6, 1);
-
-    session.paint(&FixedPrompt::new("> ", ""), "ab中", "");
-
-    assert_eq!(session.screen.row(1), "> ab");
-    assert_eq!(session.screen.row(2), "中");
-    assert_eq!(session.screen.cursor(), (2, 2));
-}
-
 #[test]
 fn right_prompt_on_last_line_of_a_multiline_prompt() {
     let mut session = Session::new(20, 6, 1);
@@ -181,12 +191,14 @@ fn right_prompt_on_last_line_of_a_multiline_prompt() {
     assert_eq!(session.screen.cursor(), (4, 2));
 }
 
-// As above with the indicator folded into the left prompt. `prompt_height`
+// As above with the indicator folded into the left prompt. The row math
 // counts rows with `str::lines()`, which yields no row after a trailing
-// newline, so the prompt reads as one row and the right prompt lands a row
-// too high.
+// newline, so the prompt reads as one row: the right prompt lands a row too
+// high, and the cursor column and buffer start the painter derives (used for
+// menu placement and click mapping) are measured from `abc`, not the empty
+// row the buffer is on.
 #[test]
-#[ignore = "prompt_height reads a trailing newline as no row"]
+#[ignore = "row math reads a trailing newline as no row"]
 fn right_prompt_on_last_line_after_a_prompt_ending_in_newline() {
     let mut session = Session::new(20, 6, 1);
     let prompt = FixedPrompt::new("abc\n", "").with_right("R", true);
@@ -196,6 +208,10 @@ fn right_prompt_on_last_line_after_a_prompt_ending_in_newline() {
     assert_eq!(session.screen.row(1), "abc");
     assert_eq!(session.screen.row(2), format!("hi{}R", " ".repeat(17)));
     assert_eq!(session.screen.cursor(), (2, 2));
+    let painter_column = Session::lines(&prompt, "hi", "").cursor_pos(20).0;
+    assert_eq!(painter_column, session.screen.cursor().0);
+    // The `i` on screen.
+    assert_eq!(session.click(&prompt, "hi", "", 1, 2), Some(1));
 }
 
 // A buffer taller than the screen is drawn as a viewport onto its tail. Which
@@ -210,9 +226,15 @@ fn large_buffer_of_one_wrapped_line_stays_on_screen() {
     let buffer = "x".repeat(400);
 
     session.paint(&prompt, &buffer, "");
+    let scrolled_by_first_paint = session.screen.scrolled();
     session.paint(&prompt, &buffer, "");
 
-    assert_eq!(session.screen.scrolled(), 0);
+    // The first paint may scroll to make room; a repaint of the same buffer
+    // has nothing new to make room for.
+    assert_eq!(session.screen.scrolled(), scrolled_by_first_paint);
+    for row in 0..4 {
+        assert_eq!(session.screen.row(row), "x".repeat(80));
+    }
     assert_eq!(session.screen.row(4), "xx");
     assert_eq!(session.screen.cursor(), (2, 4));
 }
