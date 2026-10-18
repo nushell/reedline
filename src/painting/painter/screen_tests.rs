@@ -264,6 +264,29 @@ fn external_messages_commit_above_the_prompt_and_leave_nothing_behind() {
     );
 }
 
+// An idle callback had the tty and scrolled the prompt up, leaving the cursor
+// on its new row. Messages arriving next start where the repaint will find
+// the block, so the scrolled copy is replaced, not left above them.
+#[test]
+fn external_messages_after_an_idle_callback_scrolled_the_prompt() {
+    let mut session = Session::new(20, 10, 5);
+    let prompt = FixedPrompt::new("> ", "");
+    session.paint(&prompt, "abc", "");
+
+    // Three rows up, the cursor on the prompt's row 2.
+    session.host_output(b"\x1b[3S\x1b[3;1H");
+    // What the engine does after every idle callback.
+    session.painter.invalidate_prompt_start_row();
+    session.commit(&["msg"]);
+    session.paint(&prompt, "abc", "");
+
+    assert_eq!(session.screen.rows()[..5], ["", "", "msg", "> abc", ""]);
+    assert_eq!(
+        session.painter.prompt_start_row,
+        PromptStartRow::Verified(3)
+    );
+}
+
 // A message wider than the screen takes the rows it wraps onto, and the
 // prompt goes below all of them.
 #[test]

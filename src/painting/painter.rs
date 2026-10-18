@@ -511,6 +511,31 @@ impl Painter {
         Ok(position)
     }
 
+    /// Reconcile a stale anchor: something yielded the tty since the last paint
+    /// (a resize, an external completer, `$EDITOR`, an idle callback) and may
+    /// have scrolled our content. Both paths that draw from the anchor run
+    /// this first, so they agree on where the block starts. It queries the
+    /// cursor, so it has to run before a synchronized frame opens.
+    fn reconcile_stale_anchor(&mut self) {
+        if let PromptStartRow::Stale(row) = self.prompt_start_row {
+            // Cursor above the cached row => content scrolled up while the tty
+            // was yielded. Re-anchor to the cursor (ground truth) rather than
+            // homing to row 0, which would yank the prompt to the top. The `+1`
+            // allows for output that left the cursor on the prompt row.
+            // See nushell/reedline#1130.
+            let anchor = match self.measure_cursor_position() {
+                Ok(Some((_, cursor_row))) if cursor_row + 1 < row => cursor_row,
+                _ => row,
+            };
+            // The measure above grew the height to fit the row it read, but the
+            // anchor kept here can be further down than that. Grow to fit the
+            // one actually committed to, or `remaining_lines` reads 0 and the
+            // paint scrolls for no reason -- the bug this all exists to remove.
+            self.grow_screen_height_to_fit_row(anchor);
+            self.prompt_start_row.mark_verified(anchor);
+        }
+    }
+
     /// Raises the believed screen height so that `row` is on screen.
     fn grow_screen_height_to_fit_row(&mut self, row: u16) {
         self.terminal_size.1 = self.terminal_size.1.max(row.saturating_add(1));
@@ -815,26 +840,7 @@ impl Painter {
         // Calibrate prompt start position for multi-line prompt/content before cursor. Check issue #841/#848/#930
         self.prompt_start_row.resolve_resize(lines_before_cursor);
 
-        // Reconcile a stale anchor: something yielded the tty since the last paint
-        // (a resize, an external completer, `$EDITOR`) and may have scrolled our
-        // content.
-        if let PromptStartRow::Stale(row) = self.prompt_start_row {
-            // Cursor above the cached row => content scrolled up while the tty
-            // was yielded. Re-anchor to the cursor (ground truth) rather than
-            // homing to row 0, which would yank the prompt to the top. The `+1`
-            // allows for output that left the cursor on the prompt row.
-            // See nushell/reedline#1130.
-            let anchor = match self.measure_cursor_position() {
-                Ok(Some((_, cursor_row))) if cursor_row + 1 < row => cursor_row,
-                _ => row,
-            };
-            // The measure above grew the height to fit the row it read, but the
-            // anchor kept here can be further down than that. Grow to fit the
-            // one actually committed to, or `remaining_lines` reads 0 and this
-            // paint scrolls for no reason -- the bug this all exists to remove.
-            self.grow_screen_height_to_fit_row(anchor);
-            self.prompt_start_row.mark_verified(anchor);
-        }
+        self.reconcile_stale_anchor();
 
         // Unreachable in normal flow (initialize_prompt_position runs first);
         // in release, home to row 0 rather than draw over the content there.
@@ -1576,8 +1582,9 @@ impl Painter {
     /// Should the repaint never come, that same timeout ends the frame.
     ///
     /// That holds only from a verified anchor: a count is only as good as
-    /// the row it starts from. From any other (an idle callback had the tty,
-    /// a resize is unresolved, the first query went unanswered) the commit
+    /// the row it starts from. A `Stale` one, as an idle callback leaves it,
+    /// is reconciled first, the same way the repaint would. From any other
+    /// (a resize is unresolved, the first query went unanswered) the commit
     /// ends its frame, flushes and asks instead, and pays the second frame.
     /// So does a commit that scrolls past the last row of a height not yet
     /// confirmed as the real one: past the reported bottom the count only
@@ -1590,6 +1597,10 @@ impl Painter {
     /// disagreed with the painter whenever the left prompt wrapped a line,
     /// and left a copy of the prompt row on screen per batch.
     pub(crate) fn print_external_message(&mut self, messages: Vec<String>) -> Result<()> {
+        // An idle callback leaves the anchor `Stale` on every poll. Check it
+        // the way the repaint after this will, so the messages start where
+        // that repaint draws the block, and before the frame opens.
+        self.reconcile_stale_anchor();
         let start = self.prompt_start_row.last_known_row();
         let start_verified = matches!(self.prompt_start_row, PromptStartRow::Verified(_));
         // Invalidate before the first queued byte: a `?` early-return below
@@ -2437,16 +2448,15 @@ mod tests {
         assert_eq!(painter.prompt_start_row, PromptStartRow::Verified(3));
     }
 
-    /// From an anchor nobody checked, such as the one an idle callback
-    /// leaves, the count would inherit its error, so the commit asks. The
-    /// answer wins, and it can also raise a height the terminal
-    /// under-reported.
+    /// From an anchor nobody checked, such as an unresolved resize, the
+    /// count would inherit its error, so the commit asks. The answer wins,
+    /// and it can also raise a height the terminal under-reported.
     #[test]
-    fn external_messages_from_a_stale_anchor_ask_for_the_row() {
+    fn external_messages_from_an_unchecked_anchor_ask_for_the_row() {
         let mut painter = Painter::new(W::sink_with_cursor_at((0, 40)));
         painter.terminal_size = (80, 10);
         painter.term_is_dumb = false;
-        painter.prompt_start_row = PromptStartRow::Stale(2);
+        painter.prompt_start_row = PromptStartRow::Resized { cursor_row: 2 };
 
         painter
             .print_external_message(vec!["msg".to_string()])
@@ -2458,11 +2468,12 @@ mod tests {
 
     /// The fallback closes its own frame, since the query after it has to
     /// get through, and with no answer keeps the count but leaves it `Stale`
-    /// for the next paint to check.
+    /// for the next paint to check. An unresolved resize is the anchor the
+    /// reconcile up front cannot settle.
     #[test]
-    fn external_messages_from_a_stale_anchor_close_their_frame() {
+    fn external_messages_from_an_unresolved_anchor_close_their_frame() {
         let mut p = capturing_painter_anchored_at(5);
-        p.prompt_start_row = PromptStartRow::Stale(5);
+        p.prompt_start_row = PromptStartRow::Resized { cursor_row: 5 };
         p.print_external_message(vec!["one".into()])
             .expect("print_external_message failed");
         let out = String::from_utf8_lossy(p.stdout.captured()).into_owned();
