@@ -4,10 +4,10 @@ use super::{
     IgnoreAllExtraInfo,
 };
 use crate::{
+    history::HistoryTimestamp,
     result::{ReedlineError, ReedlineErrorVariants},
     Result,
 };
-use chrono::{TimeZone, Utc};
 use rusqlite::{named_params, params, Connection, ToSql, TransactionBehavior};
 use std::{path::PathBuf, time::Duration};
 const SQLITE_APPLICATION_ID: i32 = 1151497937;
@@ -21,7 +21,7 @@ const SQLITE_APPLICATION_ID: i32 = 1151497937;
 pub struct SqliteBackedHistory {
     db: rusqlite::Connection,
     session: Option<HistorySessionId>,
-    session_timestamp: Option<chrono::DateTime<Utc>>,
+    session_timestamp: Option<HistoryTimestamp>,
     archival_handler: Option<ArchivalHandlerData>,
 }
 
@@ -59,12 +59,9 @@ fn deserialize_history_item<E: HistoryItemExtraInfo>(
     let x: Option<String> = row.get("more_info")?;
     Ok(HistoryItem {
         id: Some(HistoryItemId::new(row.get("id")?)),
-        start_timestamp: row.get::<&str, Option<i64>>("start_timestamp")?.map(|e| {
-            match Utc.timestamp_millis_opt(e) {
-                chrono::LocalResult::Single(e) => e,
-                _ => chrono::Utc::now(),
-            }
-        }),
+        start_timestamp: row
+            .get::<&str, Option<i64>>("start_timestamp")?
+            .map(HistoryTimestamp::from_millis),
         command_line: row.get("command_line")?,
         session_id: row
             .get::<&str, Option<i64>>("session_id")?
@@ -136,7 +133,7 @@ fn save_with_extra_conn<E: HistoryItemExtraInfo>(
         .query_row(
             named_params! {
                 ":id": entry.id.map(|id| id.0),
-                ":start_timestamp": entry.start_timestamp.map(|e| e.timestamp_millis()),
+                ":start_timestamp": entry.start_timestamp.map(HistoryTimestamp::to_millis),
                 ":command_line": entry.command_line,
                 ":session_id": entry.session_id.map(|e| e.0),
                 ":hostname": entry.hostname,
@@ -290,7 +287,7 @@ impl SqliteBackedHistory {
     pub fn with_file(
         file: PathBuf,
         session: Option<HistorySessionId>,
-        session_timestamp: Option<chrono::DateTime<Utc>>,
+        session_timestamp: Option<HistoryTimestamp>,
     ) -> Result<Self> {
         if let Some(base_dir) = file.parent() {
             std::fs::create_dir_all(base_dir).map_err(|e| {
@@ -312,7 +309,7 @@ impl SqliteBackedHistory {
     fn from_connection(
         db: Connection,
         session: Option<HistorySessionId>,
-        session_timestamp: Option<chrono::DateTime<Utc>>,
+        session_timestamp: Option<HistoryTimestamp>,
     ) -> Result<Self> {
         // https://phiresky.github.io/blog/2020/sqlite-performance-tuning/
         db.pragma_update(None, "journal_mode", "wal")
@@ -399,7 +396,7 @@ impl SqliteBackedHistory {
             } else {
                 "start_timestamp < :start_time"
             });
-            params.push((":start_time", Box::new(start.timestamp_millis())));
+            params.push((":start_time", Box::new(start.to_millis())));
         }
         if let Some(end) = query.end_time {
             wheres.push(if is_asc {
@@ -407,7 +404,7 @@ impl SqliteBackedHistory {
             } else {
                 ":end_time <= start_timestamp"
             });
-            params.push((":end_time", Box::new(end.timestamp_millis())));
+            params.push((":end_time", Box::new(end.to_millis())));
         }
         if let Some(start) = query.start_id {
             wheres.push(if is_asc {
@@ -482,7 +479,7 @@ impl SqliteBackedHistory {
             params.push((":session_id", Box::new(session_id)));
             params.push((
                 ":session_timestamp",
-                Box::new(session_timestamp.timestamp_millis()),
+                Box::new(session_timestamp.to_millis()),
             ));
         }
 
@@ -601,7 +598,7 @@ impl SqliteBackedHistory {
             .map_err(map_sqlite_err)?
             .execute(named_params! {
                 ":id": entry.id.map(|id| id.0),
-                ":start_timestamp": entry.start_timestamp.map(|e| e.timestamp_millis()),
+                ":start_timestamp": entry.start_timestamp.map(HistoryTimestamp::to_millis),
                 ":command_line": entry.command_line,
                 ":session_id": entry.session_id.map(|e| e.0),
                 ":hostname": entry.hostname,
@@ -804,18 +801,17 @@ mod tests {
     #[test]
     fn search_by_time_range_uses_existing_column() -> crate::Result<()> {
         use crate::history::base::SearchQuery;
-        use chrono::{TimeZone, Utc};
 
         let mut db = SqliteBackedHistory::in_memory()?;
         for (cmd, secs) in [("early", 100), ("middle", 200), ("late", 300)] {
             let mut item = HistoryItem::from_command_line(cmd);
-            item.start_timestamp = Some(Utc.timestamp_opt(secs, 0).unwrap());
+            item.start_timestamp = Some(HistoryTimestamp::from_millis(secs * 1000));
             db.save(item)?;
         }
 
         let query = || SearchQuery {
-            start_time: Some(Utc.timestamp_opt(150, 0).unwrap()),
-            end_time: Some(Utc.timestamp_opt(250, 0).unwrap()),
+            start_time: Some(HistoryTimestamp::from_millis(150 * 1000)),
+            end_time: Some(HistoryTimestamp::from_millis(250 * 1000)),
             ..SearchQuery::everything(SearchDirection::Forward, None)
         };
         let found: Vec<String> = db
@@ -825,6 +821,29 @@ mod tests {
             .collect();
         assert_eq!(found, vec!["middle".to_string()]);
         assert_eq!(db.count(query())?, 1);
+        Ok(())
+    }
+
+    /// The column holds the millis as they are. `i64::MIN`/`MAX` lie outside
+    /// any calendar crate's range, where reading back used to swap in "now".
+    #[cfg(feature = "_sqlite")]
+    #[rstest::rstest]
+    #[case::pre_epoch(-86_400_000)]
+    #[case::epoch(0)]
+    #[case::recent(1_760_000_000_123)]
+    #[case::min(i64::MIN)]
+    #[case::max(i64::MAX)]
+    fn start_timestamp_roundtrips(#[case] millis: i64) -> crate::Result<()> {
+        let mut db = SqliteBackedHistory::in_memory()?;
+        let mut item = HistoryItem::from_command_line("ls");
+        item.start_timestamp = Some(HistoryTimestamp::from_millis(millis));
+        let saved = db.save(item)?;
+
+        let loaded = db.load(saved.id.unwrap())?;
+        assert_eq!(
+            loaded.start_timestamp,
+            Some(HistoryTimestamp::from_millis(millis))
+        );
         Ok(())
     }
 

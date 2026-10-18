@@ -16,9 +16,11 @@ use {
 
 #[cfg(not(feature = "_sqlite"))]
 use reedline::FileBackedHistory;
+#[cfg(feature = "_sqlite")]
+use reedline::HistoryTimestamp;
 use reedline::{
     default_helix_insert_keybindings, default_helix_normal_keybindings,
-    default_helix_select_keybindings, Helix,
+    default_helix_select_keybindings, DefaultPromptSegment, Helix,
 };
 use reedline::{CursorConfig, MenuBuilder, OutputMode};
 use reedline::{PromptEditMode, PromptHelixMode, PromptViMode};
@@ -43,7 +45,7 @@ fn main() -> reedline::Result<()> {
         reedline::SqliteBackedHistory::with_file(
             "history.sqlite3".into(),
             history_session_id,
-            Some(chrono::Utc::now()),
+            Some(HistoryTimestamp::now()),
         )
         .map_err(std::io::Error::other)?,
     );
@@ -91,6 +93,15 @@ fn main() -> reedline::Result<()> {
         hx_select: Some(SetCursorStyle::SteadyUnderScore),
     };
 
+    let prompt = DefaultPrompt::new(
+        DefaultPromptSegment::WorkingDirectory,
+        DefaultPromptSegment::Dynamic(|| {
+            jiff::Zoned::now()
+                .strftime("%m/%d/%Y %I:%M:%S %p")
+                .to_string()
+        }),
+    );
+
     let mut line_editor = Reedline::create()
         .with_history_session_id(history_session_id)
         .with_history(history)
@@ -137,8 +148,6 @@ fn main() -> reedline::Result<()> {
     command.arg(&temp_file);
     line_editor = line_editor.with_buffer_editor(command, temp_file);
 
-    let prompt = DefaultPrompt::default();
-
     loop {
         let sig = line_editor.read_line(&prompt);
 
@@ -154,7 +163,7 @@ fn main() -> reedline::Result<()> {
                 if !buffer.is_empty() {
                     line_editor
                         .update_last_command_context(&|mut c: reedline::HistoryItem| {
-                            c.start_timestamp = Some(chrono::Utc::now());
+                            c.start_timestamp = Some(HistoryTimestamp::now());
                             c.hostname =
                                 Some(gethostname::gethostname().to_string_lossy().to_string());
                             c.cwd = std::env::current_dir()

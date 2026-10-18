@@ -13,10 +13,7 @@ use crate::prompt::base::PromptHelixMode;
 use crate::utils::environment::var_os;
 use crate::{Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, PromptViMode};
 
-use {
-    chrono::Local,
-    std::{borrow::Cow, env},
-};
+use std::{borrow::Cow, env};
 
 /// Emacs and [`PromptEditMode::Default`], and the glyph the modal insert modes
 /// share. See the module docs for the contract every indicator here keeps.
@@ -53,8 +50,8 @@ pub enum DefaultPromptSegment {
     Basic(String),
     /// The path of the current working directory
     WorkingDirectory,
-    /// The current date and time
-    CurrentDateTime,
+    /// Rendered anew on every repaint, e.g. a clock from the datetime crate of your choice
+    Dynamic(fn() -> String),
     /// An empty prompt segment
     Empty,
 }
@@ -69,7 +66,7 @@ fn render_prompt_segment(prompt: &DefaultPromptSegment) -> Cow<'_, str> {
             let prompt = get_working_dir().unwrap_or_else(|_| String::from("no path"));
             Cow::Owned(prompt)
         }
-        DefaultPromptSegment::CurrentDateTime => Cow::Owned(get_now()),
+        DefaultPromptSegment::Dynamic(f) => Cow::Owned(f()),
         DefaultPromptSegment::Empty => Cow::Borrowed(""),
     }
 }
@@ -125,7 +122,7 @@ impl Default for DefaultPrompt {
     fn default() -> Self {
         DefaultPrompt {
             left_prompt: DefaultPromptSegment::WorkingDirectory,
-            right_prompt: DefaultPromptSegment::CurrentDateTime,
+            right_prompt: DefaultPromptSegment::Empty,
         }
     }
 }
@@ -169,21 +166,19 @@ fn format_working_dir(cwd: &std::path::Path, home: Option<&std::path::Path>) -> 
     cwd.display().to_string()
 }
 
-fn get_now() -> String {
-    let now = Local::now();
-    format!("{:>}", now.format("%m/%d/%Y %I:%M:%S %p"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        format_working_dir, DefaultPrompt, DEFAULT_INSERT_PROMPT_INDICATOR,
+        format_working_dir, DefaultPrompt, DefaultPromptSegment, DEFAULT_INSERT_PROMPT_INDICATOR,
         DEFAULT_MULTILINE_INDICATOR, DEFAULT_NORMAL_PROMPT_INDICATOR, DEFAULT_PROMPT_INDICATOR,
         DEFAULT_SELECT_PROMPT_INDICATOR,
     };
     use crate::{Prompt, PromptEditMode, PromptHelixMode, PromptViMode};
     use rstest::rstest;
-    use std::path::{Path, PathBuf};
+    use std::{
+        path::{Path, PathBuf},
+        sync::atomic::{AtomicUsize, Ordering},
+    };
     use unicode_width::UnicodeWidthStr;
 
     /// The whole point of the assignment, pinned as literals rather than as the
@@ -294,5 +289,19 @@ mod tests {
     fn missing_home_leaves_path_untouched() {
         let cwd = PathBuf::from(r"C:\Windows\System32");
         assert_eq!(format_working_dir(&cwd, None), r"C:\Windows\System32");
+    }
+
+    #[test]
+    fn dynamic_segment_is_called_on_every_render() {
+        static CALLS: AtomicUsize = AtomicUsize::new(0);
+        let prompt = DefaultPrompt::new(
+            DefaultPromptSegment::Empty,
+            DefaultPromptSegment::Dynamic(|| {
+                (CALLS.fetch_add(1, Ordering::Relaxed) + 1).to_string()
+            }),
+        );
+
+        assert_eq!(prompt.render_prompt_right(), "1");
+        assert_eq!(prompt.render_prompt_right(), "2");
     }
 }

@@ -282,6 +282,11 @@ pub(crate) fn available_lines(painter: &Painter, min_rows: u16, max_lines: u16) 
 
 /// Scroll a fixed window so the selected row stays inside
 pub(crate) fn scroll_offset(selected: u16, current: u16, window: u16) -> u16 {
+    scroll_offset_usize(selected.into(), current.into(), window.into()).min(u16::MAX.into()) as u16
+}
+
+/// The same viewport calculation for menus whose choices outnumber terminal coordinates.
+pub(crate) fn scroll_offset_usize(selected: usize, current: usize, window: usize) -> usize {
     if selected <= current {
         // Selection is above the visible area, scroll up
         selected

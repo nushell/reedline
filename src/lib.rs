@@ -307,7 +307,8 @@ mod history;
 pub use history::{
     CommandLineSearch, FileBackedArchivalHandler, FileBackedHistory, History, HistoryItem,
     HistoryItemExtraInfo, HistoryItemId, HistoryNavigationQuery, HistorySessionId,
-    IgnoreAllExtraInfo, JsonFilterValue, SearchDirection, SearchFilter, SearchQuery, HISTORY_SIZE,
+    HistoryTimestamp, IgnoreAllExtraInfo, JsonFilterValue, SearchDirection, SearchFilter,
+    SearchQuery, HISTORY_SIZE,
 };
 #[cfg(feature = "_sqlite")]
 pub use history::{SqliteBackedArchivalData, SqliteBackedArchivalHandler, SqliteBackedHistory};
