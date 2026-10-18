@@ -65,6 +65,10 @@ impl Prompt for FixedPrompt {
 
 /// A painter wired to a [`TestScreen`] of the same size, with its prompt
 /// anchored on `anchor_row` as if `initialize_prompt_position` had measured it.
+///
+/// `screen` shows everything the painter emitted. The painter's cursor
+/// queries are answered by the [`W::screen`] writer, which has seen only what
+/// was flushed, as a real terminal would have.
 struct Session {
     painter: Painter,
     screen: TestScreen,
@@ -72,7 +76,7 @@ struct Session {
 
 impl Session {
     fn new(width: u16, height: u16, anchor_row: u16) -> Self {
-        let mut painter = Painter::new(W::capture());
+        let mut painter = Painter::new(W::screen(width, height));
         painter.terminal_size = (width, height);
         // Pinned rather than read from `TERM`, which differs between a
         // developer's shell and CI.
@@ -90,10 +94,17 @@ impl Session {
         let rows = u16::try_from(output.len()).expect("a test prints a few rows");
         let mut session = Self::new(width, height, rows);
         for line in output {
-            session.screen.feed(line.as_bytes());
-            session.screen.feed(b"\r\n");
+            session.host_output(line.as_bytes());
+            session.host_output(b"\r\n");
         }
         session
+    }
+
+    /// Bytes the host writes to the terminal itself, past the painter, as an
+    /// idle callback or a command run between prompts does.
+    fn host_output(&mut self, bytes: &[u8]) {
+        self.screen.feed(bytes);
+        self.painter.stdout.terminal_screen().feed(bytes);
     }
 
     /// Paint `prompt` with the cursor between `before` and `after`.

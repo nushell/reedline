@@ -2,6 +2,9 @@ use crate::painting::utils::estimate_required_lines;
 use crate::terminal_extensions::semantic_prompt::{PromptKind, SemanticPromptMarkers};
 use crate::{CursorConfig, PromptEditMode};
 
+#[cfg(test)]
+use crate::painting::test_screen::TestScreen;
+
 use {
     super::utils::{
         advance_grapheme, coerce_crlf, deferred_wrap_row, line_width, resolve_wrap, wrap_position,
@@ -82,6 +85,11 @@ pub enum W {
     /// Fails once after the given number of bytes, then captures later writes.
     #[cfg(test)]
     FailOnce(Vec<u8>, usize, bool),
+    /// Captures like [`W::Capture`], and answers a cursor query from a
+    /// [`TestScreen`] fed on each flush, so the answer reflects what a
+    /// terminal behind a buffered writer has actually received.
+    #[cfg(test)]
+    Screen(Vec<u8>, Box<TestScreen>),
 }
 
 impl W {
@@ -113,11 +121,29 @@ impl W {
         W::Capture(Vec::new())
     }
 
-    /// Bytes captured so far. Panics unless this is a [`W::capture`] writer.
+    /// Like [`W::capture`], but answering cursor queries from a
+    /// `width` by `height` screen; see [`W::Screen`].
+    #[cfg(test)]
+    pub(crate) fn screen(width: u16, height: u16) -> Self {
+        W::Screen(Vec::new(), Box::new(TestScreen::new(width, height)))
+    }
+
+    /// The screen a [`W::screen`] writer answers from, to feed it output that
+    /// did not come from the painter. Panics on any other writer.
+    #[cfg(test)]
+    pub(crate) fn terminal_screen(&mut self) -> &mut TestScreen {
+        match self {
+            W::Screen(_, screen) => screen,
+            _ => panic!("terminal_screen() called on a writer without a screen"),
+        }
+    }
+
+    /// Bytes captured so far. Panics unless this is a [`W::capture`] or
+    /// [`W::screen`] writer.
     #[cfg(test)]
     pub(crate) fn captured(&self) -> &[u8] {
         match self {
-            W::Capture(buf) => buf,
+            W::Capture(buf) | W::Screen(buf, _) => buf,
             _ => panic!("captured() called on a non-capturing writer"),
         }
     }
@@ -144,6 +170,8 @@ impl Write for W {
                 *remaining -= written;
                 Ok(written)
             }
+            #[cfg(test)]
+            W::Screen(w, _) => w.write(buf),
         }
     }
 
@@ -156,6 +184,11 @@ impl Write for W {
             W::Capture(w) => w.flush(),
             #[cfg(test)]
             W::FailOnce(w, ..) => w.flush(),
+            #[cfg(test)]
+            W::Screen(w, screen) => {
+                screen.sync(w);
+                Ok(())
+            }
         }
     }
 }
@@ -163,8 +196,9 @@ impl Write for W {
 impl W {
     /// Where the terminal's cursor is, as `(column, row)`.
     ///
-    /// Only the real terminal can answer. A test writer answers with whatever
-    /// [`W::sink_with_cursor_at`] gave it, and otherwise returns an error so
+    /// The real terminal answers for real, and [`W::screen`] from its emulated
+    /// screen. Other test writers answer with whatever
+    /// [`W::sink_with_cursor_at`] gave them, and otherwise return an error so
     /// paint paths take their "no answer" branch instead of waiting on a tty
     /// that will never reply.
     pub(crate) fn cursor_position(&self) -> Result<(u16, u16)> {
@@ -178,6 +212,16 @@ impl W {
             W::Capture(_) => Err(std::io::Error::other("no terminal attached")),
             #[cfg(test)]
             W::FailOnce(..) => Err(std::io::Error::other("no terminal attached")),
+            #[cfg(test)]
+            W::Screen(_, screen) => {
+                // A real terminal would answer this only at its timeout, a
+                // stall rather than a wrong answer, so fail the test outright.
+                assert!(
+                    !screen.frame_open(),
+                    "cursor query sent inside a synchronized update"
+                );
+                Ok(screen.reported_cursor())
+            }
         }
     }
 }
