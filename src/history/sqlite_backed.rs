@@ -1452,13 +1452,15 @@ mod tests {
 
 #[cfg(test)]
 mod test {
-    use crate::{History, HistoryItem, SearchDirection, SearchQuery, SqliteBackedHistory};
+    use crate::{
+        History, HistoryItem, HistoryTimestamp, SearchDirection, SearchQuery, SqliteBackedHistory,
+    };
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
 
     fn insert_and_test(sqlite: &mut SqliteBackedHistory, id: i64, result: &[String]) {
         let mut item = HistoryItem::from_command_line(&format!("line{id}"));
-        item.start_timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(id);
+        item.start_timestamp = Some(HistoryTimestamp::from_millis(id));
         sqlite.save(item).unwrap();
         let results: Vec<_> = sqlite
             .search(SearchQuery::everything(SearchDirection::Forward, None))

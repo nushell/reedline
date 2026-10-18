@@ -526,7 +526,7 @@ impl Drop for FileBackedHistory {
 
 #[cfg(test)]
 mod test {
-    use crate::{FileBackedHistory, History, SearchQuery};
+    use crate::{FileBackedHistory, History, HistoryTimestamp, SearchQuery};
     use std::{
         collections::VecDeque,
         path::PathBuf,
@@ -535,7 +535,7 @@ mod test {
 
     fn insert_and_test(file: &mut FileBackedHistory, id: i64, result: &[String]) {
         let mut item = crate::HistoryItem::from_command_line(&format!("line{id}"));
-        item.start_timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(id);
+        item.start_timestamp = Some(HistoryTimestamp::from_millis(id));
         file.save(item).unwrap();
         assert_eq!(
             file.entries
