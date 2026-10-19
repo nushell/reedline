@@ -336,71 +336,45 @@ impl EditorCommand {
 }
 
 struct BufferEditor {
-    command: Command,
+    command: EditorCommand,
     temp_file: PathBuf,
-    is_template: bool,
 }
 
 impl BufferEditor {
-    const FILE: &str = "{file}";
-    const LINE: &str = "{line}";
-    const COL: &str = "{col}";
+    fn new(command: Command, temp_file: PathBuf) -> BufferEditor {
+        let mut command = EditorCommand::new(command);
 
-    fn new(mut command: Command, temp_file: PathBuf) -> BufferEditor {
-        let mut has_file_arg = false;
-        let mut is_template = false;
-
-        for arg in command.get_args() {
-            has_file_arg |= arg == temp_file.as_os_str();
-
-            if let Some(arg) = arg.to_str() {
-                has_file_arg |= arg.contains(BufferEditor::FILE);
-
-                is_template |= arg.contains(BufferEditor::FILE)
-                    || arg.contains(BufferEditor::LINE)
-                    || arg.contains(BufferEditor::COL);
-            }
+        if !command
+            .0
+            .get_args()
+            .any(|arg| EditorCommand::is_template_arg(arg) || arg == temp_file.as_os_str())
+        {
+            command.0.arg(&temp_file);
         }
 
-        if !has_file_arg {
-            command.arg(&temp_file);
-        }
-
-        BufferEditor {
-            command,
-            temp_file,
-            is_template,
-        }
+        BufferEditor { command, temp_file }
     }
 
-    /// renders the editor command template,
-    /// substituting template placeholders where present.
-    pub(crate) fn render_command(&self, line_buffer: &LineBuffer) -> Command {
-        let mut rendered = Command::new(self.command.get_program());
+    pub(crate) fn build_command(&self, line_buffer: &LineBuffer) -> Command {
+        let mut rendered = Command::new(self.command.0.get_program());
 
-        for (key, value) in self.command.get_envs() {
+        for (key, value) in self.command.0.get_envs() {
             match value {
                 Some(value) => rendered.env(key, value),
                 None => rendered.env_remove(key),
             };
         }
 
-        if let Some(dir) = self.command.get_current_dir() {
+        if let Some(dir) = self.command.0.get_current_dir() {
             rendered.current_dir(dir);
         }
 
-        let file = self.temp_file.to_string_lossy();
-        let line = (line_buffer.line() + 1).to_string();
-        let col = (line_buffer.col() + 1).to_string();
-
-        for arg in self.command.get_args().map(OsStr::to_string_lossy) {
-            let arg = arg
-                .replace(Self::FILE, &file)
-                .replace(Self::LINE, &line)
-                .replace(Self::COL, &col);
-
-            rendered.arg(arg);
-        }
+        let args = self.command.render(
+            &self.temp_file,
+            line_buffer.line() + 1,
+            line_buffer.col() + 1,
+        );
+        rendered.args(args);
 
         rendered
     }
@@ -3098,12 +3072,12 @@ impl Reedline {
         // below the old one.
         let suspended_state = self.painter.state_before_suspension();
         {
-            let mut child = if buffer_editor.is_template {
+            let mut child = if buffer_editor.command.is_template() {
                 buffer_editor
-                    .render_command(self.editor.line_buffer())
+                    .build_command(self.editor.line_buffer())
                     .spawn()?
             } else {
-                buffer_editor.command.spawn()?
+                buffer_editor.command.0.spawn()?
             };
 
             // The child owns the tty now; invalidate eagerly so
@@ -9179,7 +9153,7 @@ mod tests {
         );
         let buffer_editor = line_editor.buffer_editor.as_ref().unwrap();
 
-        assert_eq!(buffer_editor.is_template, is_template);
+        assert_eq!(buffer_editor.command.is_template(), is_template);
 
         let line_buffer = {
             let mut line_buffer = LineBuffer::new();
@@ -9193,7 +9167,7 @@ mod tests {
             line_buffer
         };
 
-        let actual = buffer_editor.render_command(&line_buffer);
+        let actual = buffer_editor.build_command(&line_buffer);
 
         let current_dir = current_dir.as_ref();
         assert_eq!(actual.get_current_dir(), Some(current_dir));
