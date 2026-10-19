@@ -353,9 +353,7 @@ struct BufferEditor {
 }
 
 impl BufferEditor {
-    fn new(command: Command, temp_file: PathBuf) -> BufferEditor {
-        let mut command = EditorCommand::new(command);
-
+    fn new(mut command: EditorCommand, temp_file: PathBuf) -> BufferEditor {
         if !command
             .0
             .get_args()
@@ -951,7 +949,7 @@ impl Reedline {
     /// ```rust,no_run
     /// // Create a reedline object with vim as editor
     ///
-    /// use reedline::Reedline;
+    /// use reedline::{EditorCommand, Reedline};
     /// use std::env::temp_dir;
     /// use std::process::Command;
     ///
@@ -960,6 +958,7 @@ impl Reedline {
     /// // you can provide additional flags:
     /// command.arg("-p"); // open in a new vim tab
     /// // ...and the filename will be appended at the end of the command
+    /// let command = EditorCommand::new(command);
     /// let mut line_editor = Reedline::create().with_buffer_editor(command, temp.clone());
     ///
     /// // optionally, {file}, {line}, and {col} placeholders can be used.
@@ -967,12 +966,14 @@ impl Reedline {
     /// // both 1-based, with {col} counting graphemes from the line start
     /// let mut command = Command::new("hx");
     /// command.arg("{file}:{line}:{col}");
+    /// let command = EditorCommand::new(command);
     /// let mut line_editor = Reedline::create().with_buffer_editor(command, temp.clone());
     ///
     /// // if {file} is omitted, the filename is still appended at the end,
     /// // as in the above example
     /// let mut command = Command::new("emacs");
     /// command.arg("+{line}:{col}");
+    /// let command = EditorCommand::new(command);
     /// let mut line_editor = Reedline::create().with_buffer_editor(command, temp);
     /// ```
     ///
@@ -981,8 +982,8 @@ impl Reedline {
     /// the `Command`, such as stdio redirection or `env_clear`, do not carry over.
     /// A command without placeholders is spawned as given.
     #[must_use]
-    pub fn with_buffer_editor(mut self, editor: Command, temp_file: PathBuf) -> Self {
-        self.buffer_editor = Some(BufferEditor::new(editor, temp_file));
+    pub fn with_buffer_editor(mut self, command: EditorCommand, temp_file: PathBuf) -> Self {
+        self.buffer_editor = Some(BufferEditor::new(command, temp_file));
         self
     }
 
@@ -9121,14 +9122,14 @@ mod tests {
         assert_eq!(rl.editor.insertion_point(), 3);
     }
 
-    fn command_from_strs(command: &[&str], current_dir: impl AsRef<Path>) -> Command {
+    fn editor_command_from_strs(command: &[&str], current_dir: impl AsRef<Path>) -> EditorCommand {
         let (program, args) = command.split_first().unwrap();
         let mut command = Command::new(program);
         command.args(args);
         command.current_dir(current_dir);
         command.env("REEDLINE_TEST_KEEP", "kept");
         command.env_remove("REEDLINE_TEST_DROP");
-        command
+        EditorCommand::new(command)
     }
 
     fn command_into_string(command: Command) -> String {
@@ -9160,7 +9161,7 @@ mod tests {
         let current_dir = "test-dir";
 
         let line_editor = Reedline::create().with_buffer_editor(
-            command_from_strs(command, current_dir),
+            editor_command_from_strs(command, current_dir),
             PathBuf::from("foo.rs"),
         );
         let buffer_editor = line_editor.buffer_editor.as_ref().unwrap();
