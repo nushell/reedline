@@ -1,4 +1,10 @@
-use std::{collections::HashMap, ffi::OsStr, mem, ops::ControlFlow, path::PathBuf};
+use std::{
+    collections::HashMap,
+    ffi::{OsStr, OsString},
+    mem,
+    ops::ControlFlow,
+    path::{Path, PathBuf},
+};
 
 use nu_ansi_term::{Color, Style};
 
@@ -273,6 +279,60 @@ pub struct Reedline {
     // Callback function that is called periodically while waiting for input.
     // Useful for processing external events (e.g., GUI updates) during idle time.
     idle_callback: Option<Box<dyn FnMut() + Send>>,
+}
+
+struct EditorCommand(Command);
+
+impl EditorCommand {
+    const FILE: &str = "{file}";
+    const LINE: &str = "{line}";
+    const COL: &str = "{col}";
+
+    fn new(command: Command) -> EditorCommand {
+        EditorCommand(command)
+    }
+
+    fn is_template(&self) -> bool {
+        self.0.get_args().any(EditorCommand::is_template_arg)
+    }
+
+    fn is_template_arg(arg: &OsStr) -> bool {
+        let arg = arg.to_string_lossy();
+        arg.contains(Self::FILE) || arg.contains(Self::LINE) || arg.contains(Self::COL)
+    }
+
+    /// renders the editor command template (if any),
+    /// substituting template placeholders where present.
+    pub fn render(&self, file: impl AsRef<Path>, line: usize, col: usize) -> Vec<OsString> {
+        let mut rendered = Vec::new();
+
+        let file_os_str = file.as_ref().as_os_str();
+        let file_str = file.as_ref().to_string_lossy();
+        let mut has_file_arg = false;
+
+        // right now, the API is 1-based, so we silently clamp to 1.
+        let line = line.max(1).to_string();
+        let col = col.max(1).to_string();
+
+        for arg in self.0.get_args() {
+            has_file_arg |= arg == file_os_str;
+            let arg = arg.to_string_lossy();
+            has_file_arg |= arg.contains(Self::FILE);
+
+            let arg = arg
+                .replace(Self::FILE, &file_str)
+                .replace(Self::LINE, &line)
+                .replace(Self::COL, &col);
+
+            rendered.push(arg.into());
+        }
+
+        if !has_file_arg {
+            rendered.push(file_os_str.to_owned());
+        }
+
+        rendered
+    }
 }
 
 struct BufferEditor {
