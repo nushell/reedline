@@ -281,14 +281,17 @@ pub struct Reedline {
     idle_callback: Option<Box<dyn FnMut() + Send>>,
 }
 
-struct EditorCommand(Command);
+/// A command to spawn a buffer editor. The arguments may contain template
+/// placeholders for the file path and cursor position.
+pub struct EditorCommand(Command);
 
 impl EditorCommand {
     const FILE: &str = "{file}";
     const LINE: &str = "{line}";
     const COL: &str = "{col}";
 
-    fn new(command: Command) -> EditorCommand {
+    /// Creates an editor command.
+    pub fn new(command: Command) -> EditorCommand {
         EditorCommand(command)
     }
 
@@ -301,8 +304,17 @@ impl EditorCommand {
         arg.contains(Self::FILE) || arg.contains(Self::LINE) || arg.contains(Self::COL)
     }
 
-    /// renders the editor command template (if any),
-    /// substituting template placeholders where present.
+    /// Returns the editor arguments with `{file}`, `{line}`, and `{col}`
+    /// placeholders replaced by the supplied values. If no argument contains
+    /// the `{file}` placeholder, or exactly matches the path of the passed
+    /// file, the file path is appended.
+    ///
+    /// Line and column numbers are one-based; zero is treated as one.
+    /// Columns are counted as graphemes from the start of the line.
+    ///
+    /// The returned arguments exclude the executable name. Rendering leaves
+    /// the stored command unchanged. The conversion to Unicode is lossy, but
+    /// appended file paths retain their native encoding.
     pub fn render(&self, file: impl AsRef<Path>, line: usize, col: usize) -> Vec<OsString> {
         let mut rendered = Vec::new();
 
