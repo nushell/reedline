@@ -534,7 +534,7 @@ mod test {
     };
 
     fn insert_and_test(file: &mut FileBackedHistory, id: i64, result: &[String]) {
-        let mut item = crate::HistoryItem::from_command_line(&format!("line{id}"));
+        let mut item = crate::HistoryItem::from_command_line(format!("line{id}"));
         item.start_timestamp = Some(HistoryTimestamp::from_millis(id));
         file.save(item).unwrap();
         assert_eq!(
