@@ -814,4 +814,42 @@ mod tests {
         assert_eq!(menu.selection_at(40, 2, 100, 100), None);
         assert_eq!(menu.selection_at(49, 2, 100, 100), None);
     }
+
+    #[test]
+    fn menu_mouse_click_selection_skip() {
+        let mut menu = DescriptionMenu::default()
+            .with_columns(2)
+            .with_column_width(Some(10))
+            .with_name("testmenu");
+        let mut editor = Editor::default();
+        let mut completer = FakeCompleter::new(&["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]);
+
+        setup_menu(&mut menu, &mut editor, &mut completer, (100, 100));
+        menu.row_pos = 4;
+
+        assert_eq!(menu.selection_at(0, 0, 100, 100), Some(2));
+        assert_eq!(menu.selection_at(9, 0, 100, 100), Some(2));
+        assert_eq!(menu.selection_at(10, 0, 100, 100), Some(3));
+        assert_eq!(menu.selection_at(19, 0, 100, 100), Some(3));
+
+        assert_eq!(menu.selection_at(0, 1, 100, 100), Some(4));
+        assert_eq!(menu.selection_at(9, 1, 100, 100), Some(4));
+        assert_eq!(menu.selection_at(10, 1, 100, 100), Some(5));
+        assert_eq!(menu.selection_at(19, 1, 100, 100), Some(5));
+
+        assert_eq!(menu.selection_at(0, 2, 100, 100), Some(6));
+        assert_eq!(menu.selection_at(9, 2, 100, 100), Some(6));
+        assert_eq!(menu.selection_at(10, 2, 100, 100), Some(7));
+        assert_eq!(menu.selection_at(19, 2, 100, 100), Some(7));
+
+        assert_eq!(menu.selection_at(0, 3, 100, 100), Some(8));
+        assert_eq!(menu.selection_at(9, 3, 100, 100), Some(8));
+        assert_eq!(menu.selection_at(10, 3, 100, 100), Some(9));
+        assert_eq!(menu.selection_at(19, 3, 100, 100), Some(9));
+
+        assert_eq!(menu.selection_at(0, 4, 100, 100), None);
+        assert_eq!(menu.selection_at(9, 4, 100, 100), None);
+        assert_eq!(menu.selection_at(10, 4, 100, 100), None);
+        assert_eq!(menu.selection_at(19, 4, 100, 100), None);
+    }
 }

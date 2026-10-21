@@ -1707,4 +1707,82 @@ mod tests {
         assert_eq!(menu.selection_at(d, 2, 100, 100), None);
         assert_eq!(menu.selection_at(e, 2, 100, 100), None);
     }
+
+    #[test]
+    fn menu_mouse_click_selection_skip_border() {
+        let mut menu = IdeMenu::default()
+            .with_default_border()
+            .with_name("testmenu");
+        let mut editor = Editor::default();
+        let mut completer = FakeCompleter::new(&["a", "b"]);
+
+        setup_menu(&mut menu, &mut editor, &mut completer, (100, 100));
+
+        menu.skip_values = 1;
+        menu.working_details.space_left = 10;
+        let border = menu.default_details.border.is_some() as u16;
+        let space_left = menu.working_details.space_left;
+        let completion_width = menu.working_details.completion_width;
+
+        let (a, b, c, d, e) = (
+            0,
+            space_left + border - 1,
+            space_left + border,
+            space_left + completion_width - border - 1,
+            space_left + completion_width - border,
+        );
+
+        assert_eq!(menu.selection_at(a, 0, 100, 100), None);
+        assert_eq!(menu.selection_at(b, 0, 100, 100), None);
+        assert_eq!(menu.selection_at(c, 0, 100, 100), None);
+        assert_eq!(menu.selection_at(d, 0, 100, 100), None);
+        assert_eq!(menu.selection_at(e, 0, 100, 100), None);
+
+        assert_eq!(menu.selection_at(a, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(b, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(c, 1, 100, 100), Some(1));
+        assert_eq!(menu.selection_at(d, 1, 100, 100), Some(1));
+        assert_eq!(menu.selection_at(e, 1, 100, 100), None);
+
+        assert_eq!(menu.selection_at(a, 2, 100, 100), None);
+        assert_eq!(menu.selection_at(b, 2, 100, 100), None);
+        assert_eq!(menu.selection_at(c, 2, 100, 100), None);
+        assert_eq!(menu.selection_at(d, 2, 100, 100), None);
+        assert_eq!(menu.selection_at(e, 2, 100, 100), None);
+    }
+
+    #[test]
+    fn menu_mouse_click_selection_skip_noborder() {
+        let mut menu = IdeMenu::default().with_name("testmenu");
+        let mut editor = Editor::default();
+        let mut completer = FakeCompleter::new(&["a", "b"]);
+
+        setup_menu(&mut menu, &mut editor, &mut completer, (100, 100));
+
+        menu.skip_values = 1;
+        menu.working_details.space_left = 10;
+        let border = menu.default_details.border.is_some() as u16;
+        let space_left = menu.working_details.space_left;
+        let completion_width = menu.working_details.completion_width;
+
+        let (a, b, c, d, e) = (
+            0,
+            space_left + border - 1,
+            space_left + border,
+            space_left + completion_width - border - 1,
+            space_left + completion_width - border,
+        );
+
+        assert_eq!(menu.selection_at(a, 0, 100, 100), None);
+        assert_eq!(menu.selection_at(b, 0, 100, 100), None);
+        assert_eq!(menu.selection_at(c, 0, 100, 100), Some(1));
+        assert_eq!(menu.selection_at(d, 0, 100, 100), Some(1));
+        assert_eq!(menu.selection_at(e, 0, 100, 100), None);
+
+        assert_eq!(menu.selection_at(a, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(b, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(c, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(d, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(e, 1, 100, 100), None);
+    }
 }
