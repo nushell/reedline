@@ -697,6 +697,8 @@ fn count_digits(mut n: usize) -> u16 {
 
 #[cfg(test)]
 mod tests {
+    use crate::{painting::W, Span};
+
     use super::*;
 
     #[test]
@@ -783,5 +785,63 @@ mod tests {
             menu.create_string("value", Some("desc"), 0, "", false),
             ">VALUE desc\r\n"
         );
+    }
+
+    struct FakeCompleter {
+        completions: Vec<String>,
+    }
+
+    impl FakeCompleter {
+        fn new(completions: &[&str]) -> Self {
+            Self {
+                completions: completions.iter().map(|c| c.to_string()).collect(),
+            }
+        }
+    }
+
+    impl Completer for FakeCompleter {
+        fn complete(&mut self, _line: &str, pos: usize) -> crate::CompletionResult {
+            crate::CompletionResult::fresh(
+                self.completions
+                    .iter()
+                    .map(|c| Suggestion {
+                        value: c.to_string(),
+                        span: Span { start: 0, end: pos },
+                        ..Default::default()
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        }
+    }
+
+    fn setup_menu(
+        menu: &mut ListMenu,
+        editor: &mut Editor,
+        completer: &mut dyn Completer,
+        terminal_size: (u16, u16),
+    ) {
+        let mut painter = Painter::new(W::sink());
+        painter.handle_resize(terminal_size.0, terminal_size.1);
+
+        menu.menu_event(MenuEvent::Activate(false));
+        menu.update_working_details(editor, completer, &painter);
+    }
+
+    #[test]
+    fn menu_mouse_click_selection() {
+        let mut menu = ListMenu::default().with_name("testmenu");
+        let mut editor = Editor::default();
+        let mut completer = FakeCompleter::new(&["a", "b\nb", "c\nc\nc", "d"]);
+
+        setup_menu(&mut menu, &mut editor, &mut completer, (100, 100));
+
+        assert_eq!(menu.selection_at(0, 0, 100, 100), Some(0));
+        assert_eq!(menu.selection_at(0, 1, 100, 100), Some(1));
+        assert_eq!(menu.selection_at(0, 2, 100, 100), Some(1));
+        assert_eq!(menu.selection_at(0, 3, 100, 100), Some(2));
+        assert_eq!(menu.selection_at(0, 4, 100, 100), Some(2));
+        assert_eq!(menu.selection_at(0, 5, 100, 100), Some(2));
+        assert_eq!(menu.selection_at(0, 6, 100, 100), Some(3));
+        assert_eq!(menu.selection_at(0, 7, 100, 100), None);
     }
 }
