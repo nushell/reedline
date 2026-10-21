@@ -819,12 +819,14 @@ mod tests {
         editor: &mut Editor,
         completer: &mut dyn Completer,
         terminal_size: (u16, u16),
-    ) {
+    ) -> Painter {
         let mut painter = Painter::new(W::sink());
         painter.handle_resize(terminal_size.0, terminal_size.1);
 
         menu.menu_event(MenuEvent::Activate(false));
         menu.update_working_details(editor, completer, &painter);
+
+        painter
     }
 
     #[test]
@@ -843,5 +845,41 @@ mod tests {
         assert_eq!(menu.selection_at(0, 5, 100, 100), Some(2));
         assert_eq!(menu.selection_at(0, 6, 100, 100), Some(3));
         assert_eq!(menu.selection_at(0, 7, 100, 100), None);
+    }
+
+    #[test]
+    fn menu_mouse_click_selection_incomplete_page() {
+        let mut menu = ListMenu::default().with_page_size(2).with_name("testmenu");
+        let mut editor = Editor::default();
+        let mut completer = FakeCompleter::new(&["a", "b\nb", "c\nc\nc", "d"]);
+
+        let painter = setup_menu(&mut menu, &mut editor, &mut completer, (100, 100));
+
+        // Only the first two items are shown
+        let page = menu.pages.get(menu.page).unwrap();
+        assert_eq!(menu.selection_at(0, 0, 100, 100), Some(0));
+        assert_eq!(menu.selection_at(0, 1, 100, 100), Some(1));
+        assert_eq!(menu.selection_at(0, 2, 100, 100), Some(1));
+        assert_eq!(menu.selection_at(0, 3, 100, 100), None);
+        assert_eq!(menu.page, 0);
+        assert_eq!(page.size, 2);
+
+        // Select the last item, reveal the rest of the items
+        for _ in 0..completer.completions.len() - 1 {
+            menu.menu_event(MenuEvent::NextElement);
+            menu.update_working_details(&mut editor, &mut completer, &painter);
+        }
+
+        let page = menu.pages.get(menu.page).unwrap();
+        assert_eq!(menu.selection_at(0, 0, 100, 100), Some(0));
+        assert_eq!(menu.selection_at(0, 1, 100, 100), Some(1));
+        assert_eq!(menu.selection_at(0, 2, 100, 100), Some(1));
+        assert_eq!(menu.selection_at(0, 3, 100, 100), Some(2));
+        assert_eq!(menu.selection_at(0, 4, 100, 100), Some(2));
+        assert_eq!(menu.selection_at(0, 5, 100, 100), Some(2));
+        assert_eq!(menu.selection_at(0, 6, 100, 100), Some(3));
+        assert_eq!(menu.selection_at(0, 7, 100, 100), None);
+        assert_eq!(menu.page, 0);
+        assert_eq!(page.size, 4);
     }
 }
