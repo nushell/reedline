@@ -704,6 +704,48 @@ impl Menu for ColumnarMenu {
         self.phase.awaiting_first_answer()
     }
 
+    fn selection_at(
+        &self,
+        column: u16,
+        menu_row: u16,
+        _terminal_columns: u16,
+        available_lines: u16,
+    ) -> Option<usize> {
+        if self.get_values().is_empty() || self.get_width() == 0 {
+            return None;
+        }
+
+        let columns = self.grid_cols().get();
+        let rows = self.grid_rows().get();
+
+        let menu_column = column as usize / self.get_width();
+        if menu_column >= columns || menu_row as usize >= rows.min(available_lines as usize) {
+            return None;
+        }
+
+        let index = match self.default_details.traversal_dir {
+            TraversalDirection::Vertical => menu_column * rows + self.skip_rows + menu_row as usize,
+            TraversalDirection::Horizontal => {
+                (self.skip_rows + menu_row as usize) * columns + menu_column
+            }
+        };
+        if index >= self.get_values().len() {
+            return None;
+        }
+
+        Some(index)
+    }
+
+    fn set_selection(&mut self, index: usize) {
+        if index >= self.get_values().len() {
+            return;
+        }
+
+        let (row_pos, col_pos) = self.position_from_index(index);
+        self.row_pos = row_pos;
+        self.col_pos = col_pos;
+    }
+
     fn menu_required_lines(&self, _terminal_columns: u16) -> u16 {
         self.get_rows()
     }

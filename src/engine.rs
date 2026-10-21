@@ -2357,9 +2357,24 @@ impl Reedline {
             Some(snapshot) => snapshot,
             None => return Ok(()),
         };
-        if self.input_mode != InputMode::Regular || self.menus.iter().any(|m| m.is_active()) {
+        if self.input_mode != InputMode::Regular {
             return Ok(());
         }
+
+        // Try to select the entry under the pointer if a menu is active
+        if snapshot.menu_active {
+            let Some(menu_start_row) = snapshot.menu_start_row else {
+                return Ok(());
+            };
+            let Some(menu_row) = row.checked_sub(menu_start_row) else {
+                return Ok(());
+            };
+            let terminal_columns = snapshot.screen_width;
+            let available_lines = snapshot.screen_height.saturating_sub(menu_start_row);
+            self.accept_menu_click(column, menu_row, terminal_columns, available_lines);
+            return Ok(());
+        }
+
         let buffer = self.editor.get_buffer();
         if let Some(offset) = self.painter.screen_to_buffer_offset(snapshot, column, row) {
             if buffer.is_char_boundary(offset) {
@@ -2370,6 +2385,24 @@ impl Reedline {
             }
         }
         Ok(())
+    }
+
+    fn accept_menu_click(
+        &mut self,
+        column: u16,
+        menu_row: u16,
+        terminal_columns: u16,
+        available_lines: u16,
+    ) {
+        let Some(menu) = self.menus.iter_mut().find(|menu| menu.is_visible()) else {
+            return;
+        };
+        let Some(index) = menu.selection_at(column, menu_row, terminal_columns, available_lines)
+        else {
+            return;
+        };
+
+        menu.set_selection(index);
     }
 
     fn active_menu(&mut self) -> Option<&mut ReedlineMenu> {

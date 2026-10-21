@@ -843,6 +843,49 @@ impl Menu for IdeMenu {
         self.completions.suggestions()
     }
 
+    fn selection_at(
+        &self,
+        column: u16,
+        menu_row: u16,
+        _terminal_columns: u16,
+        available_lines: u16,
+    ) -> Option<usize> {
+        if self.get_values().is_empty() {
+            return None;
+        }
+
+        let border = self.default_details.border.is_some() as u16;
+        let menu_row = menu_row.checked_sub(border)?;
+
+        let menu_left = self.working_details.space_left;
+        let menu_right = menu_left + self.working_details.completion_width;
+        if column < menu_left + border || column + border >= menu_right {
+            return None;
+        }
+
+        let visible_rows = available_lines
+            .min(self.default_details.max_completion_height)
+            .saturating_sub(border * 2);
+        if menu_row >= visible_rows {
+            return None;
+        }
+
+        let index = (self.skip_values + menu_row) as usize;
+        if index >= self.get_values().len() {
+            return None;
+        }
+
+        Some(index)
+    }
+
+    fn set_selection(&mut self, index: usize) {
+        if index >= self.get_values().len() {
+            return;
+        }
+
+        self.selected = index as u16;
+    }
+
     fn results_are_provisional(&self) -> bool {
         self.phase.provisional()
     }

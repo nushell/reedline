@@ -445,6 +445,44 @@ impl Menu for ListMenu {
         }
     }
 
+    fn selection_at(
+        &self,
+        _column: u16,
+        menu_row: u16,
+        terminal_columns: u16,
+        _available_lines: u16,
+    ) -> Option<usize> {
+        if self.get_values().is_empty() {
+            return None;
+        }
+
+        let page = self.pages.get(self.page)?;
+        let entries_before_page: usize = self.pages.iter().take(self.page).map(|i| i.size).sum();
+        let mut entry_row = 0;
+
+        for (index, suggestion) in self.get_values().iter().take(page.size).enumerate() {
+            let prefix_width = count_digits(entries_before_page + index) + 2;
+            let width = terminal_columns.saturating_sub(prefix_width);
+            let height = self.number_of_lines(suggestion.display_value(), width);
+
+            if menu_row >= entry_row && menu_row < entry_row + height {
+                return Some(index);
+            }
+
+            entry_row += height;
+        }
+
+        None
+    }
+
+    fn set_selection(&mut self, index: usize) {
+        if index >= self.get_values().len() {
+            return;
+        }
+
+        self.row_position = index as u16;
+    }
+
     /// The buffer gets cleared with the actual value
     fn replace_in_buffer(&self, editor: &mut Editor) {
         replace_in_buffer(self.get_value(), editor, self.settings.output_mode);

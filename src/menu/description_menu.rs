@@ -600,6 +600,43 @@ impl Menu for DescriptionMenu {
         &self.values
     }
 
+    fn selection_at(
+        &self,
+        column: u16,
+        menu_row: u16,
+        _terminal_columns: u16,
+        _available_lines: u16,
+    ) -> Option<usize> {
+        if self.get_values().is_empty() || self.get_width() == 0 {
+            return None;
+        }
+
+        let columns = self.get_cols() as usize;
+        let rows = self.default_details.selection_rows;
+        let menu_column = column as usize / self.get_width();
+        if menu_column >= columns || menu_row >= rows {
+            return None;
+        }
+
+        let skip_row = (self.row_pos + 1).saturating_sub(rows);
+        let index = (skip_row + menu_row) as usize * columns + menu_column;
+        if index >= self.get_values().len() {
+            return None;
+        }
+
+        Some(index)
+    }
+
+    fn set_selection(&mut self, index: usize) {
+        if index >= self.get_values().len() {
+            return;
+        }
+
+        let columns = self.get_cols();
+        self.row_pos = (index as u16) / columns;
+        self.col_pos = (index as u16) % columns;
+    }
+
     fn menu_required_lines(&self, _terminal_columns: u16) -> u16 {
         let example_lines = self
             .examples
