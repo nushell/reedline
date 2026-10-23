@@ -1359,23 +1359,6 @@ impl Reedline {
                 self.settle_completions(prompt)?;
             }
 
-            // Helper function that returns true if the input is complete and
-            // can be sent to the hosting application.
-            fn completed(events: &[Event]) -> bool {
-                if let Some(event) = events.last() {
-                    matches!(
-                        event,
-                        Event::Key(KeyEvent {
-                            code: KeyCode::Enter,
-                            modifiers: KeyModifiers::NONE,
-                            ..
-                        })
-                    )
-                } else {
-                    false
-                }
-            }
-
             let mut events: Vec<Event> = vec![];
 
             if !self.immediately_accept {
@@ -1390,7 +1373,8 @@ impl Reedline {
 
                 // Receive all events in the queue without blocking. Will stop when
                 // a line of input is completed.
-                while !completed(&events) && event::poll(Duration::from_millis(0))? {
+                while !Self::line_input_completed(&events) && event::poll(Duration::from_millis(0))?
+                {
                     events.push(crossterm::event::read()?);
                 }
 
@@ -1399,7 +1383,7 @@ impl Reedline {
                 if events.len() > EVENTS_THRESHOLD
                     || events.iter().any(|e| matches!(e, Event::Resize(_, _)))
                 {
-                    while !completed(&events) && event::poll(POLL_WAIT)? {
+                    while !Self::line_input_completed(&events) && event::poll(POLL_WAIT)? {
                         events.push(crossterm::event::read()?);
                     }
                 }
@@ -1408,7 +1392,7 @@ impl Reedline {
                 // burst detector (a multi-char poll(0) batch is itself a paste
                 // signal — normal typing yields ~1 char per read-loop iteration),
                 // then, while a real burst is coalescing, keep draining the queue
-                // past the `completed()`/`EVENTS_THRESHOLD` stops so a multi-line
+                // past the `line_input_completed()`/`EVENTS_THRESHOLD` stops so a multi-line
                 // paste lands in one batch. Fully gated on an installed hook, so
                 // the no-hook path above is byte-for-byte unchanged.
                 if let Some(hook) = self.paste_burst.clone() {
@@ -1446,6 +1430,35 @@ impl Reedline {
             if let ControlFlow::Break(signal) = batch_result {
                 return Ok(signal);
             }
+        }
+    }
+
+    /// Returns true if the last collected event ends a line of input and the
+    /// batch can be handed to the hosting application.
+    ///
+    /// Besides a plain `Enter`, a `Ctrl+J` (what a piped LF parses to in raw
+    /// mode) also ends a line: without this, several LF-terminated lines that
+    /// arrive in one drain merge into a single batch, and every line after the
+    /// first is silently dropped when the batch breaks on the first submit.
+    ///
+    /// In vi mode `Ctrl+J` is unbound, so ending the drain there only adds a
+    /// loop iteration; the event itself is a no-op and the line is unaffected.
+    fn line_input_completed(events: &[Event]) -> bool {
+        if let Some(event) = events.last() {
+            matches!(
+                event,
+                Event::Key(KeyEvent {
+                    code: KeyCode::Enter,
+                    modifiers: KeyModifiers::NONE,
+                    ..
+                }) | Event::Key(KeyEvent {
+                    code: KeyCode::Char('j'),
+                    modifiers: KeyModifiers::CONTROL,
+                    ..
+                })
+            )
+        } else {
+            false
         }
     }
 
@@ -3590,6 +3603,29 @@ mod tests {
 
     fn auto_pair_engine(pairs: &[(char, char)]) -> Reedline {
         Reedline::create().with_auto_pairs(AutoPairs::new(pairs.iter().copied()))
+    }
+
+    #[test]
+    fn line_input_completed_treats_ctrl_j_as_line_ending() {
+        // A plain Enter still completes the batch.
+        assert!(Reedline::line_input_completed(&[Event::Key(key(
+            KeyCode::Enter
+        ))]));
+        // A piped LF arrives as Ctrl+J in raw mode; it must also end the
+        // batch, otherwise several LF-terminated lines that land in one drain
+        // merge into a single batch and every line after the first is silently
+        // dropped when the batch breaks on the first submit (issue #1262).
+        assert!(Reedline::line_input_completed(&[Event::Key(
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL)
+        )]));
+        // Ordinary keys do not complete the batch.
+        assert!(!Reedline::line_input_completed(&[Event::Key(ch('a'))]));
+        // Alt+J is not a line ending.
+        assert!(!Reedline::line_input_completed(&[Event::Key(
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::ALT)
+        )]));
+        // An empty batch is not complete either.
+        assert!(!Reedline::line_input_completed(&[]));
     }
 
     #[test]
