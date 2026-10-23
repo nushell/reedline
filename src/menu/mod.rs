@@ -213,6 +213,23 @@ pub trait Menu: Send {
     fn set_cursor_pos(&mut self, _pos: (u16, u16)) {
         // empty implementation to make it optional
     }
+
+    /// Get the index of the entry in (`column`, `menu_row`), where `column` is
+    /// the terminal column and `menu_row` is the zero-indexed row starting from
+    /// the first line of the menu. `available_lines` is the maximum amount of
+    /// lines that the menu can take.
+    fn selection_at(
+        &self,
+        _column: u16,
+        _menu_row: u16,
+        _terminal_columns: u16,
+        _available_lines: u16,
+    ) -> Option<usize> {
+        None
+    }
+
+    /// Select the entry with the given index.
+    fn set_selection(&mut self, _index: usize) {}
 }
 
 /// Struct to store configuration for a menu.
@@ -680,6 +697,21 @@ impl Menu for ReedlineMenu {
 
     fn set_cursor_pos(&mut self, pos: (u16, u16)) {
         self.as_mut().set_cursor_pos(pos);
+    }
+
+    fn selection_at(
+        &self,
+        column: u16,
+        menu_row: u16,
+        terminal_columns: u16,
+        available_lines: u16,
+    ) -> Option<usize> {
+        self.as_ref()
+            .selection_at(column, menu_row, terminal_columns, available_lines)
+    }
+
+    fn set_selection(&mut self, index: usize) {
+        self.as_mut().set_selection(index);
     }
 }
 

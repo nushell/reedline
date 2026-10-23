@@ -600,6 +600,43 @@ impl Menu for DescriptionMenu {
         &self.values
     }
 
+    fn selection_at(
+        &self,
+        column: u16,
+        menu_row: u16,
+        _terminal_columns: u16,
+        _available_lines: u16,
+    ) -> Option<usize> {
+        if self.get_values().is_empty() || self.get_width() == 0 {
+            return None;
+        }
+
+        let columns = self.get_cols() as usize;
+        let rows = self.default_details.selection_rows;
+        let menu_column = column as usize / self.get_width();
+        if menu_column >= columns || menu_row >= rows {
+            return None;
+        }
+
+        let skip_row = (self.row_pos + 1).saturating_sub(rows);
+        let index = (skip_row + menu_row) as usize * columns + menu_column;
+        if index >= self.get_values().len() {
+            return None;
+        }
+
+        Some(index)
+    }
+
+    fn set_selection(&mut self, index: usize) {
+        if index >= self.get_values().len() {
+            return;
+        }
+
+        let columns = self.get_cols();
+        self.row_pos = (index as u16) / columns;
+        self.col_pos = (index as u16) % columns;
+    }
+
     fn menu_required_lines(&self, _terminal_columns: u16) -> u16 {
         let example_lines = self
             .examples
@@ -674,6 +711,14 @@ mod tests {
         completions: Vec<String>,
     }
 
+    impl FakeCompleter {
+        fn new(completions: &[&str]) -> Self {
+            Self {
+                completions: completions.iter().map(|c| c.to_string()).collect(),
+            }
+        }
+    }
+
     impl Completer for FakeCompleter {
         fn complete(&mut self, _line: &str, pos: usize) -> crate::CompletionResult {
             crate::CompletionResult::fresh(
@@ -689,22 +734,26 @@ mod tests {
         }
     }
 
-    fn setup_menu(menu: &mut DescriptionMenu, terminal_size: (u16, u16)) {
-        let mut editor = Editor::default();
-        let mut completer = FakeCompleter {
-            completions: ["alpha", "beta", "gamma"].map(String::from).to_vec(),
-        };
+    fn setup_menu(
+        menu: &mut DescriptionMenu,
+        editor: &mut Editor,
+        completer: &mut dyn Completer,
+        terminal_size: (u16, u16),
+    ) {
         let mut painter = Painter::new(W::sink());
         painter.handle_resize(terminal_size.0, terminal_size.1);
+
         menu.menu_event(MenuEvent::Activate(false));
-        menu.update_working_details(&mut editor, &mut completer, &painter);
+        menu.update_working_details(editor, completer, &painter);
     }
 
     /// `with_columns(0)` reaches the layout's screen-width division.
     #[test]
     fn zero_configured_columns_does_not_panic_the_layout() {
         let mut menu = DescriptionMenu::default().with_columns(0);
-        setup_menu(&mut menu, (30, 10));
+        let mut editor = Editor::default();
+        let mut completer = FakeCompleter::new(&["alpha", "beta", "gamma"]);
+        setup_menu(&mut menu, &mut editor, &mut completer, (30, 10));
         assert!(!menu.menu_string(10, false).is_empty());
     }
 
@@ -714,12 +763,93 @@ mod tests {
     fn zero_width_terminal_does_not_panic_the_layout() {
         let mut menu = DescriptionMenu::default();
         let mut editor = Editor::default();
-        let mut completer = FakeCompleter {
-            completions: vec![],
-        };
+        let mut completer = FakeCompleter::new(&[]);
         let mut painter = Painter::new(W::sink());
         painter.handle_resize(0, 0);
         menu.menu_event(MenuEvent::Activate(false));
         menu.update_working_details(&mut editor, &mut completer, &painter);
+    }
+
+    #[test]
+    fn menu_mouse_click_selection() {
+        let mut menu = DescriptionMenu::default()
+            .with_columns(4)
+            .with_column_width(Some(10))
+            .with_name("testmenu");
+        let mut editor = Editor::default();
+        let mut completer = FakeCompleter::new(&["a", "b", "c", "d", "e", "f"]);
+
+        setup_menu(&mut menu, &mut editor, &mut completer, (100, 100));
+
+        assert_eq!(menu.selection_at(0, 0, 100, 100), Some(0));
+        assert_eq!(menu.selection_at(9, 0, 100, 100), Some(0));
+        assert_eq!(menu.selection_at(10, 0, 100, 100), Some(1));
+        assert_eq!(menu.selection_at(19, 0, 100, 100), Some(1));
+        assert_eq!(menu.selection_at(20, 0, 100, 100), Some(2));
+        assert_eq!(menu.selection_at(29, 0, 100, 100), Some(2));
+        assert_eq!(menu.selection_at(30, 0, 100, 100), Some(3));
+        assert_eq!(menu.selection_at(39, 0, 100, 100), Some(3));
+        assert_eq!(menu.selection_at(40, 0, 100, 100), None);
+        assert_eq!(menu.selection_at(49, 0, 100, 100), None);
+
+        assert_eq!(menu.selection_at(0, 1, 100, 100), Some(4));
+        assert_eq!(menu.selection_at(9, 1, 100, 100), Some(4));
+        assert_eq!(menu.selection_at(10, 1, 100, 100), Some(5));
+        assert_eq!(menu.selection_at(19, 1, 100, 100), Some(5));
+        assert_eq!(menu.selection_at(20, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(29, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(30, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(39, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(40, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(49, 1, 100, 100), None);
+
+        assert_eq!(menu.selection_at(0, 2, 100, 100), None);
+        assert_eq!(menu.selection_at(9, 2, 100, 100), None);
+        assert_eq!(menu.selection_at(10, 2, 100, 100), None);
+        assert_eq!(menu.selection_at(19, 2, 100, 100), None);
+        assert_eq!(menu.selection_at(20, 2, 100, 100), None);
+        assert_eq!(menu.selection_at(29, 2, 100, 100), None);
+        assert_eq!(menu.selection_at(30, 2, 100, 100), None);
+        assert_eq!(menu.selection_at(39, 2, 100, 100), None);
+        assert_eq!(menu.selection_at(40, 2, 100, 100), None);
+        assert_eq!(menu.selection_at(49, 2, 100, 100), None);
+    }
+
+    #[test]
+    fn menu_mouse_click_selection_skip() {
+        let mut menu = DescriptionMenu::default()
+            .with_columns(2)
+            .with_column_width(Some(10))
+            .with_name("testmenu");
+        let mut editor = Editor::default();
+        let mut completer = FakeCompleter::new(&["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]);
+
+        setup_menu(&mut menu, &mut editor, &mut completer, (100, 100));
+        menu.row_pos = 4;
+
+        assert_eq!(menu.selection_at(0, 0, 100, 100), Some(2));
+        assert_eq!(menu.selection_at(9, 0, 100, 100), Some(2));
+        assert_eq!(menu.selection_at(10, 0, 100, 100), Some(3));
+        assert_eq!(menu.selection_at(19, 0, 100, 100), Some(3));
+
+        assert_eq!(menu.selection_at(0, 1, 100, 100), Some(4));
+        assert_eq!(menu.selection_at(9, 1, 100, 100), Some(4));
+        assert_eq!(menu.selection_at(10, 1, 100, 100), Some(5));
+        assert_eq!(menu.selection_at(19, 1, 100, 100), Some(5));
+
+        assert_eq!(menu.selection_at(0, 2, 100, 100), Some(6));
+        assert_eq!(menu.selection_at(9, 2, 100, 100), Some(6));
+        assert_eq!(menu.selection_at(10, 2, 100, 100), Some(7));
+        assert_eq!(menu.selection_at(19, 2, 100, 100), Some(7));
+
+        assert_eq!(menu.selection_at(0, 3, 100, 100), Some(8));
+        assert_eq!(menu.selection_at(9, 3, 100, 100), Some(8));
+        assert_eq!(menu.selection_at(10, 3, 100, 100), Some(9));
+        assert_eq!(menu.selection_at(19, 3, 100, 100), Some(9));
+
+        assert_eq!(menu.selection_at(0, 4, 100, 100), None);
+        assert_eq!(menu.selection_at(9, 4, 100, 100), None);
+        assert_eq!(menu.selection_at(10, 4, 100, 100), None);
+        assert_eq!(menu.selection_at(19, 4, 100, 100), None);
     }
 }
