@@ -2,17 +2,11 @@ use std::{collections::HashMap, ffi::OsStr, mem, ops::ControlFlow, path::PathBuf
 
 use nu_ansi_term::{Color, Style};
 
-use crate::{enums::ReedlineRawEvent, CursorConfig};
+use crate::{enums::ReedlineRawEvent, external_printer::ExternalOutput, CursorConfig};
 #[cfg(feature = "bashisms")]
 use crate::{
     history::SearchFilter,
     menu_functions::{parse_selection_char, ParseAction},
-};
-#[cfg(feature = "external_printer")]
-use {
-    crate::external_printer::ExternalPrinter,
-    std::io::{Error, ErrorKind},
-    std::sync::mpsc::TryRecvError,
 };
 use {
     crate::{
@@ -267,8 +261,7 @@ pub struct Reedline {
     // Only used when external_printer or idle_callback is configured.
     poll_interval: Duration,
 
-    #[cfg(feature = "external_printer")]
-    external_printer: Option<ExternalPrinter<String>>,
+    external_printer: Option<Box<dyn ExternalOutput>>,
 
     // Callback function that is called periodically while waiting for input.
     // Useful for processing external events (e.g., GUI updates) during idle time.
@@ -552,7 +545,6 @@ impl Reedline {
             break_signal: None,
             repaint_signal: None,
             poll_interval: DEFAULT_POLL_INTERVAL,
-            #[cfg(feature = "external_printer")]
             external_printer: None,
             idle_callback: None,
         }
@@ -1269,7 +1261,6 @@ impl Reedline {
                 .as_ref()
                 .is_some_and(|sig| Arc::strong_count(&sig.flag) > 1);
 
-        #[cfg(feature = "external_printer")]
         {
             poll |= self.external_printer.is_some();
         }
@@ -1337,12 +1328,9 @@ impl Reedline {
                 self.repaint(prompt)?;
             }
 
-            #[cfg(feature = "external_printer")]
-            if let Some(ref external_printer) = self.external_printer {
-                // get messages from printer as crlf separated "lines"
-                let messages = Self::external_messages(external_printer)?;
+            if let Some(printer) = self.external_printer.as_mut() {
+                let messages = printer.drain()?;
                 if !messages.is_empty() {
-                    // print the message(s)
                     self.painter.print_external_message(messages)?;
                     self.repaint(prompt)?;
                 }
@@ -3131,6 +3119,10 @@ impl Reedline {
                 use_ansi_coloring,
                 &self.cursor_shapes,
             )?;
+        } else {
+            // Nothing to paint, but a commit just before may have left its
+            // frame open and its bytes unsent, waiting for this repaint.
+            self.painter.finish_frame()?;
         }
 
         Ok(())
@@ -3301,12 +3293,8 @@ impl Reedline {
     }
 
     /// Adds an external printer
-    ///
-    /// ## Required feature:
-    /// `external_printer`
-    #[cfg(feature = "external_printer")]
-    pub fn with_external_printer(mut self, printer: ExternalPrinter<String>) -> Self {
-        self.external_printer = Some(printer);
+    pub fn with_external_printer(mut self, printer: impl ExternalOutput + 'static) -> Self {
+        self.external_printer = Some(Box::new(printer));
         self
     }
 
@@ -3357,30 +3345,6 @@ impl Reedline {
     pub fn with_idle_callback(mut self, callback: Box<dyn FnMut() + Send>) -> Self {
         self.idle_callback = Some(callback);
         self
-    }
-
-    #[cfg(feature = "external_printer")]
-    fn external_messages(external_printer: &ExternalPrinter<String>) -> Result<Vec<String>> {
-        let mut messages = Vec::new();
-        loop {
-            let result = external_printer.receiver().try_recv();
-            match result {
-                Ok(line) => {
-                    let lines = line.lines().map(String::from).collect::<Vec<_>>();
-                    messages.extend(lines);
-                }
-                Err(TryRecvError::Empty) => {
-                    break;
-                }
-                Err(TryRecvError::Disconnected) => {
-                    return Err(Error::new(
-                        ErrorKind::NotConnected,
-                        TryRecvError::Disconnected,
-                    ));
-                }
-            }
-        }
-        Ok(messages)
     }
 
     /// Offer an open menu first refusal on a keypress that would otherwise
