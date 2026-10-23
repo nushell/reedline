@@ -9,7 +9,8 @@ use unicode_width::UnicodeWidthStr;
 use crate::{
     menu::{InputMode, MenuSettings, OutputMode},
     painting::Painter,
-    CompletionOrigin, CompletionResult, Editor, Partial, Suggestion, Suggestions, UndoBehavior,
+    CompletionOrigin, CompletionResult, Editor, Partial, Span, Suggestion, Suggestions,
+    UndoBehavior,
 };
 
 /// Appended to whatever `truncate_with_ansi` keeps, so callers must allow at
@@ -496,27 +497,41 @@ impl CompletionDisplay {
     }
 }
 
-/// Longest common prefix across suggestions sharing a span
+/// Longest common prefix of what the suggestions would leave on the line.
+///
+/// Suggestions can replace different spans, such as `README.md` for `re` and
+/// `foo rebase` for `foo re`. Each one is read as the text it leaves between the
+/// earliest span start and the latest span end, so the prefix keeps only what every
+/// suggestion agrees on: here `foo `, which doesn't extend `foo re`.
 fn derive_common_prefix(line: &str, suggestions: &[Suggestion]) -> Option<Partial> {
-    let span = suggestions.first()?.span;
-    let mut values = suggestions
+    // Snapped to char boundaries, so slicing `line` with them can't panic
+    let bounds = |span: Span| {
+        let end = floor_char_boundary(line, span.end);
+        (floor_char_boundary(line, span.start).min(end), end)
+    };
+    let (start, end) = suggestions
         .iter()
-        .filter(|s| s.span == span)
-        .map(|s| s.value.as_str());
+        .map(|s| bounds(s.span))
+        .reduce(|(start, end), (s_start, s_end)| (start.min(s_start), end.max(s_end)))?;
+    // Lazy `char` iterators, so only the first outcome is allocated
+    let mut outcomes = suggestions.iter().map(|s| {
+        let (s_start, s_end) = bounds(s.span);
+        line[start..s_start]
+            .chars()
+            .chain(s.value.chars())
+            .chain(line[s_end..end].chars())
+    });
 
-    let mut insert = values.next()?.to_string();
-    for value in values {
+    let mut insert: String = outcomes.next()?.collect();
+    for mut outcome in outcomes {
         let shared = insert
             .char_indices()
-            .zip(value.chars())
-            .find_map(|((i, a), b)| (a != b).then_some(i))
-            .unwrap_or(insert.len().min(value.len()));
+            .find_map(|(i, a)| (outcome.next() != Some(a)).then_some(i))
+            .unwrap_or(insert.len());
         insert.truncate(shared);
     }
 
-    let end = floor_char_boundary(line, span.end);
-    let start = floor_char_boundary(line, span.start).min(end);
-    let entered = line.get(start..end)?;
+    let entered = &line[start..end];
 
     // Ensure prefix extends (not overwrites) user input
     let extends = !insert.is_empty()
@@ -525,7 +540,10 @@ fn derive_common_prefix(line: &str, suggestions: &[Suggestion]) -> Option<Partia
             .as_str()
             .to_lowercase()
             .contains(&entered.to_lowercase());
-    extends.then_some(Partial { span, insert })
+    extends.then_some(Partial {
+        span: Span::new(start, end),
+        insert,
+    })
 }
 
 /// Apply partial to buffer. No-op if buffer already matches
@@ -955,7 +973,9 @@ pub(crate) fn truncate_with_ansi(s: &str, max_width: usize) -> Cow<'_, str> {
 mod tests {
     use super::*;
     use crate::PromptHelixMode;
-    use crate::{EditCommand, LineBuffer, PromptEditMode, PromptViMode, Span};
+    use crate::{
+        Completer, DefaultCompleter, EditCommand, LineBuffer, PromptEditMode, PromptViMode,
+    };
     use nu_ansi_term::Color;
     use rstest::rstest;
 
@@ -1201,28 +1221,108 @@ mod tests {
         }
     }
 
+    /// Editor holding `line`, with the cursor at its end
+    fn editor_with(line: &str) -> Editor {
+        let mut editor = Editor::default();
+        editor.set_buffer(line.to_string(), UndoBehavior::CreateUndoPoint);
+        editor
+    }
+
+    /// Fresh display for `values`, without a completer-supplied partial
+    fn display_for(editor: &Editor, values: Vec<Suggestion>) -> CompletionDisplay {
+        CompletionDisplay::from_result(CompletionResult::fresh(values), &[], editor)
+            .expect("a fresh result always has a display")
+    }
+
+    /// Tab on `line` with suggestions that replace different spans: only text that
+    /// every suggestion would leave on the line is inserted.
+    #[rstest]
+    // nushell `foo re`: a file replaces `re`, subcommands replace `foo re`
+    #[case::file_first(
+        "foo re",
+        &[("README.md", 4..6), ("foo rebase", 0..6), ("foo rebuild", 0..6)],
+        "foo re"
+    )]
+    #[case::subcommands_first(
+        "foo re",
+        &[("foo rebase", 0..6), ("foo rebuild", 0..6), ("README.md", 4..6)],
+        "foo re"
+    )]
+    #[case::spans_agree_in_part("foo re", &[("rebase", 4..6), ("foo rebuild", 0..6)], "foo reb")]
+    #[case::spans_agree("x ab", &[("abc1", 2..4), ("abc2", 2..4), ("x abc3", 0..4)], "x abc")]
+    // `abcb` (`a` replaced, `b` kept) and `abcd` share `abc`
+    #[case::ends_differ("ab", &[("abc", 0..1), ("abcd", 0..2)], "abc")]
+    fn common_prefix_keeps_what_every_span_agrees_on(
+        #[case] line: &str,
+        #[case] values: &[(&str, Range<usize>)],
+        #[case] expected: &str,
+    ) {
+        let mut editor = editor_with(line);
+        let values = values
+            .iter()
+            .map(|(value, range)| Suggestion {
+                value: value.to_string(),
+                span: Span::new(range.start, range.end),
+                ..Default::default()
+            })
+            .collect();
+        let display = display_for(&editor, values);
+
+        assert_eq!(display.common_prefix(&mut editor), line != expected);
+        assert_eq!(editor.get_buffer(), expected);
+    }
+
+    /// Mirrors demo example: `DefaultCompleter` suggests entries for the last word
+    /// (replacing `th` or `he`) and for the whole line (replacing all of it).
+    #[rstest]
+    // `this is the reedline crate` over `th` would repeat `this is `
+    #[case::disagree("this is th", "this is th")]
+    // `hello world` for the last word, `hello word` for the line
+    #[case::agree_in_part(
+        "hello another very large option for hello w",
+        "hello another very large option for hello wor"
+    )]
+    #[case::agree(
+        "hello another very large option for he",
+        "hello another very large option for hello "
+    )]
+    fn common_prefix_over_default_completer_word_groups(
+        #[case] line: &str,
+        #[case] expected: &str,
+    ) {
+        let mut completer = DefaultCompleter::new_with_wordlen(
+            vec![
+                "test".into(),
+                "hello world".into(),
+                "hello another very large option for hello word that will force one column".into(),
+                "this is the reedline crate".into(),
+            ],
+            2,
+        );
+        let mut editor = editor_with(line);
+        let display =
+            CompletionDisplay::from_result(completer.complete(line, line.len()), &[], &editor)
+                .expect("a fresh result always has a display");
+
+        assert_eq!(display.common_prefix(&mut editor), line != expected);
+        assert_eq!(editor.get_buffer(), expected);
+    }
+
     /// Verifies fallback to built-in derivation without completer-supplied Partial
     #[test]
     fn common_prefix_falls_back_to_derivation_without_a_completer_supplied_partial() {
-        let mut editor = Editor::default();
-        editor.set_buffer("ab".to_string(), UndoBehavior::CreateUndoPoint);
+        let mut editor = editor_with("ab");
 
         // Mirrors demo example: "ab" + Tab -> longest prefix "abaaa"
-        let values: Suggestions = ["abaaacas", "abaaac", "abaaaxyc", "abaaarabc"]
+        let values = ["abaaacas", "abaaac", "abaaaxyc", "abaaarabc"]
             .into_iter()
             .map(|value| Suggestion {
                 value: value.to_string(),
                 span: Span::new(0, 2),
                 ..Default::default()
             })
-            .collect::<Vec<_>>()
-            .into();
-        let display = CompletionDisplay::new(
-            values,
-            None,
-            &[],
-            CompletionOrigin::new(editor.get_buffer(), editor.insertion_point()),
-        );
+            .collect();
+        let display = display_for(&editor, values);
 
         assert!(display.common_prefix(&mut editor));
         assert_eq!(editor.get_buffer(), "abaaa");
