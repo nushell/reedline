@@ -27,6 +27,7 @@ use {
             bracketed_paste::BracketedPasteGuard,
             kitty::KittyProtocolGuard,
             semantic_prompt::{Osc133ClickEventsMarkers, SemanticPromptMarkers},
+            tty_mode::TtyModeGuard,
         },
         utils::text_manipulation,
         AbbrExpandContext, AutoPairAction, AutoPairContext, AutoPairs, EditCommand,
@@ -3076,6 +3077,11 @@ impl Reedline {
         // below the old one.
         let suspended_state = self.painter.state_before_suspension();
         {
+            // Put back the raw mode the editor found once it exits,
+            // whatever mode it leaves behind. Dropped at the end of
+            // this block, before the position query below.
+            let _tty_mode = TtyModeGuard::save();
+
             let mut child = if buffer_editor.is_template {
                 buffer_editor
                     .render_command(self.editor.line_buffer())
