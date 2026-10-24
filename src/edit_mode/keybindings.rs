@@ -277,6 +277,7 @@ pub fn add_common_edit_bindings(kb: &mut Keybindings) {
     use KeyCode as KC;
     use KeyModifiers as KM;
     kb.add_binding(KM::NONE, KC::Backspace, edit_bind(EC::Backspace));
+    kb.add_binding(KM::SHIFT, KC::Backspace, edit_bind(EC::Backspace));
     kb.add_binding(KM::NONE, KC::Delete, edit_bind(EC::Delete));
     kb.add_binding(KM::CONTROL, KC::Backspace, edit_bind(EC::BackspaceWord));
     kb.add_binding(KM::CONTROL, KC::Delete, edit_bind(EC::DeleteWord));
@@ -371,6 +372,23 @@ pub fn add_common_selection_bindings(kb: &mut Keybindings) {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn shift_backspace_deletes_in_insert_modes() {
+        use crate::{EditMode, Emacs, ReedlineRawEvent, Vi};
+        use crossterm::event::{Event, KeyEvent};
+
+        let key = || {
+            ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
+                KeyCode::Backspace,
+                KeyModifiers::SHIFT,
+            )))
+            .unwrap()
+        };
+        let expected = edit_bind(EditCommand::Backspace);
+        assert_eq!(Emacs::default().parse_event(key()), expected);
+        assert_eq!(Vi::default().parse_event(key()), expected);
+    }
 
     #[test]
     fn empty_until_found_is_accepted() {
