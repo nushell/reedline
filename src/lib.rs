@@ -292,6 +292,14 @@ pub use painting::{Painter, StyledText};
 mod engine;
 pub use engine::{MouseClickMode, Reedline};
 
+#[cfg(feature = "system_clipboard")]
+mod paste_interceptor;
+#[cfg(feature = "system_clipboard")]
+pub use paste_interceptor::{PasteAction, PasteInterceptor};
+
+mod paste_burst_hook;
+pub use paste_burst_hook::PasteBurstHook;
+
 mod result;
 pub use result::{ReedlineError, ReedlineErrorVariants, Result};
 
@@ -300,8 +308,8 @@ mod history;
 pub use history::SqliteBackedHistory;
 pub use history::{
     CommandLineSearch, FileBackedHistory, History, HistoryItem, HistoryItemExtraInfo,
-    HistoryItemId, HistoryNavigationQuery, HistorySessionId, IgnoreAllExtraInfo, JsonFilterValue,
-    SearchDirection, SearchFilter, SearchQuery, HISTORY_SIZE,
+    HistoryItemId, HistoryNavigationQuery, HistorySessionId, HistoryTimestamp, IgnoreAllExtraInfo,
+    JsonFilterValue, SearchDirection, SearchFilter, SearchQuery, HISTORY_SIZE,
 };
 
 mod prompt;

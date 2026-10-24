@@ -1,8 +1,10 @@
-use chrono::Utc;
 #[cfg(feature = "_sqlite")]
 use rusqlite::ToSql;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::{fmt::Display, time::Duration};
+use std::{
+    fmt::Display,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 /// Unique ID for the [`HistoryItem`]. More recent items have higher ids than older ones.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -78,13 +80,50 @@ impl<'de> Deserialize<'de> for IgnoreAllExtraInfo {
 
 impl HistoryItemExtraInfo for IgnoreAllExtraInfo {}
 
+/// A point in time as milliseconds since the Unix epoch (UTC)
+///
+/// Millisecond precision matches what the sqlite backend stores, so a saved
+/// item reads back as equal
+#[derive(Clone, Copy, PartialOrd, Ord, Hash, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct HistoryTimestamp(i64);
+
+impl HistoryTimestamp {
+    /// Wrap a raw millisecond count, e.g. one read back from the history store.
+    pub const fn from_millis(millis: i64) -> Self {
+        Self(millis)
+    }
+
+    /// The milliseconds since the Unix epoch.
+    pub const fn to_millis(self) -> i64 {
+        self.0
+    }
+
+    /// The current system time
+    pub fn now() -> Self {
+        SystemTime::now().into()
+    }
+}
+
+// Times before the epoch come out as negative rather than clamped
+impl From<SystemTime> for HistoryTimestamp {
+    fn from(value: SystemTime) -> Self {
+        let millis = match value.duration_since(UNIX_EPOCH) {
+            Ok(d) => d.as_millis() as i64,
+            Err(e) => -(e.duration().as_millis() as i64),
+        };
+
+        Self(millis)
+    }
+}
+
 /// Represents one run command with some optional additional context
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HistoryItem<ExtraInfo: HistoryItemExtraInfo = IgnoreAllExtraInfo> {
     /// primary key, unique across one history
     pub id: Option<HistoryItemId>,
-    /// date-time when this command was started
-    pub start_timestamp: Option<chrono::DateTime<Utc>>,
+    /// when this command was started
+    pub start_timestamp: Option<HistoryTimestamp>,
     /// the full command line as text
     pub command_line: String,
     /// a unique id for one shell session.
@@ -208,5 +247,26 @@ mod tests {
         let deserialized: HistoryItem =
             serde_json::from_str(&json).expect("deserialization should succeed");
         assert_eq!(deserialized.command_line, "pwd");
+    }
+
+    #[test]
+    fn test_start_timestamp_serializes_as_millis() {
+        let mut item = HistoryItem::from_command_line("pwd");
+        item.start_timestamp = Some(HistoryTimestamp::from_millis(1_760_000_000_123));
+
+        let json = serde_json::to_string(&item).expect("serialization should succeed");
+        assert!(json.contains("\"start_timestamp\":1760000000123"));
+
+        let deserialized: HistoryItem =
+            serde_json::from_str(&json).expect("deserialization should succeed");
+        assert_eq!(deserialized, item);
+    }
+
+    #[rstest::rstest]
+    #[case::epoch(UNIX_EPOCH, 0)]
+    #[case::after(UNIX_EPOCH + Duration::from_millis(1500), 1500)]
+    #[case::before(UNIX_EPOCH - Duration::from_millis(1500), -1500)]
+    fn test_timestamp_from_system_time(#[case] time: SystemTime, #[case] millis: i64) {
+        assert_eq!(HistoryTimestamp::from(time).to_millis(), millis);
     }
 }
