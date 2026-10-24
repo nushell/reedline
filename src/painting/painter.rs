@@ -1572,6 +1572,13 @@ impl Painter {
     pub(crate) fn exit_after_cursor_for_test(&self) -> Option<&str> {
         self.after_cursor_lines.as_deref()
     }
+
+    /// Bytes written so far. Panics unless the painter was built on a
+    /// [`W::capture`] writer.
+    #[cfg(test)]
+    pub(crate) fn captured_for_test(&self) -> &[u8] {
+        self.stdout.captured()
+    }
 }
 
 #[cfg(test)]

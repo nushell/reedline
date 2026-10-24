@@ -54,4 +54,43 @@ pub trait Highlighter: Send {
         let _ = context;
         true
     }
+
+    /// Tells how a history hint closes the auto-pair closers after the cursor,
+    /// so that the hint can be shown and inserted in place of them.
+    ///
+    /// This is asked only for a [`Hinter`](crate::Hinter) whose
+    /// [`continues_text_before_cursor`](crate::Hinter::continues_text_before_cursor)
+    /// is `true`, when the text after the cursor is made up of nothing but
+    /// closers of the configured [`AutoPairs`](crate::AutoPairs), as the `)` in
+    /// `f(gs|)`. `line` is the whole buffer, `cursor` the byte offset of the
+    /// cursor in it, `closers` the text after the cursor, and `candidate` the
+    /// raw text of the hint ([`Hinter::complete_hint`](crate::Hinter::complete_hint)),
+    /// which would follow the cursor.
+    ///
+    /// Return, for each character of `closers` in order, the byte offset in
+    /// `candidate` of the character that closes it, so that accepting the hint
+    /// puts the closers in `candidate` and none is lost. A closer inside a
+    /// string or a comment in `candidate` does not close anything, which is why
+    /// only the language of `line` can tell. The offsets index the raw
+    /// `candidate`, never the styled text the hinter shows. They must be
+    /// strictly increasing, and the character at each must be the closer it
+    /// stands for. Any other result is treated as `None`.
+    ///
+    /// Return `None` when the hint does not close all of `closers`. No hint is
+    /// then shown before them and none can be accepted there.
+    ///
+    /// A partial acceptance inserts a prefix of `candidate` and keeps the
+    /// closers whose offsets lie beyond it after the cursor.
+    ///
+    /// The default implementation returns `None`.
+    fn hint_closer_offsets(
+        &self,
+        line: &str,
+        cursor: usize,
+        candidate: &str,
+        closers: &str,
+    ) -> Option<Vec<usize>> {
+        let _ = (line, cursor, candidate, closers);
+        None
+    }
 }
