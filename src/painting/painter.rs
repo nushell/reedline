@@ -7,8 +7,8 @@ use crate::painting::test_screen::TestScreen;
 
 use {
     super::utils::{
-        advance_grapheme, coerce_crlf, deferred_wrap_row, line_width, plain_menu_text,
-        resolve_wrap, wrap_position,
+        advance_grapheme, coerce_crlf, deferred_wrap_row, escape_control, line_width,
+        plain_menu_text, resolve_wrap, wrap_position,
     },
     crate::{
         menu::{Menu, ReedlineMenu},
@@ -1079,7 +1079,8 @@ impl Painter {
                     [
                         snapshot.prompt_str_left.as_str(),
                         snapshot.prompt_indicator.as_str(),
-                        snapshot.before_cursor.as_str(),
+                        // As drawn, with control chars escaped.
+                        &escape_control(&snapshot.before_cursor),
                     ],
                     screen_width,
                 )
@@ -1107,23 +1108,30 @@ impl Painter {
 
         let mut check_segment = |segment: &str, base_offset: usize| -> Option<usize> {
             for (index, grapheme) in segment.grapheme_indices(true) {
-                // Same rule as the layout walk, so the offset this maps back to
-                // is the grapheme the layout put under the click. A zero-width
-                // grapheme occupies no column and so is never the target; the
-                // base grapheme it combines with already matched.
-                let (at, width) =
-                    advance_grapheme((current_row, current_col), grapheme, screen_width);
-                (current_row, current_col) = at;
+                // The buffer is drawn with its control chars escaped (`^[`,
+                // `M-^[`), so walk what is shown, and a click on any column
+                // of an escape maps back to the char it stands for.
+                let shown = escape_control(grapheme);
+                for shown in shown.graphemes(true) {
+                    // Same rule as the layout walk, so the offset this maps
+                    // back to is the grapheme the layout put under the click.
+                    // A zero-width grapheme occupies no column and so is never
+                    // the target; the base grapheme it combines with already
+                    // matched.
+                    let (at, width) =
+                        advance_grapheme((current_row, current_col), shown, screen_width);
+                    (current_row, current_col) = at;
 
-                if width > 0
-                    && current_row == target_row
-                    && column >= current_col
-                    && column < current_col.saturating_add(width)
-                {
-                    return Some(base_offset + index);
+                    if width > 0
+                        && current_row == target_row
+                        && column >= current_col
+                        && column < current_col.saturating_add(width)
+                    {
+                        return Some(base_offset + index);
+                    }
+
+                    current_col = current_col.saturating_add(width);
                 }
-
-                current_col = current_col.saturating_add(width);
             }
 
             None
@@ -2756,6 +2764,44 @@ mod tests {
 
         let painter = Painter::new(W::sink());
         assert_eq!(painter.screen_to_buffer_offset(&snapshot, 0, 0), Some(6));
+    }
+
+    /// The buffer shows a control char escaped, so a click is measured on
+    /// what is shown and any column of the escape maps back to the char.
+    #[rstest]
+    // `> ab^[cd`: `^[` spans columns 4 and 5.
+    #[case::esc("ab\x1bcd", &[(4, 2), (5, 2), (6, 3), (7, 4), (8, 5)])]
+    // `> a^Mbc`: a lone `\r` no longer returns to the left edge.
+    #[case::carriage_return("a\rbc", &[(3, 1), (4, 1), (5, 2), (6, 3)])]
+    // `> M-^[x`: a C1 char is two bytes and four columns.
+    #[case::c1("\u{9b}x", &[(2, 0), (5, 0), (6, 2)])]
+    fn click_maps_through_shown_control_chars(
+        #[case] buffer: &str,
+        #[case] clicks: &[(u16, usize)],
+    ) {
+        let mut snapshot = base_snapshot();
+        snapshot.before_cursor = buffer.to_string();
+
+        let painter = Painter::new(W::sink());
+        for &(column, offset) in clicks {
+            assert_eq!(
+                painter.screen_to_buffer_offset(&snapshot, column, 0),
+                Some(offset),
+                "column {column}"
+            );
+        }
+    }
+
+    /// `\r\n` is one grapheme, shown as `^M` and a line break: the next line
+    /// still starts at the left edge.
+    #[test]
+    fn click_after_crlf_lands_on_the_next_line() {
+        let mut snapshot = base_snapshot();
+        snapshot.before_cursor = "a\r\nb".to_string();
+
+        let painter = Painter::new(W::sink());
+        assert_eq!(painter.screen_to_buffer_offset(&snapshot, 4, 0), Some(1));
+        assert_eq!(painter.screen_to_buffer_offset(&snapshot, 0, 1), Some(3));
     }
 
     #[test]
