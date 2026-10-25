@@ -307,6 +307,28 @@ fn a_wrapped_external_message_pushes_the_prompt_below_its_rows() {
     );
 }
 
+// A message holding newlines, as a custom `ExternalOutput` may hand over,
+// prints one row per line from the left edge, with no extra row for a
+// trailing newline or a `\r` left in the text.
+#[test]
+fn a_multi_line_external_message_prints_each_line_from_the_left() {
+    let mut session = Session::new(20, 8, 1);
+    let prompt = FixedPrompt::new("> ", "");
+
+    session.paint(&prompt, "", "");
+    session.commit(&["aaa\nbbb", "ccc\r\nddd\n"]);
+    session.paint(&prompt, "", "");
+
+    assert_eq!(
+        session.screen.rows()[1..6],
+        ["aaa", "bbb", "ccc", "ddd", ">"]
+    );
+    assert_eq!(
+        session.painter.prompt_start_row,
+        PromptStartRow::Verified(5)
+    );
+}
+
 // Messages arriving at the bottom of the screen scroll the earlier ones into
 // history in order, and the prompt never does.
 #[test]

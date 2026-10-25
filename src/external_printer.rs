@@ -66,6 +66,10 @@ where
 /// A source of text that arrives while a line is being edited.
 pub trait ExternalOutput: Send {
     /// Text received since the last call, in arrival order. Must not block.
+    ///
+    /// Each string is printed as whole lines, split at its newlines. One
+    /// without a trailing newline still ends its line, so a source that
+    /// reads in chunks should hand over complete lines.
     fn drain(&mut self) -> io::Result<Vec<String>>;
 }
 
@@ -75,7 +79,7 @@ impl<T: Display + Send> ExternalOutput for ExternalPrinter<T> {
         // `Disconnected` cannot happen while `self.sender` is alive, so any
         // `Err` just ends the drain.
         while let Ok(message) = self.receiver.try_recv() {
-            messages.extend(message.to_string().lines().map(String::from));
+            messages.push(message.to_string());
         }
         Ok(messages)
     }
@@ -104,11 +108,11 @@ mod tests {
     }
 
     #[test]
-    fn drain_flattens_messages_into_lines_in_order() {
+    fn drain_returns_messages_in_order() {
         let mut printer = ExternalPrinter::<String>::new(2);
         printer.print("one\ntwo".to_string()).unwrap();
         printer.print("three".to_string()).unwrap();
-        assert_eq!(printer.drain().unwrap(), ["one", "two", "three"]);
+        assert_eq!(printer.drain().unwrap(), ["one\ntwo", "three"]);
         assert!(printer.drain().unwrap().is_empty());
     }
 }

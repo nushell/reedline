@@ -303,6 +303,17 @@ fn cursor_position_for_term(stdout: &W, is_term_dumb: bool) -> Result<Option<(u1
     }
 }
 
+/// The lines an external message prints as. A newline ends a line rather
+/// than starting an empty one, so `"a\n"` is one line and `""` still takes a
+/// row. A `\r` before a newline goes with it.
+fn message_lines(message: &str) -> impl Iterator<Item = &str> {
+    message
+        .strip_suffix('\n')
+        .unwrap_or(message)
+        .split('\n')
+        .map(|line| line.strip_suffix('\r').unwrap_or(line))
+}
+
 // Selects the row where the next prompt should start on, taking into account whether it should
 // re-use a previous prompt.
 fn select_prompt_row(
@@ -1596,6 +1607,9 @@ impl Painter {
     /// behind. The old path counted the block's rows from the buffer's bytes,
     /// disagreed with the painter whenever the left prompt wrapped a line,
     /// and left a copy of the prompt row on screen per batch.
+    ///
+    /// Each message is split at its newlines here, since every line needs
+    /// its own `\r\n` and row count, whatever the source handed over.
     pub(crate) fn print_external_message(&mut self, messages: Vec<String>) -> Result<()> {
         // An idle callback leaves the anchor `Stale` on every poll. Check it
         // the way the repaint after this will, so the messages start where
@@ -1628,9 +1642,9 @@ impl Painter {
             // Landing exactly on it takes no scroll and holds at any real height.
             let mut scrolled = false;
 
-            for line in messages {
+            for line in messages.iter().flat_map(|message| message_lines(message)) {
                 // max(1) on the width: a mid-resize terminal can report 0 (#842).
-                let rows = estimate_required_lines(&line, self.screen_width().max(1)).max(1);
+                let rows = estimate_required_lines(line, self.screen_width().max(1)).max(1);
                 let rows = u16::try_from(rows).unwrap_or(u16::MAX);
                 self.stdout.queue(Print(line))?.queue(Print("\r\n"))?;
                 // Saturating: a height grown to fit a measured row can sit near
