@@ -1441,8 +1441,9 @@ impl Reedline {
     /// arrive in one drain merge into a single batch, and every line after the
     /// first is silently dropped when the batch breaks on the first submit.
     ///
-    /// In vi mode `Ctrl+J` is unbound, so ending the drain there only adds a
-    /// loop iteration; the event itself is a no-op and the line is unaffected.
+    /// `Ctrl+J` is `Enter` in every insert keymap (emacs, vi and helix
+    /// insert). In the other vi and helix modes it is unbound, so ending the
+    /// drain there only adds a loop iteration and the line is unaffected.
     fn line_input_completed(events: &[Event]) -> bool {
         if let Some(event) = events.last() {
             matches!(
