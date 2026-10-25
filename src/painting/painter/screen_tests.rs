@@ -65,6 +65,10 @@ impl Prompt for FixedPrompt {
 
 /// A painter wired to a [`TestScreen`] of the same size, with its prompt
 /// anchored on `anchor_row` as if `initialize_prompt_position` had measured it.
+///
+/// `screen` shows everything the painter emitted. The painter's cursor
+/// queries are answered by the [`W::screen`] writer, which has seen only what
+/// was flushed, as a real terminal would have.
 struct Session {
     painter: Painter,
     screen: TestScreen,
@@ -72,7 +76,7 @@ struct Session {
 
 impl Session {
     fn new(width: u16, height: u16, anchor_row: u16) -> Self {
-        let mut painter = Painter::new(W::capture());
+        let mut painter = Painter::new(W::screen(width, height));
         painter.terminal_size = (width, height);
         // Pinned rather than read from `TERM`, which differs between a
         // developer's shell and CI.
@@ -90,10 +94,17 @@ impl Session {
         let rows = u16::try_from(output.len()).expect("a test prints a few rows");
         let mut session = Self::new(width, height, rows);
         for line in output {
-            session.screen.feed(line.as_bytes());
-            session.screen.feed(b"\r\n");
+            session.host_output(line.as_bytes());
+            session.host_output(b"\r\n");
         }
         session
+    }
+
+    /// Bytes the host writes to the terminal itself, past the painter, as an
+    /// idle callback or a command run between prompts does.
+    fn host_output(&mut self, bytes: &[u8]) {
+        self.screen.feed(bytes);
+        self.painter.stdout.terminal_screen().feed(bytes);
     }
 
     /// Paint `prompt` with the cursor between `before` and `after`.
@@ -126,6 +137,27 @@ impl Session {
             .painter
             .render_snapshot(&lines, None, before, after, layout);
         self.painter.screen_to_buffer_offset(&snapshot, column, row)
+    }
+
+    /// Commit `messages` above the prompt block, as the external printer
+    /// does. The engine repaints right after; a test does that with
+    /// [`Session::paint`].
+    fn commit(&mut self, messages: &[&str]) {
+        self.painter
+            .print_external_message(messages.iter().map(|m| (*m).to_owned()).collect())
+            .expect("print_external_message failed");
+        self.screen.sync(self.painter.stdout.captured());
+    }
+
+    /// Visible rows and scrollback together, oldest first, trailing blank
+    /// rows dropped: everything the user can still scroll back to.
+    fn history(&mut self) -> Vec<String> {
+        let mut rows = self.screen.scrollback_rows();
+        rows.extend(self.screen.rows());
+        while rows.last().is_some_and(String::is_empty) {
+            rows.pop();
+        }
+        rows
     }
 }
 
@@ -189,6 +221,129 @@ fn right_prompt_on_last_line_of_a_multiline_prompt() {
     assert_eq!(session.screen.row(1), "abc");
     assert_eq!(session.screen.row(2), format!("> hi{}R", " ".repeat(15)));
     assert_eq!(session.screen.cursor(), (4, 2));
+}
+
+// The commit starts where the painter says the block starts, erases from
+// there, and prints the messages in its place, so nothing of the old block
+// survives under them.
+#[test]
+fn external_messages_replace_the_block_at_the_anchor() {
+    let mut session = Session::new(20, 10, 5);
+
+    session.paint(&FixedPrompt::new("> ", ""), "old", "");
+    session.commit(&["one", "two"]);
+
+    assert_eq!(session.screen.rows()[4..8], ["", "one", "two", ""]);
+    assert_eq!(
+        session.painter.prompt_start_row,
+        PromptStartRow::Verified(7)
+    );
+}
+
+// The case from a real terminal: a left prompt long enough that the first row
+// wraps, and a message landing mid-edit. The old path moved up from the cursor
+// by a byte count and left a copy of the prompt row above each batch. The
+// message commits above the block, and exactly one prompt is drawn under it.
+#[test]
+fn external_messages_commit_above_the_prompt_and_leave_nothing_behind() {
+    let mut session = Session::new(20, 6, 0);
+    let prompt = FixedPrompt::new("~/project>", "");
+
+    session.paint(&prompt, "some things!", "");
+    session.commit(&["msg"]);
+    session.paint(&prompt, "some things!", "");
+
+    // The prompt and buffer wrap at 20 columns onto a second row.
+    assert_eq!(
+        session.screen.rows()[..4],
+        ["msg", "~/project>some thing", "s!", ""]
+    );
+    assert_eq!(
+        session.painter.prompt_start_row,
+        PromptStartRow::Verified(1)
+    );
+}
+
+// An idle callback had the tty and scrolled the prompt up, leaving the cursor
+// on its new row. Messages arriving next start where the repaint will find
+// the block, so the scrolled copy is replaced, not left above them.
+#[test]
+fn external_messages_after_an_idle_callback_scrolled_the_prompt() {
+    let mut session = Session::new(20, 10, 5);
+    let prompt = FixedPrompt::new("> ", "");
+    session.paint(&prompt, "abc", "");
+
+    // Three rows up, the cursor on the prompt's row 2.
+    session.host_output(b"\x1b[3S\x1b[3;1H");
+    // What the engine does after every idle callback.
+    session.painter.invalidate_prompt_start_row();
+    session.commit(&["msg"]);
+    session.paint(&prompt, "abc", "");
+
+    assert_eq!(session.screen.rows()[..5], ["", "", "msg", "> abc", ""]);
+    assert_eq!(
+        session.painter.prompt_start_row,
+        PromptStartRow::Verified(3)
+    );
+}
+
+// A message wider than the screen takes the rows it wraps onto, and the
+// prompt goes below all of them.
+#[test]
+fn a_wrapped_external_message_pushes_the_prompt_below_its_rows() {
+    let mut session = Session::new(20, 6, 2);
+    let prompt = FixedPrompt::new("> ", "");
+
+    session.paint(&prompt, "", "");
+    session.commit(&[&"x".repeat(30)]);
+    session.paint(&prompt, "", "");
+
+    assert_eq!(session.screen.row(2), "x".repeat(20));
+    assert_eq!(session.screen.row(3), "x".repeat(10));
+    assert_eq!(session.screen.row(4), ">");
+    assert_eq!(
+        session.painter.prompt_start_row,
+        PromptStartRow::Verified(4)
+    );
+}
+
+// A message holding newlines, as a custom `ExternalOutput` may hand over,
+// prints one row per line from the left edge, with no extra row for a
+// trailing newline or a `\r` left in the text.
+#[test]
+fn a_multi_line_external_message_prints_each_line_from_the_left() {
+    let mut session = Session::new(20, 8, 1);
+    let prompt = FixedPrompt::new("> ", "");
+
+    session.paint(&prompt, "", "");
+    session.commit(&["aaa\nbbb", "ccc\r\nddd\n"]);
+    session.paint(&prompt, "", "");
+
+    assert_eq!(
+        session.screen.rows()[1..6],
+        ["aaa", "bbb", "ccc", "ddd", ">"]
+    );
+    assert_eq!(
+        session.painter.prompt_start_row,
+        PromptStartRow::Verified(5)
+    );
+}
+
+// Messages arriving at the bottom of the screen scroll the earlier ones into
+// history in order, and the prompt never does.
+#[test]
+fn external_messages_at_the_bottom_scroll_into_history_in_order() {
+    let mut session = Session::new(20, 4, 1);
+    session.painter.bottom_confirmed_at = Some(4);
+    let prompt = FixedPrompt::new("> ", "");
+
+    session.paint(&prompt, "", "");
+    for msg in ["m1", "m2", "m3", "m4", "m5"] {
+        session.commit(&[msg]);
+        session.paint(&prompt, "", "");
+    }
+
+    assert_eq!(session.history(), ["", "m1", "m2", "m3", "m4", "m5", ">"]);
 }
 
 // As above with the indicator folded into the left prompt. The row math
