@@ -10,30 +10,27 @@
 /// Saves the terminal mode on creation and writes it back on drop
 #[cfg(unix)]
 pub(crate) struct TtyModeGuard {
-    /// `None` stands for stdin, the same choice crossterm makes
-    tty: Option<std::fs::File>,
+    tty: std::os::fd::OwnedFd,
     termios: rustix::termios::Termios,
 }
 
 #[cfg(unix)]
 impl TtyModeGuard {
     pub fn save() -> Option<Self> {
-        let tty = if rustix::termios::isatty(std::io::stdin()) {
-            None
+        use std::os::fd::AsFd;
+        // Stdin if it is a terminal, else /dev/tty, the same choice crossterm makes
+        let stdin = std::io::stdin();
+        let tty = if rustix::termios::isatty(&stdin) {
+            stdin.as_fd().try_clone_to_owned().ok()?
         } else {
-            Some(
-                std::fs::OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .open("/dev/tty")
-                    .ok()?,
-            )
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open("/dev/tty")
+                .ok()?
+                .into()
         };
-        let termios = match &tty {
-            Some(file) => rustix::termios::tcgetattr(file),
-            None => rustix::termios::tcgetattr(std::io::stdin()),
-        }
-        .ok()?;
+        let termios = rustix::termios::tcgetattr(&tty).ok()?;
         Some(Self { tty, termios })
     }
 }
@@ -42,10 +39,7 @@ impl TtyModeGuard {
 impl Drop for TtyModeGuard {
     fn drop(&mut self) {
         use rustix::termios::{tcsetattr, OptionalActions};
-        let _ = match &self.tty {
-            Some(file) => tcsetattr(file, OptionalActions::Now, &self.termios),
-            None => tcsetattr(std::io::stdin(), OptionalActions::Now, &self.termios),
-        };
+        let _ = tcsetattr(&self.tty, OptionalActions::Now, &self.termios);
     }
 }
 
@@ -70,15 +64,5 @@ impl TtyModeGuard {
 impl Drop for TtyModeGuard {
     fn drop(&mut self) {
         let _ = self.console.set_mode(self.mode);
-    }
-}
-
-#[cfg(not(any(unix, windows)))]
-pub(crate) struct TtyModeGuard;
-
-#[cfg(not(any(unix, windows)))]
-impl TtyModeGuard {
-    pub fn save() -> Option<Self> {
-        None
     }
 }
