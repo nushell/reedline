@@ -391,8 +391,6 @@ impl Menu for ListMenu {
         }
 
         if parsed.remainder.is_empty() {
-            self.query_size = Some(completer.total_completions(parsed.remainder, pos));
-
             let skip = self
                 .pages
                 .iter()
@@ -405,7 +403,11 @@ impl Menu for ListMenu {
                 .get(self.page)
                 .map_or(self.page_size, |page| page.size);
 
-            self.values = completer.partial_complete(&input, pos, skip, take);
+            // One completer request for both the total and the page; asking
+            // separately evaluated `complete` twice on an empty query.
+            let (total, page) = completer.paged_completions(&input, pos, skip, take);
+            self.query_size = Some(total);
+            self.values = page;
         } else {
             self.query_size = None;
 
@@ -659,6 +661,8 @@ fn count_digits(mut n: usize) -> u16 {
 
 #[cfg(test)]
 mod tests {
+    use crate::CompletionResult;
+
     use super::*;
 
     #[test]
@@ -745,5 +749,51 @@ mod tests {
             menu.create_string("value", Some("desc"), 0, "", false),
             ">VALUE desc\r\n"
         );
+    }
+
+    /// Counts every `Completer` method the menu drives, like a menu `source`
+    /// closure or an external completer would feel it.
+    #[derive(Default)]
+    struct CountingCompleter {
+        complete_calls: usize,
+    }
+
+    impl Completer for CountingCompleter {
+        fn complete(&mut self, _line: &str, _pos: usize) -> CompletionResult {
+            self.complete_calls += 1;
+            CompletionResult::fresh(Vec::new())
+        }
+    }
+
+    fn counting_setup() -> (ListMenu, Editor, CountingCompleter) {
+        let menu = ListMenu::default();
+        let editor = Editor::default();
+        (menu, editor, CountingCompleter::default())
+    }
+
+    /// Regression test for the empty-query double `complete()` from
+    /// nushell/nushell#19134: opening the menu ran the completer twice.
+    #[test]
+    fn empty_query_completes_once_on_activate() {
+        let (mut menu, mut editor, mut completer) = counting_setup();
+
+        menu.menu_event(MenuEvent::Activate(false));
+        menu.update_values(&mut editor, &mut completer);
+
+        assert_eq!(completer.complete_calls, 1);
+    }
+
+    /// Same contract when the query is cleared back to empty by an edit.
+    #[test]
+    fn empty_query_completes_once_when_cleared() {
+        let (mut menu, mut editor, mut completer) = counting_setup();
+
+        menu.menu_event(MenuEvent::Activate(false));
+        menu.update_values(&mut editor, &mut completer);
+
+        menu.menu_event(MenuEvent::Edit(false));
+        menu.update_values(&mut editor, &mut completer);
+
+        assert_eq!(completer.complete_calls, 2);
     }
 }
