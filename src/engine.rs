@@ -31,7 +31,8 @@ use {
         utils::text_manipulation,
         AbbrExpandContext, AutoPairAction, AutoPairContext, AutoPairs, EditCommand,
         ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, MouseButton, Prompt,
-        PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult, Validator,
+        PromptHistorySearch, ReedlineMenu, Signal, StatusLine, UndoBehavior, ValidationResult,
+        Validator,
     },
     crossterm::{
         cursor::SetCursorStyle,
@@ -214,6 +215,10 @@ pub struct Reedline {
     // Showcase hints based on various strategies (history, language-completion, spellcheck, etc)
     hinter: Option<Box<dyn Hinter>>,
     hide_hints: bool,
+
+    // Commentary on the line, drawn below it (errors, signatures, types).
+    // Shown and hidden together with the hints.
+    status_line: Option<Box<dyn StatusLine>>,
 
     // Use ansi coloring or not
     use_ansi_coloring: bool,
@@ -530,6 +535,7 @@ impl Reedline {
             visual_selection_cursor_style: None,
             hinter,
             hide_hints: false,
+            status_line: None,
             validator,
             use_ansi_coloring: true,
             auto_pairs: None,
@@ -626,6 +632,25 @@ impl Reedline {
     #[must_use]
     pub fn disable_hints(mut self) -> Self {
         self.hinter = None;
+        self
+    }
+
+    /// A builder that draws the text of `status_line` below the buffer, above
+    /// any open menu, and returns the engine with it set.
+    ///
+    /// Like the hint, it is hidden in history search and erased before the
+    /// line is submitted. Unlike the hint, it stays while Up and Down walk
+    /// through history, describing each line they recall.
+    #[must_use]
+    pub fn with_status_line(mut self, status_line: Box<dyn StatusLine>) -> Self {
+        self.status_line = Some(status_line);
+        self
+    }
+
+    /// Remove current [`StatusLine`], returning the engine without one.
+    #[must_use]
+    pub fn disable_status_line(mut self) -> Self {
+        self.status_line = None;
         self
     }
 
@@ -3255,7 +3280,7 @@ impl Reedline {
         // Needs to add return carriage to newlines because when not in raw mode
         // some OS don't fully return the carriage
 
-        let mut lines = if hint_replaces_closers {
+        let lines = if hint_replaces_closers {
             // The exit path reprints what follows the cursor, which is still
             // the closers, not the hint drawn over them.
             PromptLines::new(
@@ -3277,6 +3302,31 @@ impl Reedline {
                 &hint,
             )
         };
+        // History search paints elsewhere, so only submit hides the status
+        // line here. Measured only with one to show, since the measure walks
+        // the whole buffer.
+        let screen_width = self.painter.screen_width();
+        let status_room = if self.status_line.is_some() && !self.hide_hints {
+            self.painter
+                .status_room(lines.required_lines(screen_width, false, None))
+        } else {
+            0
+        };
+        // Not asked without a row to draw it on: it gives way to a buffer
+        // that fills the screen.
+        let status = match self.status_line.as_mut() {
+            Some(status_line) if status_room > 0 => status_line.status(
+                buffer_to_paint,
+                cursor_position_in_buffer,
+                screen_width,
+                use_ansi_coloring,
+            ),
+            _ => String::new(),
+        };
+        let mut lines = lines.with_status(&status);
+        // Before the menus size themselves below the status line.
+        self.painter
+            .reserve_status_rows(lines.status_rows(screen_width), status_room);
 
         // Updating the working details of the active menu
         for menu in self.menus.iter_mut() {
@@ -3287,7 +3337,7 @@ impl Reedline {
                     lines.prompt_indicator = menu.indicator().to_owned().into();
                 }
                 // If the menu requires the cursor position, update it (ide menu)
-                let cursor_pos = lines.cursor_pos(self.painter.screen_width());
+                let cursor_pos = lines.cursor_pos(screen_width);
                 menu.set_cursor_pos(cursor_pos);
 
                 menu.update_working_details(
@@ -5554,6 +5604,7 @@ mod tests {
             first_buffer_col: 0,
             menu_active: false,
             menu_start_row: None,
+            status_start_row: None,
             large_buffer_extra_rows_after_prompt: None,
             large_buffer_offset: None,
             right_prompt: None,
@@ -9360,5 +9411,80 @@ mod tests {
         assert!(envs.contains(&(OsStr::new("REEDLINE_TEST_DROP"), None)));
 
         assert_eq!(command_into_string(actual), expected);
+    }
+
+    const STATUS_TEXT: &str = "status-from-the-host";
+
+    /// Answers [`STATUS_TEXT`] and counts the times it is asked.
+    struct CountingStatus(Arc<std::sync::atomic::AtomicUsize>);
+
+    impl StatusLine for CountingStatus {
+        fn status(&mut self, _line: &str, _pos: usize, _columns: u16, _color: bool) -> String {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            STATUS_TEXT.to_string()
+        }
+    }
+
+    /// An engine with `ls` typed and a [`CountingStatus`], with its count.
+    fn engine_with_status_line() -> (Reedline, Arc<std::sync::atomic::AtomicUsize>) {
+        let asked = Arc::default();
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_status_line(Box::new(CountingStatus(Arc::clone(&asked))));
+        drive(&mut rl, &[ch('l'), ch('s')]);
+        (rl, asked)
+    }
+
+    /// What one repaint writes to an 80-column terminal `height` rows tall.
+    fn repaint_output_on(rl: &mut Reedline, height: u16) -> String {
+        rl.painter = Painter::new(W::capture());
+        // Size first: `handle_resize` invalidates the anchor the next line pins.
+        rl.painter.handle_resize(80, height);
+        rl.painter.force_prompt_anchored_for_test(0);
+        rl.repaint(&DefaultPrompt::default()).unwrap();
+        String::from_utf8_lossy(rl.painter.captured_for_test()).into_owned()
+    }
+
+    // The status line describes the line in the buffer, a recalled one too.
+    // Submit hides it with the hint, and history search paints neither.
+    #[rstest]
+    #[case::editing(|_: &mut Reedline| {}, true)]
+    #[case::walking_history(|rl: &mut Reedline| rl.input_mode = InputMode::HistoryTraversal, true)]
+    #[case::submitting(|rl: &mut Reedline| rl.hide_hints = true, false)]
+    #[case::history_search(Reedline::enter_history_search, false)]
+    fn status_line_shows_except_on_submit_and_in_history_search(
+        #[case] enter: fn(&mut Reedline),
+        #[case] shown: bool,
+    ) {
+        let (mut rl, _) = engine_with_status_line();
+
+        enter(&mut rl);
+
+        assert_eq!(repaint_output_on(&mut rl, 24).contains(STATUS_TEXT), shown);
+    }
+
+    // A buffer filling the screen leaves no row for the status line, so the
+    // host is not asked for text that would be thrown away.
+    #[test]
+    fn status_line_is_not_asked_for_without_a_row_to_draw_it() {
+        let (mut rl, asked) = engine_with_status_line();
+        let before = asked.load(std::sync::atomic::Ordering::Relaxed);
+
+        let output = repaint_output_on(&mut rl, 1);
+
+        assert!(!output.contains(STATUS_TEXT));
+        assert_eq!(asked.load(std::sync::atomic::Ordering::Relaxed), before);
+    }
+
+    #[test]
+    fn disabled_status_line_is_never_asked() {
+        let asked = Arc::default();
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_status_line(Box::new(CountingStatus(Arc::clone(&asked))))
+            .disable_status_line();
+
+        let output = repaint_output_on(&mut rl, 24);
+
+        assert!(!output.contains(STATUS_TEXT));
+        assert_eq!(asked.load(std::sync::atomic::Ordering::Relaxed), 0);
     }
 }
