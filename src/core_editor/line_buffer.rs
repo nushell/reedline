@@ -545,6 +545,21 @@ impl LineBuffer {
         self.set_head(self.word_boundary(WordKind::Unicode, WordEdge::End, Direction::Forward));
     }
 
+    /// Capitalizes the current word: the first character is upper cased and
+    /// the rest of the word keeps its case (GNU readline `capitalize-word`,
+    /// bound to M-c in its emacs map). The insertion point moves past the
+    /// word, matching [`Self::uppercase_word`].
+    pub fn capitalize_word(&mut self) {
+        let change_range = self.current_word_range();
+        let mut chars = self.get_buffer()[change_range.clone()].chars();
+        if let Some(first) = chars.next() {
+            let mut capitalized = first.to_uppercase().collect::<String>();
+            capitalized.extend(chars);
+            self.replace_range(change_range, &capitalized);
+        }
+        self.set_head(self.word_boundary(WordKind::Unicode, WordEdge::End, Direction::Forward));
+    }
+
     /// Switches the ASCII case of the current char
     pub fn switchcase_char(&mut self) {
         let insertion_offset = self.insertion_point();
@@ -1263,6 +1278,30 @@ mod test {
         let mut line_buffer = buffer_with(input);
         line_buffer.set_insertion_point(in_location);
         line_buffer.uppercase_word();
+
+        let mut expected = buffer_with(output);
+        expected.set_insertion_point(out_location);
+
+        assert_eq!(expected, line_buffer);
+        line_buffer.assert_valid();
+    }
+
+    #[rstest]
+    #[case("This is a test", 13, "This is a Test", 14)]
+    #[case("This is a test", 10, "This is a Test", 14)]
+    #[case("", 0, "", 0)]
+    #[case("this", 0, "This", 4)]
+    #[case("this", 4, "This", 4)]
+    #[case("ALREADY", 0, "ALREADY", 7)]
+    fn capitalize_word_works(
+        #[case] input: &str,
+        #[case] in_location: usize,
+        #[case] output: &str,
+        #[case] out_location: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(in_location);
+        line_buffer.capitalize_word();
 
         let mut expected = buffer_with(output);
         expected.set_insertion_point(out_location);

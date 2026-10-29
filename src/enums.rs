@@ -655,6 +655,10 @@ pub enum EditCommand {
     /// Lower case the current word
     LowercaseWord,
 
+    /// Capitalize the current word: upper case its first character and
+    /// leave the rest untouched (GNU readline `capitalize-word`, M-c)
+    CapitalizeWord,
+
     /// Capitalize the current character
     CapitalizeChar,
 
@@ -939,6 +943,7 @@ impl EditCommand {
             | EditCommand::PasteCutBufferAfter
             | EditCommand::UppercaseWord
             | EditCommand::LowercaseWord
+            | EditCommand::CapitalizeWord
             | EditCommand::SwitchcaseChar
             | EditCommand::CapitalizeChar
             | EditCommand::SwapWords
