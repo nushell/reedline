@@ -126,7 +126,7 @@ impl Session {
         menu: Option<&ReedlineMenu>,
     ) {
         let lines = PromptLines::new(prompt, PromptEditMode::Default, None, before, "", hint)
-            .with_status(status);
+            .with_status(status, false);
         super::tests::reserve_status(&mut self.painter, &lines);
         self.painter
             .repaint_buffer(prompt, &lines, PromptEditMode::Default, menu, false, &None)
@@ -591,7 +591,7 @@ fn click_on_the_status_line_above_a_menu_lands_nowhere() {
     let prompt = FixedPrompt::new("> ", "");
     let menu = ReedlineMenu::EngineCompleter(Box::new(super::tests::TestMenu::new("m1")));
     let lines = PromptLines::new(&prompt, PromptEditMode::Default, None, "a", "\r\nb", "")
-        .with_status("status");
+        .with_status("status", false);
     super::tests::reserve_status(&mut session.painter, &lines);
     session
         .painter

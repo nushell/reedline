@@ -475,6 +475,9 @@ pub struct Painter {
     /// the menus size themselves so they leave those rows free. That paint
     /// takes them, so none outlive it. See [`Painter::reserve_status_rows`].
     status_rows: u16,
+    /// Rows a menu can take below the reserved status line while the whole
+    /// block stays on the screen. Meaningless while `status_rows` is 0.
+    menu_room: u16,
 }
 
 impl Painter {
@@ -496,6 +499,7 @@ impl Painter {
             cursor_hidden: false,
             bottom_confirmed_at: None,
             status_rows: 0,
+            menu_room: 0,
         }
     }
 
@@ -597,11 +601,23 @@ impl Painter {
     /// not fit gives way to the buffer and gets none.
     pub(crate) fn reserve_status_rows(&mut self, rows: u16, room: u16) {
         self.status_rows = if rows <= room { rows } else { 0 };
+        self.menu_room = room.saturating_sub(self.status_rows);
     }
 
     /// Rows set aside for the status line of the paint being prepared.
     pub(crate) fn reserved_status_rows(&self) -> u16 {
         self.status_rows
+    }
+
+    /// Rows a menu can be cut to below the status line set aside for this
+    /// paint, so the whole block stays on the screen, when that still shows
+    /// `min_rows` of it.
+    ///
+    /// `None` without a status line, where a menu taller than the screen takes
+    /// the large-buffer path, and when it would be cut shorter than
+    /// `min_rows`: the menu keeps its height and takes the status rows back.
+    pub(crate) fn menu_room_below_status(&self, min_rows: u16) -> Option<u16> {
+        (self.status_rows > 0 && self.menu_room >= min_rows).then_some(self.menu_room)
     }
 
     /// Returns the number of lines that are available or can be made available by
@@ -3721,7 +3737,7 @@ mod tests {
     fn exit_erases_the_status_line(#[case] menu_rows: Option<&str>) {
         let menu =
             menu_rows.map(|rows| ReedlineMenu::EngineCompleter(Box::new(TestMenu::new(rows))));
-        let lines = make_lines(TEST_PROMPT, "", "", "pwd", "").with_status("status");
+        let lines = make_lines(TEST_PROMPT, "", "", "pwd", "").with_status("status", false);
 
         let replayed = capture_repaint_then_exit(&lines, menu.as_ref());
 

@@ -1,4 +1,7 @@
-use super::utils::{coerce_crlf, estimate_required_lines, line_width, resolve_wrap, wrap_position};
+use super::utils::{
+    coerce_crlf, escape_control, escape_control_keep_sgr, estimate_required_lines, expand_tabs,
+    line_width, resolve_wrap, wrap_position,
+};
 use crate::{
     menu::{Menu, ReedlineMenu},
     prompt::PromptEditMode,
@@ -69,8 +72,27 @@ impl<'prompt> PromptLines<'prompt> {
     /// Trailing line breaks are dropped: the rows count stops at the last
     /// line, so printing one would move the terminal a row past them, and
     /// scroll it when the status line ends on the bottom row.
-    pub(crate) fn with_status(mut self, status: &'prompt str) -> Self {
-        self.status = coerce_crlf(status.trim_end_matches(['\r', '\n']));
+    ///
+    /// Each line is drawn as it is counted. Control characters show escaped,
+    /// as in the buffer, so a `\r` inside a line cannot return to its start
+    /// and draw over it. SGR is kept while `use_ansi_coloring` is on, as in a
+    /// hint. Tabs become the spaces to the next stop (see [`expand_tabs`]).
+    pub(crate) fn with_status(mut self, status: &str, use_ansi_coloring: bool) -> Self {
+        let mut drawn = String::with_capacity(status.len());
+        // `lines` splits at `\r\n` as well as `\n`, so the `\r` of a line
+        // break never reaches the escape.
+        for (index, line) in status.trim_end_matches(['\r', '\n']).lines().enumerate() {
+            if index > 0 {
+                drawn.push_str("\r\n");
+            }
+            let line = if use_ansi_coloring {
+                escape_control_keep_sgr(line)
+            } else {
+                escape_control(line)
+            };
+            drawn.push_str(&expand_tabs(&line));
+        }
+        self.status = Cow::Owned(drawn);
         self
     }
 
@@ -465,7 +487,7 @@ mod tests {
         assert_eq!(prompt_lines.prompt_height(20), expected);
     }
 
-    fn lines_with_status(status: &str) -> PromptLines<'_> {
+    fn lines_with_status(status: &str, use_ansi_coloring: bool) -> PromptLines<'_> {
         PromptLines {
             prompt_str_left: Cow::Borrowed(""),
             prompt_str_right: Cow::Borrowed(""),
@@ -477,7 +499,7 @@ mod tests {
             exit_after_cursor: None,
             status: Cow::Borrowed(""),
         }
-        .with_status(status)
+        .with_status(status, use_ansi_coloring)
     }
 
     #[rstest]
@@ -492,14 +514,32 @@ mod tests {
     #[case::trailing_crlf("error: x\r\n", 1)]
     // Escape codes take no columns.
     #[case::ansi_styled("\x1b[31m0123456789\x1b[0m", 1)]
+    // A tab is counted to its stop, not as no width.
+    #[case::tab_reaches_its_stop("abcdefgh\tx", 2)]
+    // An escaped control takes the columns of its caret notation.
+    #[case::escaped_control("012345678\x1b", 2)]
     fn test_status_rows(#[case] status: &str, #[case] expected: u16) {
-        assert_eq!(lines_with_status(status).status_rows(10), expected);
+        assert_eq!(lines_with_status(status, true).status_rows(10), expected);
     }
 
     #[rstest]
-    #[case::trailing_line_breaks("a\n\r\n", "a")]
-    #[case::inner_newline("a\nb", "a\r\nb")]
-    fn test_with_status_text(#[case] status: &str, #[case] expected: &str) {
-        assert_eq!(lines_with_status(status).status, expected);
+    #[case::trailing_line_breaks("a\n\r\n", "a", true)]
+    #[case::inner_newline("a\nb", "a\r\nb", true)]
+    #[case::inner_crlf("a\r\nb", "a\r\nb", true)]
+    #[case::inner_blank_line("a\n\nb", "a\r\n\r\nb", true)]
+    #[case::inner_carriage_return("a\rb", "a^Mb", true)]
+    #[case::control_sequence("\x1b[2Kls", "^[[2Kls", true)]
+    #[case::sgr_kept("\x1b[31mred\x1b[0m", "\x1b[31mred\x1b[0m", true)]
+    #[case::sgr_escaped_without_coloring("\x1b[31mred", "^[[31mred", false)]
+    #[case::tab_expanded("ab\tc", "ab      c", true)]
+    fn test_with_status_text(
+        #[case] status: &str,
+        #[case] expected: &str,
+        #[case] use_ansi_coloring: bool,
+    ) {
+        assert_eq!(
+            lines_with_status(status, use_ansi_coloring).status,
+            expected
+        );
     }
 }

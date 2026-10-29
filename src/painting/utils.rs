@@ -186,6 +186,34 @@ pub(crate) fn line_width(line: &str) -> usize {
     strip_ansi(line).width()
 }
 
+/// Columns from one tab stop to the next, the terminal default.
+const TAB_STOP: usize = 8;
+
+/// `line` with each tab expanded to the spaces that reach the next tab stop,
+/// counted from the start of the line. SGR takes no columns.
+///
+/// A terminal counts its stops from the left edge of each row, so a tab on a
+/// wrapped row lands where no width estimate expects it, and the estimators
+/// give it no width at all. Spaces wrap like any other text, so the rows
+/// measured and the rows drawn stay the same.
+pub(crate) fn expand_tabs(line: &str) -> Cow<'_, str> {
+    if !line.contains('\t') {
+        return Cow::Borrowed(line);
+    }
+    let mut expanded = String::with_capacity(line.len() + TAB_STOP);
+    let mut column = 0;
+    for (index, segment) in line.split('\t').enumerate() {
+        if index > 0 {
+            let spaces = TAB_STOP - column % TAB_STOP;
+            expanded.extend(std::iter::repeat_n(' ', spaces));
+            column += spaces;
+        }
+        expanded.push_str(segment);
+        column += line_width(segment);
+    }
+    Cow::Owned(expanded)
+}
+
 /// Which row to move to when printing `pieces` lands the cursor on the
 /// terminal's right margin, in the *deferred wrap* state.
 ///
@@ -331,6 +359,22 @@ mod test {
     #[case("\x1b[1mbold\x1b[0m")]
     fn nothing_to_escape_borrows(#[case] input: &str) {
         assert!(matches!(escape_control_keep_sgr(input), Cow::Borrowed(_)));
+    }
+
+    #[rstest]
+    #[case::from_the_line_start("\tx", "        x")]
+    #[case::to_the_next_stop("ab\tc", "ab      c")]
+    #[case::on_a_stop("abcdefgh\tx", "abcdefgh        x")]
+    #[case::consecutive("a\t\tb", "a               b")]
+    #[case::sgr_takes_no_columns("\x1b[1mab\x1b[0m\tc", "\x1b[1mab\x1b[0m      c")]
+    #[case::wide_chars_take_two("日本\tx", "日本    x")]
+    fn expand_tabs_reaches_the_next_stop(#[case] input: &str, #[case] expected: &str) {
+        assert_eq!(expand_tabs(input), expected);
+    }
+
+    #[test]
+    fn nothing_to_expand_borrows() {
+        assert!(matches!(expand_tabs("no tabs"), Cow::Borrowed(_)));
     }
 
     #[rstest]

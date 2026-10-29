@@ -3346,7 +3346,7 @@ impl Reedline {
             ),
             _ => String::new(),
         };
-        let mut lines = lines.with_status(&status);
+        let mut lines = lines.with_status(&status, use_ansi_coloring);
         // Before the menus size themselves below the status line.
         self.painter
             .reserve_status_rows(lines.status_rows(screen_width), status_room);
@@ -9551,5 +9551,32 @@ mod tests {
 
         assert!(!output.contains(STATUS_TEXT));
         assert_eq!(asked.load(std::sync::atomic::Ordering::Relaxed), 0);
+    }
+
+    // Sixty completions in four columns make a grid of 15 rows, taller than
+    // the screen. It is cut to the 7 rows below the status line, rather than
+    // take them back and paint as a large buffer, which draws no status line.
+    #[test]
+    fn status_line_stays_above_a_columnar_menu_taller_than_the_screen() {
+        let words = (0..60).map(|index| format!("ls{index:02}")).collect();
+        let (rl, _) = engine_with_status_line();
+        // Plain, so each entry reaches the output in one piece.
+        let mut rl = rl
+            .with_ansi_colors(false)
+            .with_completer(Box::new(DefaultCompleter::new(words)))
+            .with_menu(ReedlineMenu::EngineCompleter(Box::new(
+                ColumnarMenu::default().with_name("completion_menu"),
+            )));
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::Menu("completion_menu".to_string()),
+        )
+        .expect("menu opens");
+
+        let output = repaint_output_on(&mut rl, 10);
+
+        assert!(output.contains(STATUS_TEXT));
+        assert!(output.contains("ls27"));
+        assert!(!output.contains("ls28"));
     }
 }

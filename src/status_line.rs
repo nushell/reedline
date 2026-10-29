@@ -27,9 +27,11 @@ pub trait StatusLine: Send {
     /// The status for `line` with the cursor at byte offset `pos`, on a
     /// terminal `columns` wide. An empty string draws no status line.
     ///
-    /// The text may hold ANSI styling when `use_ansi_coloring` is set, and
-    /// wraps like any other text when it is wider than `columns`. Trailing
-    /// line breaks are dropped. It is asked for on every repaint with a row
-    /// free below the buffer, so cache by `line` if producing it is expensive.
+    /// The text may hold ANSI styling (SGR) when `use_ansi_coloring` is set,
+    /// and wraps like any other text when it is wider than `columns`. Trailing
+    /// line breaks are dropped, tabs are expanded to stops every 8 columns,
+    /// and other control characters show escaped (`^[`, `^M`), as in the
+    /// buffer. It is asked for on every repaint with a row free below the
+    /// buffer, so cache by `line` if producing it is expensive.
     fn status(&mut self, line: &str, pos: usize, columns: u16, use_ansi_coloring: bool) -> String;
 }
