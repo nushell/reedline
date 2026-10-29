@@ -35,6 +35,18 @@ fn skip_buffer_lines(string: &str, skip: usize, offset: Option<usize>) -> &str {
     string[index..limit].trim_end_matches('\n')
 }
 
+// `text` of the buffer as it is drawn: the `\r` of a CRLF is the line break's
+// own and draws nothing, every other control char shows escaped.
+fn escape_as_drawn(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.contains("\r\n") {
+        escape_control(&text.replace("\r\n", "\n"))
+            .into_owned()
+            .into()
+    } else {
+        escape_control(text)
+    }
+}
+
 // The byte range `skip_buffer_lines` slices, for callers that need to map a
 // position back into the unskipped string.
 fn skip_buffer_lines_range(string: &str, skip: usize, offset: Option<usize>) -> (usize, usize) {
@@ -1080,7 +1092,7 @@ impl Painter {
                         snapshot.prompt_str_left.as_str(),
                         snapshot.prompt_indicator.as_str(),
                         // As drawn, with control chars escaped.
-                        &escape_control(&snapshot.before_cursor),
+                        &escape_as_drawn(&snapshot.before_cursor),
                     ],
                     screen_width,
                 )
@@ -1111,7 +1123,7 @@ impl Painter {
                 // The buffer is drawn with its control chars escaped (`^[`,
                 // `M-^[`), so walk what is shown, and a click on any column
                 // of an escape maps back to the char it stands for.
-                let shown = escape_control(grapheme);
+                let shown = escape_as_drawn(grapheme);
                 for shown in shown.graphemes(true) {
                     // Same rule as the layout walk, so the offset this maps
                     // back to is the grapheme the layout put under the click.
@@ -2792,16 +2804,32 @@ mod tests {
         }
     }
 
-    /// `\r\n` is one grapheme, shown as `^M` and a line break: the next line
-    /// still starts at the left edge.
-    #[test]
-    fn click_after_crlf_lands_on_the_next_line() {
-        let mut snapshot = base_snapshot();
-        snapshot.before_cursor = "a\r\nb".to_string();
-
+    /// The `\r` of a `\r\n` is the line break's own and draws nothing, so a
+    /// CRLF buffer maps clicks like the LF one, one byte further on past the
+    /// break. A phantom `^M` would wrap the line that exactly fits the row.
+    #[rstest]
+    #[case::short("a", "b")]
+    #[case::fills_the_row(&"a".repeat(17), "bcd")]
+    fn click_after_crlf_maps_like_lf(#[case] first: &str, #[case] second: &str) {
         let painter = Painter::new(W::sink());
-        assert_eq!(painter.screen_to_buffer_offset(&snapshot, 4, 0), Some(1));
-        assert_eq!(painter.screen_to_buffer_offset(&snapshot, 0, 1), Some(3));
+        let offsets = |before_cursor: String| {
+            let mut snapshot = base_snapshot();
+            snapshot.before_cursor = before_cursor;
+            (0..2)
+                .flat_map(|row| (0..20).map(move |column| (column, row)))
+                .map(|(column, row)| painter.screen_to_buffer_offset(&snapshot, column, row))
+                .collect::<Vec<_>>()
+        };
+
+        let lf = offsets(format!("{first}\n{second}"));
+        let crlf = offsets(format!("{first}\r\n{second}"));
+
+        let break_at = first.len();
+        let shifted: Vec<_> = lf
+            .iter()
+            .map(|offset| offset.map(|o| if o > break_at { o + 1 } else { o }))
+            .collect();
+        assert_eq!(crlf, shifted);
     }
 
     #[test]
