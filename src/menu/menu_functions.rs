@@ -8,7 +8,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     menu::{InputMode, MenuSettings, OutputMode},
-    painting::{escape_control_keep_sgr, sgr_len, Painter},
+    painting::{escape_control, escape_control_keep_sgr, sgr_len, Painter},
     CompletionOrigin, CompletionResult, Editor, Partial, Span, Suggestion, Suggestions,
     UndoBehavior,
 };
@@ -499,7 +499,8 @@ impl CompletionDisplay {
 }
 
 /// Escapes the control characters in what a menu shows of each suggestion,
-/// keeping their SGR styling (see [`escape_control_keep_sgr`]).
+/// keeping the SGR styling of a `display_override`, description and extra
+/// (see [`escape_control_keep_sgr`]).
 ///
 /// `value` is never touched: it is what accepting inserts, and the buffer
 /// renders it escaped. Escaping shifts the characters `match_indices` points
@@ -517,15 +518,25 @@ pub(crate) fn escape_suggestions(values: Suggestions) -> Suggestions {
 
 /// `suggestion` with its shown fields escaped, if any of them needed it.
 fn escape_suggestion(suggestion: &Suggestion) -> Option<Suggestion> {
-    fn escaped(text: &str) -> Option<String> {
-        match escape_control_keep_sgr(text) {
+    fn changed(text: Cow<str>) -> Option<String> {
+        match text {
             Cow::Owned(text) => Some(text),
             Cow::Borrowed(_) => None,
         }
     }
+    fn escaped(text: &str) -> Option<String> {
+        changed(escape_control_keep_sgr(text))
+    }
+
+    // Only a `display_override` is styled by the completer. Shown bare, `value`
+    // is data, so its SGR is escaped too.
+    let shown = match &suggestion.display_override {
+        Some(display) => escaped(display),
+        None => changed(escape_control(&suggestion.value)),
+    };
 
     let mut out: Option<Suggestion> = None;
-    if let Some(shown) = escaped(suggestion.display_value()) {
+    if let Some(shown) = shown {
         let out = out.get_or_insert_with(|| suggestion.clone());
         out.display_override = Some(shown);
         out.match_indices = None;
@@ -1039,7 +1050,13 @@ mod tests {
             match_indices: Some(vec![0]),
             ..Default::default()
         };
-        let values: Suggestions = vec![poisoned.clone(), styled.clone()].into();
+        // A bare `value` is data, a file name or a history entry: its SGR could
+        // hide part of the entry, so it is shown escaped like any other control.
+        let concealed = Suggestion {
+            value: "\x1b[8mevil\x1b[0mfoo".into(),
+            ..Default::default()
+        };
+        let values: Suggestions = vec![poisoned.clone(), styled.clone(), concealed.clone()].into();
 
         let escaped = escape_suggestions(values);
 
@@ -1049,6 +1066,8 @@ mod tests {
         assert_eq!(escaped[0].extra, Some(vec!["^[[Gx".to_string()]));
         assert_eq!(escaped[0].match_indices, None);
         assert_eq!(escaped[1], styled);
+        assert_eq!(escaped[2].value, concealed.value);
+        assert_eq!(escaped[2].display_value(), "^[[8mevil^[[0mfoo");
     }
 
     #[test]
