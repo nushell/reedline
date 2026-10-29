@@ -1843,6 +1843,15 @@ impl Reedline {
                 }
                 Ok(EventStatus::Handled)
             }
+            ReedlineEvent::FirstHistoryEntry => {
+                self.history_cursor.back_to_oldest(self.history.as_ref())?;
+                Ok(EventStatus::Handled)
+            }
+            ReedlineEvent::LastHistoryEntry => {
+                self.history_cursor
+                    .forward_to_newest(self.history.as_ref())?;
+                Ok(EventStatus::Handled)
+            }
             ReedlineEvent::Esc => {
                 self.input_mode = InputMode::Regular;
                 Ok(EventStatus::Handled)
@@ -2220,6 +2229,14 @@ impl Reedline {
                 self.next_history()?;
                 Ok(EventStatus::Handled)
             }
+            ReedlineEvent::FirstHistoryEntry => {
+                self.first_history()?;
+                Ok(EventStatus::Handled)
+            }
+            ReedlineEvent::LastHistoryEntry => {
+                self.last_history()?;
+                Ok(EventStatus::Handled)
+            }
             ReedlineEvent::Up => self.up_command(),
             ReedlineEvent::Down => self.down_command(),
             ReedlineEvent::Left | ReedlineEvent::Right => {
@@ -2418,6 +2435,48 @@ impl Reedline {
         self.editor
             .update_undo_state(UndoBehavior::HistoryNavigation);
         Ok(())
+    }
+
+    /// Jump to the oldest history entry (GNU `beginning-of-history`).
+    fn first_history(&mut self) -> io::Result<()> {
+        self.start_history_traversal();
+        self.history_cursor.back_to_oldest(self.history.as_ref())?;
+        self.update_buffer_from_history();
+        self.editor.move_to_start(false);
+        self.editor.move_to_line_end(false);
+        self.editor.commit_cursor();
+        self.editor
+            .update_undo_state(UndoBehavior::HistoryNavigation);
+        Ok(())
+    }
+
+    /// Jump to the newest history entry (GNU `end-of-history`).
+    fn last_history(&mut self) -> io::Result<()> {
+        self.start_history_traversal();
+        self.history_cursor
+            .forward_to_newest(self.history.as_ref())?;
+        if self.history_cursor.string_at_cursor().is_none() && !self.history_last_run.is_recalled()
+        {
+            self.input_mode = InputMode::Regular;
+        }
+        self.update_buffer_from_history();
+        self.editor.move_to_end(false);
+        self.editor.commit_cursor();
+        self.editor
+            .update_undo_state(UndoBehavior::HistoryNavigation);
+        Ok(())
+    }
+
+    /// Enter history traversal with a cursor for the current line-buffer
+    /// prefix (the setup `previous_history`/`next_history` share).
+    fn start_history_traversal(&mut self) {
+        if self.input_mode != InputMode::HistoryTraversal {
+            self.input_mode = InputMode::HistoryTraversal;
+            self.history_cursor = HistoryCursor::new(
+                self.get_history_navigation_based_on_line_buffer(),
+                self.get_history_session_id(),
+            );
+        }
     }
 
     fn next_history(&mut self) -> io::Result<()> {

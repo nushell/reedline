@@ -86,6 +86,32 @@ impl HistoryCursor {
         Ok(())
     }
 
+    /// Jump to the oldest entry the current navigation query can reach
+    /// (GNU `beginning-of-history`). No-op on an empty history.
+    pub fn back_to_oldest(&mut self, history: &dyn History) -> Result<()> {
+        loop {
+            let before = self.string_at_cursor();
+            self.navigate_in_direction(history, SearchDirection::Backward)?;
+            if self.string_at_cursor() == before {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// Jump to the newest entry the current navigation query can reach
+    /// (GNU `end-of-history`), leaving the cursor past the last entry.
+    pub fn forward_to_newest(&mut self, history: &dyn History) -> Result<()> {
+        loop {
+            let before = self.string_at_cursor();
+            self.navigate_in_direction(history, SearchDirection::Forward)?;
+            if self.string_at_cursor() == before {
+                break;
+            }
+        }
+        Ok(())
+    }
+
     /// Returns the string (if present) at the cursor
     pub fn string_at_cursor(&self) -> Option<String> {
         self.current.as_ref().map(|e| e.command_line.to_string())
@@ -138,6 +164,36 @@ mod tests {
             hist.save(HistoryItem::from_command_line(e.as_ref()))
                 .unwrap();
         });
+    }
+
+    #[test]
+    fn jump_to_oldest_and_back_to_newest() -> Result<()> {
+        let (mut hist, mut cursor) = create_history();
+        add_text_entries(hist.as_mut(), &["one", "two", "three"]);
+
+        cursor.back_to_oldest(hist.as_ref())?;
+        assert_eq!(cursor.string_at_cursor().as_deref(), Some("one"));
+
+        cursor.forward_to_newest(hist.as_ref())?;
+        assert_eq!(
+            cursor.string_at_cursor(),
+            None,
+            "past the newest entry is the live line"
+        );
+
+        cursor.back(hist.as_ref())?;
+        assert_eq!(cursor.string_at_cursor().as_deref(), Some("three"));
+        Ok(())
+    }
+
+    #[test]
+    fn jumps_on_empty_history_are_no_ops() -> Result<()> {
+        let (hist, mut cursor) = create_history();
+        cursor.back_to_oldest(hist.as_ref())?;
+        assert_eq!(cursor.string_at_cursor(), None);
+        cursor.forward_to_newest(hist.as_ref())?;
+        assert_eq!(cursor.string_at_cursor(), None);
+        Ok(())
     }
 
     #[test]

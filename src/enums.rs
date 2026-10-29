@@ -1154,6 +1154,12 @@ pub enum ReedlineEvent {
 
     /// Navigate to the previous historic buffer
     PreviousHistory,
+    /// Jump to the oldest entry in the history (GNU readline
+    /// `beginning-of-history`, PgUp in its default map).
+    FirstHistoryEntry,
+    /// Jump to the newest entry in the history (GNU readline
+    /// `end-of-history`, PgDn in its default map).
+    LastHistoryEntry,
 
     /// Move up to the previous line, if multiline, or up into the historic buffers
     Up,
