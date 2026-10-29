@@ -51,10 +51,22 @@ impl Keybindings {
         self.bindings.insert(key_combo, command);
     }
 
-    /// Find a keybinding based on the modifier and keycode
+    /// Find a keybinding based on the modifier and keycode.
+    ///
+    /// If a shifted non-character key is unbound, try again without Shift.
     pub fn find_binding(&self, modifier: KeyModifiers, key_code: KeyCode) -> Option<ReedlineEvent> {
-        let key_combo = KeyCombination { modifier, key_code };
-        self.bindings.get(&key_combo).cloned()
+        let mut key_combo = KeyCombination { modifier, key_code };
+        self.bindings
+            .get(&key_combo)
+            .or_else(|| {
+                if modifier.contains(KeyModifiers::SHIFT) && !matches!(key_code, KeyCode::Char(_)) {
+                    key_combo.modifier.remove(KeyModifiers::SHIFT);
+                    self.bindings.get(&key_combo)
+                } else {
+                    None
+                }
+            })
+            .cloned()
     }
 
     /// Remove a keybinding
@@ -371,6 +383,57 @@ pub fn add_common_selection_bindings(kb: &mut Keybindings) {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[rstest::rstest]
+    #[case(KeyModifiers::NONE, KeyCode::Backspace, EditCommand::Backspace)]
+    #[case(KeyModifiers::NONE, KeyCode::Delete, EditCommand::Delete)]
+    #[case(KeyModifiers::CONTROL, KeyCode::Backspace, EditCommand::BackspaceWord)]
+    fn shifted_deletion_keys_work_in_insert_modes(
+        #[case] modifier: KeyModifiers,
+        #[case] key_code: KeyCode,
+        #[case] command: EditCommand,
+    ) {
+        use crate::{EditMode, Emacs, ReedlineRawEvent, Vi};
+        use crossterm::event::{Event, KeyEvent};
+
+        let key = || {
+            ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
+                key_code,
+                modifier | KeyModifiers::SHIFT,
+            )))
+            .unwrap()
+        };
+        let expected = edit_bind(command);
+        assert_eq!(Emacs::default().parse_event(key()), expected);
+        assert_eq!(Vi::default().parse_event(key()), expected);
+    }
+
+    #[rstest::rstest]
+    #[case(KeyModifiers::NONE, KeyCode::Backspace, true)]
+    #[case(KeyModifiers::NONE, KeyCode::Delete, true)]
+    #[case(KeyModifiers::CONTROL, KeyCode::Backspace, true)]
+    #[case(KeyModifiers::ALT, KeyCode::Enter, true)]
+    #[case(KeyModifiers::CONTROL | KeyModifiers::ALT, KeyCode::F(1), true)]
+    #[case(KeyModifiers::NONE, KeyCode::Char('x'), false)]
+    #[case(KeyModifiers::CONTROL, KeyCode::Char('x'), false)]
+    fn shift_fallback_preserves_modifiers_and_explicit_bindings(
+        #[case] modifier: KeyModifiers,
+        #[case] key_code: KeyCode,
+        #[case] falls_back: bool,
+    ) {
+        let mut kb = Keybindings::new();
+        let shifted = modifier | KeyModifiers::SHIFT;
+        assert_eq!(kb.find_binding(shifted, key_code), None);
+
+        kb.add_binding(modifier, key_code, ReedlineEvent::Enter);
+        assert_eq!(
+            kb.find_binding(shifted, key_code),
+            falls_back.then_some(ReedlineEvent::Enter)
+        );
+
+        kb.add_binding(shifted, key_code, ReedlineEvent::Esc);
+        assert_eq!(kb.find_binding(shifted, key_code), Some(ReedlineEvent::Esc));
+    }
 
     #[test]
     fn empty_until_found_is_accepted() {

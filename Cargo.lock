@@ -715,6 +715,7 @@ version = "0.52.1"
 dependencies = [
  "arboard",
  "crossterm",
+ "crossterm_winapi",
  "fd-lock",
  "gethostname",
  "jiff",
@@ -722,6 +723,7 @@ dependencies = [
  "pretty_assertions",
  "rstest",
  "rusqlite",
+ "rustix",
  "serde",
  "serde_json",
  "strip-ansi-escapes",
