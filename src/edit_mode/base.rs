@@ -43,4 +43,23 @@ pub trait EditMode: Send {
     fn handle_mode_specific_event(&mut self, _event: ReedlineEvent) -> EventStatus {
         EventStatus::Inapplicable
     }
+
+    /// Whether the mode is holding a half-typed multi-key sequence.
+    ///
+    /// The engine uses this to poll with a deadline and flush the sequence
+    /// after [`Reedline::with_keyseq_timeout`](crate::Reedline::with_keyseq_timeout)
+    /// expires. Modes without sequence support keep the default `false`.
+    fn has_pending_sequence(&self) -> bool {
+        false
+    }
+
+    /// Resolve a half-typed sequence after a timeout or a mode change.
+    ///
+    /// The mode applies its own fallback: emacs and vi insert replay the keys
+    /// as single keys (self-inserting characters), vi normal replays them
+    /// through its keybinding table. Returns [`ReedlineEvent::None`] when
+    /// nothing is pending.
+    fn flush_pending_sequence(&mut self) -> ReedlineEvent {
+        ReedlineEvent::None
+    }
 }

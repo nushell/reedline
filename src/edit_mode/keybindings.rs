@@ -7,7 +7,9 @@ use {
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct KeyCombination {
+    /// Modifier keys held for this key.
     pub modifier: KeyModifiers,
+    /// The key itself.
     pub key_code: KeyCode,
 }
 
@@ -627,10 +629,7 @@ mod test {
             Some(ReedlineEvent::Esc)
         );
         assert_eq!(kb.find_sequence_binding(&[combo('j')]), None);
-        assert_eq!(
-            kb.find_sequence_binding(&[combo('j'), combo('x')]),
-            None
-        );
+        assert_eq!(kb.find_sequence_binding(&[combo('j'), combo('x')]), None);
     }
 
     #[test]
@@ -677,10 +676,7 @@ mod test {
     fn longest_sequence_prefix_prefers_the_longest_complete_sequence() {
         let mut kb = Keybindings::new();
         kb.add_binding_sequence(&[combo('a'), combo('b')], ReedlineEvent::Up);
-        kb.add_binding_sequence(
-            &[combo('a'), combo('b'), combo('c')],
-            ReedlineEvent::Down,
-        );
+        kb.add_binding_sequence(&[combo('a'), combo('b'), combo('c')], ReedlineEvent::Down);
 
         assert_eq!(
             kb.longest_sequence_prefix(&[combo('a'), combo('b'), combo('c')]),

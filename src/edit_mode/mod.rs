@@ -19,9 +19,37 @@ pub use vi::{
     default_vi_insert_keybindings, default_vi_normal_keybindings, default_vi_visual_keybindings, Vi,
 };
 
-use crossterm::event::{Event, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{Event, KeyCode, KeyModifiers, MouseEvent, MouseEventKind};
 
 use crate::{EditCommand, ReedlineEvent};
+
+/// Normalize a keypress the way the single-key tables are looked up: a
+/// character carrying any modifier is matched in lowercase, so `Shift-j` and
+/// the `Char('j')` a terminal reports are the same key.
+pub(crate) fn normalized_key_combination(
+    modifiers: KeyModifiers,
+    code: KeyCode,
+) -> keybindings::KeyCombination {
+    let key_code = match code {
+        KeyCode::Char(c) if modifiers != KeyModifiers::NONE => {
+            KeyCode::Char(c.to_ascii_lowercase())
+        }
+        code => code,
+    };
+    keybindings::KeyCombination {
+        modifier: modifiers,
+        key_code,
+    }
+}
+
+/// Collapse a list of events into the one event the engine should run.
+pub(crate) fn combine_events(events: Vec<ReedlineEvent>) -> ReedlineEvent {
+    match events.len() {
+        0 => ReedlineEvent::None,
+        1 => events.into_iter().next().expect("length checked"),
+        _ => ReedlineEvent::Multiple(events),
+    }
+}
 
 /// Lower the non-key terminal events every edit mode treats identically:
 /// primary-button clicks, resize, focus, and bracketed paste with its

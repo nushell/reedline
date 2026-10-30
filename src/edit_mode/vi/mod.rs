@@ -8,9 +8,15 @@ pub use vi_keybindings::{
     default_vi_insert_keybindings, default_vi_normal_keybindings, default_vi_visual_keybindings,
 };
 
-use super::{is_meta_char, is_plain_char, is_text_char, parse_non_key_event, EditMode};
+use super::{
+    combine_events, is_meta_char, is_plain_char, is_text_char, normalized_key_combination,
+    parse_non_key_event, EditMode, SequenceResolution, SequenceResolver,
+};
 use crate::{
-    edit_mode::{keybindings::Keybindings, vi::parser::parse},
+    edit_mode::{
+        keybindings::{KeyCombination, Keybindings},
+        vi::parser::parse,
+    },
     enums::{EditCommand, EventStatus, ReedlineEvent, ReedlineRawEvent},
     Direction, MotionTarget, PromptEditMode, PromptViMode,
 };
@@ -48,6 +54,8 @@ pub struct Vi {
     previous: Option<ReedlineEvent>,
     // last f, F, t, T motion for ; and ,
     last_char_search: Option<MotionTarget>,
+    // half-typed explicit multi-key binding
+    resolver: SequenceResolver,
 }
 
 impl Default for Vi {
@@ -82,6 +90,7 @@ impl Vi {
             mode: ViMode::Insert,
             previous: None,
             last_char_search: None,
+            resolver: SequenceResolver::new(),
         }
     }
 
@@ -121,11 +130,24 @@ impl EditMode for Vi {
                 // Abandon a half-typed sequence (`3f`), or the next key would
                 // be parsed as its argument in the new mode.
                 self.cache.clear();
+                self.resolver.reset();
                 self.mode = ViMode::from(target);
                 EventStatus::Handled
             }
             _ => EventStatus::Inapplicable,
         }
+    }
+
+    fn has_pending_sequence(&self) -> bool {
+        self.resolver.is_pending()
+    }
+
+    fn flush_pending_sequence(&mut self) -> ReedlineEvent {
+        let pending = self.resolver.take_pending();
+        if pending.is_empty() {
+            return ReedlineEvent::None;
+        }
+        combine_events(self.flush_keys(&pending))
     }
 }
 
@@ -145,14 +167,178 @@ fn with_trailing_repaint(event: ReedlineEvent) -> ReedlineEvent {
 }
 
 impl Vi {
-    /// Route one keypress: the meta prefix first, then the mode's own grammar
-    /// and tables. A method rather than the body of `parse_event` so the meta
-    /// path can re-dispatch the stripped key without a raw-event round trip.
+    /// Route one keypress: the meta prefix first, then an explicit chord if
+    /// one is live (or may start here), then the mode's own grammar and
+    /// tables.
+    ///
+    /// **Vi grammar wins.** A chord may only start where an explicit binding
+    /// would fire: a key that is bound, or a non-character key. An unbound
+    /// plain character belongs to the vi parser, so `dd`, `3f` and `g g`
+    /// cannot be shadowed by a sequence. Once a chord *is* pending it owns the
+    /// next keys, so the second `j` of `j j` is not parsed as a motion.
     fn dispatch_key(&mut self, modifiers: KeyModifiers, code: KeyCode) -> ReedlineEvent {
         if let Some(event) = self.meta_as_escape(modifiers, code) {
             return event;
         }
 
+        // Esc always cancels a half-typed chord: in insert it must leave the
+        // mode, not insert the pending characters first.
+        if self.resolver.is_pending() && code == KeyCode::Esc {
+            self.resolver.reset();
+        }
+
+        if self.resolver.is_pending() || self.chord_may_start(modifiers, code) {
+            if let Some(event) = self.dispatch_chord(modifiers, code) {
+                return event;
+            }
+        }
+
+        self.dispatch_plain(modifiers, code)
+    }
+
+    /// Whether this key may begin an explicit chord.
+    fn chord_may_start(&self, modifiers: KeyModifiers, code: KeyCode) -> bool {
+        if !self.cache.is_empty() || code == KeyCode::Esc {
+            return false;
+        }
+        let key = self.chord_combination(modifiers, code);
+        if !self
+            .keybindings()
+            .is_sequence_prefix(std::slice::from_ref(&key))
+        {
+            return false;
+        }
+        match self.mode {
+            // Insert has no grammar to defer to.
+            ViMode::Insert => true,
+            ViMode::Normal | ViMode::Visual => match code {
+                KeyCode::Char(_) if is_plain_char(modifiers) => self
+                    .keybindings()
+                    .find_binding(key.modifier, key.key_code)
+                    .is_some(),
+                _ => true,
+            },
+        }
+    }
+
+    /// The key spelling the mode's table uses.
+    fn chord_combination(&self, modifiers: KeyModifiers, code: KeyCode) -> KeyCombination {
+        match (self.mode, code) {
+            // Normal/visual look bindings up by the lowercased character even
+            // without a modifier, so their chords use the same spelling.
+            (ViMode::Normal | ViMode::Visual, KeyCode::Char(c)) => KeyCombination {
+                modifier: modifiers,
+                key_code: KeyCode::Char(c.to_ascii_lowercase()),
+            },
+            _ => normalized_key_combination(modifiers, code),
+        }
+    }
+
+    /// Feed one key to the live chord. `None` means the chord does not claim
+    /// it and the ordinary dispatch should run.
+    fn dispatch_chord(&mut self, modifiers: KeyModifiers, code: KeyCode) -> Option<ReedlineEvent> {
+        let key = self.chord_combination(modifiers, code);
+        let resolution = match self.mode {
+            ViMode::Normal => self.resolver.resolve(&self.normal_keybindings, key),
+            ViMode::Insert => self.resolver.resolve(&self.insert_keybindings, key),
+            ViMode::Visual => self.resolver.resolve(&self.visual_keybindings, key),
+        };
+        match resolution {
+            SequenceResolution::Pending => Some(ReedlineEvent::None),
+            SequenceResolution::Complete(event) => Some(event),
+            SequenceResolution::NoMatch { flush } if flush.is_empty() => None,
+            SequenceResolution::NoMatch { flush } => {
+                let mut events = self.flush_keys(&flush);
+                let current = self.dispatch_key(modifiers, code);
+                if current != ReedlineEvent::None {
+                    events.push(current);
+                }
+                Some(combine_events(events))
+            }
+        }
+    }
+
+    /// Resolve keys that were pending when a sequence was interrupted or timed
+    /// out. A complete sequence inside the prefix wins; the rest is replayed
+    /// through the mode's single-key fallback.
+    fn flush_keys(&mut self, keys: &[KeyCombination]) -> Vec<ReedlineEvent> {
+        let mut events = Vec::new();
+        let mut rest = keys;
+        loop {
+            let exact = match self.mode {
+                ViMode::Normal => self.normal_keybindings.longest_sequence_prefix(rest),
+                ViMode::Insert => self.insert_keybindings.longest_sequence_prefix(rest),
+                ViMode::Visual => self.visual_keybindings.longest_sequence_prefix(rest),
+            };
+            match exact {
+                Some((len, event)) => {
+                    events.push(event);
+                    rest = &rest[len..];
+                }
+                None => break,
+            }
+        }
+        for key in rest {
+            let event = self.fallback_for(key);
+            if event != ReedlineEvent::None {
+                events.push(event);
+            }
+        }
+        events
+    }
+
+    /// One flushed key, handled as if it had never started a chord.
+    fn fallback_for(&self, key: &KeyCombination) -> ReedlineEvent {
+        match self.mode {
+            ViMode::Insert => self.insert_single_key(key.modifier, key.key_code),
+            ViMode::Normal | ViMode::Visual => self
+                .keybindings()
+                .find_binding(key.modifier, key.key_code)
+                .unwrap_or(ReedlineEvent::None),
+        }
+    }
+
+    /// The insert-mode table plus self-insert, shared by ordinary dispatch and
+    /// chord fallback.
+    fn insert_single_key(&self, modifier: KeyModifiers, code: KeyCode) -> ReedlineEvent {
+        let KeyCode::Char(c) = code else {
+            return self
+                .keybindings()
+                .find_binding(modifier, code)
+                .unwrap_or(ReedlineEvent::None);
+        };
+        // Note. The modifier can also be a combination of modifiers, for
+        // example:
+        //     KeyModifiers::CONTROL | KeyModifiers::ALT
+        //     KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT
+        //
+        // Mixed modifiers are used by non american keyboards that have extra
+        // keys like 'alt gr'. Keep this in mind if in the future there are
+        // cases where an event is not being captured
+        let c = match modifier {
+            KeyModifiers::NONE => c,
+            _ => c.to_ascii_lowercase(),
+        };
+
+        self.keybindings()
+            .find_binding(modifier, KeyCode::Char(c))
+            .unwrap_or_else(|| {
+                if is_text_char(modifier) {
+                    ReedlineEvent::Edit(vec![EditCommand::InsertChar(
+                        if modifier == KeyModifiers::SHIFT {
+                            c.to_ascii_uppercase()
+                        } else {
+                            c
+                        },
+                    )])
+                } else {
+                    ReedlineEvent::None
+                }
+            })
+    }
+
+    /// Route one keypress through the mode's grammar and tables.
+    fn dispatch_plain(&mut self, modifiers: KeyModifiers, code: KeyCode) -> ReedlineEvent {
         match (self.mode, modifiers, code) {
             // TODO: This guard changes `2v`: the pending count keeps `cache`
             // non-empty, so `v` no longer enters Visual mode. Decide how
@@ -218,36 +404,7 @@ impl Vi {
                     ReedlineEvent::None
                 }
             }
-            (ViMode::Insert, modifier, KeyCode::Char(c)) => {
-                // Note. The modifier can also be a combination of modifiers, for
-                // example:
-                //     KeyModifiers::CONTROL | KeyModifiers::ALT
-                //     KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT
-                //
-                // Mixed modifiers are used by non american keyboards that have extra
-                // keys like 'alt gr'. Keep this in mind if in the future there are
-                // cases where an event is not being captured
-                let c = match modifier {
-                    KeyModifiers::NONE => c,
-                    _ => c.to_ascii_lowercase(),
-                };
-
-                self.keybindings()
-                    .find_binding(modifier, KeyCode::Char(c))
-                    .unwrap_or_else(|| {
-                        if is_text_char(modifier) {
-                            ReedlineEvent::Edit(vec![EditCommand::InsertChar(
-                                if modifier == KeyModifiers::SHIFT {
-                                    c.to_ascii_uppercase()
-                                } else {
-                                    c
-                                },
-                            )])
-                        } else {
-                            ReedlineEvent::None
-                        }
-                    })
-            }
+            (ViMode::Insert, modifier, KeyCode::Char(_)) => self.insert_single_key(modifier, code),
             (_, KeyModifiers::NONE, KeyCode::Esc) => ReedlineEvent::Multiple(self.escape()),
             (ViMode::Normal | ViMode::Visual, _, _) => {
                 match self.keybindings().find_binding(modifiers, code) {
@@ -298,6 +455,7 @@ impl Vi {
     /// the caret back onto the last typed grapheme, as vim does.
     fn escape(&mut self) -> Vec<ReedlineEvent> {
         self.cache.clear();
+        self.resolver.reset();
         let leaving_insert = self.mode == ViMode::Insert;
         self.mode = ViMode::Normal;
         let mut events = vec![ReedlineEvent::Esc];
@@ -358,6 +516,13 @@ mod test {
 
     fn key(code: KeyCode, modifiers: KeyModifiers) -> ReedlineRawEvent {
         ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(code, modifiers))).unwrap()
+    }
+
+    fn combo(c: char) -> KeyCombination {
+        KeyCombination {
+            modifier: KeyModifiers::NONE,
+            key_code: KeyCode::Char(c),
+        }
     }
 
     #[test]
@@ -1547,5 +1712,251 @@ mod test {
             in_normal(KeyCode::Left, KeyModifiers::NONE),
             ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuLeft, ReedlineEvent::Left])
         );
+    }
+
+    // --- explicit multi-key sequences (chords) ---
+
+    fn vi_with(insert: Keybindings, normal: Keybindings, visual: Keybindings, mode: ViMode) -> Vi {
+        Vi {
+            mode,
+            ..Vi::new(insert, normal, visual)
+        }
+    }
+
+    #[test]
+    fn a_chord_completes_in_insert_mode() {
+        let mut insert = default_vi_insert_keybindings();
+        insert.add_binding_sequence(&[combo('j'), combo('j')], ReedlineEvent::Esc);
+        let mut vi = vi_with(
+            insert,
+            default_vi_normal_keybindings(),
+            default_vi_visual_keybindings(),
+            ViMode::Insert,
+        );
+
+        assert_eq!(
+            vi.parse_event(key(KeyCode::Char('j'), KeyModifiers::NONE)),
+            ReedlineEvent::None
+        );
+        assert!(vi.has_pending_sequence());
+        assert_eq!(
+            vi.parse_event(key(KeyCode::Char('j'), KeyModifiers::NONE)),
+            ReedlineEvent::Esc
+        );
+        assert!(!vi.has_pending_sequence());
+    }
+
+    #[test]
+    fn an_insert_chord_timeout_self_inserts_the_prefix() {
+        let mut insert = default_vi_insert_keybindings();
+        insert.add_binding_sequence(&[combo('j'), combo('j')], ReedlineEvent::Esc);
+        let mut vi = vi_with(
+            insert,
+            default_vi_normal_keybindings(),
+            default_vi_visual_keybindings(),
+            ViMode::Insert,
+        );
+
+        assert_eq!(
+            vi.parse_event(key(KeyCode::Char('j'), KeyModifiers::NONE)),
+            ReedlineEvent::None
+        );
+        assert_eq!(
+            vi.flush_pending_sequence(),
+            ReedlineEvent::Edit(vec![EditCommand::InsertChar('j')])
+        );
+        assert!(!vi.has_pending_sequence());
+    }
+
+    #[test]
+    fn an_insert_chord_mismatch_flushes_then_self_inserts_the_new_key() {
+        let mut insert = default_vi_insert_keybindings();
+        insert.add_binding_sequence(&[combo('j'), combo('j')], ReedlineEvent::Esc);
+        let mut vi = vi_with(
+            insert,
+            default_vi_normal_keybindings(),
+            default_vi_visual_keybindings(),
+            ViMode::Insert,
+        );
+
+        assert_eq!(
+            vi.parse_event(key(KeyCode::Char('j'), KeyModifiers::NONE)),
+            ReedlineEvent::None
+        );
+        assert_eq!(
+            vi.parse_event(key(KeyCode::Char('x'), KeyModifiers::NONE)),
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Edit(vec![EditCommand::InsertChar('j')]),
+                ReedlineEvent::Edit(vec![EditCommand::InsertChar('x')]),
+            ])
+        );
+    }
+
+    #[test]
+    fn a_normal_key_that_is_both_binding_and_prefix_waits() {
+        let mut normal = default_vi_normal_keybindings();
+        normal.add_binding(KeyModifiers::NONE, KeyCode::Char('j'), ReedlineEvent::Down);
+        normal.add_binding_sequence(&[combo('j'), combo('j')], ReedlineEvent::Esc);
+        let mut vi = vi_with(
+            default_vi_insert_keybindings(),
+            normal,
+            default_vi_visual_keybindings(),
+            ViMode::Normal,
+        );
+
+        // The binding is a prefix, so the first `j` must not fire Down yet.
+        assert_eq!(
+            vi.parse_event(key(KeyCode::Char('j'), KeyModifiers::NONE)),
+            ReedlineEvent::None
+        );
+        assert_eq!(
+            vi.parse_event(key(KeyCode::Char('j'), KeyModifiers::NONE)),
+            ReedlineEvent::Esc
+        );
+
+        // On its own, the shorter binding is the timeout fallback.
+        assert_eq!(
+            vi.parse_event(key(KeyCode::Char('j'), KeyModifiers::NONE)),
+            ReedlineEvent::None
+        );
+        assert_eq!(vi.flush_pending_sequence(), ReedlineEvent::Down);
+    }
+
+    #[test]
+    fn a_normal_chord_mismatch_flushes_the_binding_first() {
+        let mut normal = default_vi_normal_keybindings();
+        normal.add_binding(KeyModifiers::NONE, KeyCode::Char('j'), ReedlineEvent::Down);
+        normal.add_binding_sequence(&[combo('j'), combo('j')], ReedlineEvent::Esc);
+        let mut vi = vi_with(
+            default_vi_insert_keybindings(),
+            normal,
+            default_vi_visual_keybindings(),
+            ViMode::Normal,
+        );
+
+        assert_eq!(
+            vi.parse_event(key(KeyCode::Char('j'), KeyModifiers::NONE)),
+            ReedlineEvent::None
+        );
+        assert_eq!(
+            vi.parse_event(key(KeyCode::Char('l'), KeyModifiers::CONTROL)),
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Down, ReedlineEvent::ClearScreen])
+        );
+    }
+
+    /// Vi's own `dd` wins over an explicit `d d` chord: `d` is unbound, so the
+    /// grammar claims both keys and the chord never starts.
+    #[test]
+    fn vi_grammar_dd_wins_over_a_chord() {
+        let mut normal = default_vi_normal_keybindings();
+        normal.add_binding_sequence(&[combo('d'), combo('d')], ReedlineEvent::ClearScreen);
+        let mut vi = vi_with(
+            default_vi_insert_keybindings(),
+            normal,
+            default_vi_visual_keybindings(),
+            ViMode::Normal,
+        );
+
+        assert_eq!(
+            vi.parse_event(key(KeyCode::Char('d'), KeyModifiers::NONE)),
+            ReedlineEvent::None
+        );
+        assert_eq!(
+            vi.parse_event(key(KeyCode::Char('d'), KeyModifiers::NONE)),
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Cut {
+                target: MotionTarget::LineEdge(Direction::Forward),
+                granularity: Granularity::LineWise,
+            }])])
+        );
+    }
+
+    /// A live count/operator sequence keeps priority: `3f` takes its argument
+    /// even when `f f` is a chord.
+    #[test]
+    fn vi_grammar_counted_find_wins_over_a_chord() {
+        let mut normal = default_vi_normal_keybindings();
+        normal.add_binding_sequence(&[combo('f'), combo('f')], ReedlineEvent::ClearScreen);
+        let mut vi = vi_with(
+            default_vi_insert_keybindings(),
+            normal,
+            default_vi_visual_keybindings(),
+            ViMode::Normal,
+        );
+
+        assert_eq!(
+            vi.parse_event(key(KeyCode::Char('3'), KeyModifiers::NONE)),
+            ReedlineEvent::None
+        );
+        assert_eq!(
+            vi.parse_event(key(KeyCode::Char('f'), KeyModifiers::NONE)),
+            ReedlineEvent::None
+        );
+        assert_eq!(
+            vi.parse_event(key(KeyCode::Char('x'), KeyModifiers::NONE)),
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Edit(vec![EditCommand::Move(MotionTarget::Find {
+                    ch: 'x',
+                    direction: Direction::Forward,
+                    stop: crate::FindStop::On,
+                })]),
+                ReedlineEvent::Edit(vec![EditCommand::Move(MotionTarget::Find {
+                    ch: 'x',
+                    direction: Direction::Forward,
+                    stop: crate::FindStop::On,
+                })]),
+                ReedlineEvent::Edit(vec![EditCommand::Move(MotionTarget::Find {
+                    ch: 'x',
+                    direction: Direction::Forward,
+                    stop: crate::FindStop::On,
+                })]),
+            ])
+        );
+    }
+
+    #[test]
+    fn esc_cancels_a_pending_chord_without_flushing_it() {
+        let mut normal = default_vi_normal_keybindings();
+        normal.add_binding(KeyModifiers::NONE, KeyCode::Char('j'), ReedlineEvent::Down);
+        normal.add_binding_sequence(&[combo('j'), combo('j')], ReedlineEvent::Esc);
+        let mut vi = vi_with(
+            default_vi_insert_keybindings(),
+            normal,
+            default_vi_visual_keybindings(),
+            ViMode::Normal,
+        );
+
+        assert_eq!(
+            vi.parse_event(key(KeyCode::Char('j'), KeyModifiers::NONE)),
+            ReedlineEvent::None
+        );
+        assert_eq!(
+            vi.parse_event(key(KeyCode::Esc, KeyModifiers::NONE)),
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
+        );
+        assert!(!vi.has_pending_sequence());
+    }
+
+    #[test]
+    fn switching_mode_abandons_a_pending_chord() {
+        let mut normal = default_vi_normal_keybindings();
+        normal.add_binding(KeyModifiers::NONE, KeyCode::Char('j'), ReedlineEvent::Down);
+        normal.add_binding_sequence(&[combo('j'), combo('j')], ReedlineEvent::Esc);
+        let mut vi = vi_with(
+            default_vi_insert_keybindings(),
+            normal,
+            default_vi_visual_keybindings(),
+            ViMode::Normal,
+        );
+
+        assert_eq!(
+            vi.parse_event(key(KeyCode::Char('j'), KeyModifiers::NONE)),
+            ReedlineEvent::None
+        );
+        assert!(vi.has_pending_sequence());
+
+        vi.handle_mode_specific_event(ReedlineEvent::SwitchMode(PromptEditMode::Vi(
+            PromptViMode::Insert,
+        )));
+        assert!(!vi.has_pending_sequence());
     }
 }

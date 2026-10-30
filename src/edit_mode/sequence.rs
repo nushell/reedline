@@ -12,7 +12,10 @@ pub enum SequenceResolution {
     /// The key does not continue the sequence. `flush` holds the keys that
     /// were pending *before* it; the current key was not consumed and the mode
     /// should hand it to its ordinary single-key path.
-    NoMatch { flush: Vec<KeyCombination> },
+    NoMatch {
+        /// Keys to replay through the mode's fallback, in order.
+        flush: Vec<KeyCombination>,
+    },
 }
 
 /// Tracks a half-typed multi-key sequence.
@@ -173,10 +176,7 @@ mod tests {
     fn a_longer_sequence_wins_over_a_shorter_complete_one() {
         let mut kb = Keybindings::new();
         kb.add_binding_sequence(&[combo('a'), combo('b')], ReedlineEvent::Up);
-        kb.add_binding_sequence(
-            &[combo('a'), combo('b'), combo('c')],
-            ReedlineEvent::Down,
-        );
+        kb.add_binding_sequence(&[combo('a'), combo('b'), combo('c')], ReedlineEvent::Down);
         let mut resolver = SequenceResolver::new();
 
         assert_eq!(
