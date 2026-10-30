@@ -496,11 +496,17 @@ impl Vi {
 
         // Both mode arms look bindings up by the lowercased char, Shift
         // riding in the modifiers; match that so a user's `Alt-Shift-x`
-        // binding is found the same way `Shift-x` is.
+        // binding is found the same way `Shift-x` is. A sequence starting with
+        // the Alt chord is an explicit opt-out too, so its first key can open
+        // the chord instead of escaping.
+        let key = self.chord_combination(modifiers, code);
         if self
             .keybindings()
-            .find_binding(modifiers, KeyCode::Char(c.to_ascii_lowercase()))
+            .find_binding(key.modifier, key.key_code)
             .is_some()
+            || self
+                .keybindings()
+                .is_sequence_prefix(std::slice::from_ref(&key))
         {
             return None;
         }
@@ -1782,6 +1788,33 @@ mod test {
         assert_eq!(
             vi.parse_event(key(KeyCode::Char('c'), KeyModifiers::NONE)),
             ReedlineEvent::ClearScreen
+        );
+    }
+
+    #[test]
+    fn an_alt_chord_can_start_a_sequence() {
+        let alt_j = KeyCombination {
+            modifier: KeyModifiers::ALT,
+            key_code: KeyCode::Char('j'),
+        };
+        let mut insert = default_vi_insert_keybindings();
+        insert.add_binding_sequence(&[alt_j.clone(), alt_j], ReedlineEvent::Esc);
+        let mut vi = vi_with(
+            insert,
+            default_vi_normal_keybindings(),
+            default_vi_visual_keybindings(),
+            ViMode::Insert,
+        );
+
+        // An Alt key with no binding is normally `Esc` + key; an explicit
+        // sequence starting there opts out of that.
+        assert_eq!(
+            vi.parse_event(key(KeyCode::Char('j'), KeyModifiers::ALT)),
+            ReedlineEvent::None
+        );
+        assert_eq!(
+            vi.parse_event(key(KeyCode::Char('j'), KeyModifiers::ALT)),
+            ReedlineEvent::Esc
         );
     }
 
