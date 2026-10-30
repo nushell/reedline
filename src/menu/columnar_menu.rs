@@ -720,7 +720,10 @@ impl Menu for ColumnarMenu {
 
         let visible_rows = rows.min(available_lines as usize);
         let menu_column = column as usize / self.get_width();
-        if menu_column >= columns || menu_row as usize + self.skip_rows >= visible_rows {
+        if menu_column >= columns
+            || menu_row as usize >= visible_rows
+            || self.skip_rows + menu_row as usize >= rows
+        {
             return None;
         }
 
@@ -1719,5 +1722,28 @@ mod tests {
         assert_eq!(menu.selection_at(39, 1, 100, 100), None);
         assert_eq!(menu.selection_at(40, 1, 100, 100), None);
         assert_eq!(menu.selection_at(49, 1, 100, 100), None);
+    }
+
+    /// After scrolling, the screen shows rows `skip_rows..skip_rows + window`;
+    /// a click on the last shown row picks that row.
+    #[test]
+    fn menu_mouse_click_selection_after_scroll() {
+        let names: Vec<String> = (0..40).map(|v| v.to_string()).collect();
+        let names: Vec<_> = names.iter().map(|v| v.as_ref()).collect();
+        let mut menu = ColumnarMenu::default()
+            .with_traversal_direction(TraversalDirection::Horizontal)
+            .with_column_width(Some(10))
+            .with_columns(4)
+            .with_name("testmenu");
+        let mut editor = Editor::default();
+        let mut completer = FakeCompleter::new(&names);
+
+        setup_menu(&mut menu, &mut editor, &mut completer, (100, 100));
+        // Row 7 selected in a 5-row window, as `scroll_offset_usize` leaves it.
+        menu.skip_rows = 3;
+
+        assert_eq!(menu.selection_at(0, 0, 100, 5), Some(12));
+        assert_eq!(menu.selection_at(0, 4, 100, 5), Some(28));
+        assert_eq!(menu.selection_at(0, 5, 100, 5), None);
     }
 }

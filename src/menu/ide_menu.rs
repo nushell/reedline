@@ -857,7 +857,14 @@ impl Menu for IdeMenu {
         let border = self.default_details.border.is_some() as u16;
         let menu_row = menu_row.checked_sub(border)?;
 
-        let menu_left = self.working_details.space_left;
+        // A description on the left is drawn between the spacing and the box.
+        let details = &self.working_details;
+        let description_left = if details.description_is_right {
+            0
+        } else {
+            details.description_width + details.description_offset
+        };
+        let menu_left = details.space_left + description_left;
         let menu_right = menu_left + self.working_details.completion_width;
         if column < menu_left + border || column + border >= menu_right {
             return None;
@@ -1784,5 +1791,43 @@ mod tests {
         assert_eq!(menu.selection_at(c, 1, 100, 100), None);
         assert_eq!(menu.selection_at(d, 1, 100, 100), None);
         assert_eq!(menu.selection_at(e, 1, 100, 100), None);
+    }
+
+    struct DescribedCompleter;
+
+    impl Completer for DescribedCompleter {
+        fn complete(&mut self, _line: &str, pos: usize) -> crate::CompletionResult {
+            crate::CompletionResult::fresh(
+                ["a", "b"]
+                    .map(|name| Suggestion {
+                        description: Some("a description".to_string()),
+                        ..fake_suggestion(name, pos)
+                    })
+                    .to_vec(),
+            )
+        }
+    }
+
+    /// With the description drawn on the left, the completion box starts
+    /// after it, so clicks on the description select nothing.
+    #[test]
+    fn menu_mouse_click_selection_description_left() {
+        let mut menu = IdeMenu::default()
+            .with_default_border()
+            .with_description_mode(DescriptionMode::Left)
+            .with_name("testmenu");
+        menu.set_cursor_pos((50, 0));
+        let mut editor = Editor::default();
+
+        setup_menu(&mut menu, &mut editor, &mut DescribedCompleter, (100, 100));
+
+        let details = &menu.working_details;
+        assert!(!details.description_is_right);
+        assert!(details.description_width > 0);
+        let box_left = details.space_left + details.description_width + details.description_offset;
+
+        assert_eq!(menu.selection_at(details.space_left + 1, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(box_left + 1, 1, 100, 100), Some(0));
+        assert_eq!(menu.selection_at(box_left + 1, 2, 100, 100), Some(1));
     }
 }
