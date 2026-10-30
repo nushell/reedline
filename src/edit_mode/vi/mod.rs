@@ -208,14 +208,20 @@ impl Vi {
         {
             return false;
         }
+        let has_binding = self
+            .keybindings()
+            .find_binding(key.modifier, key.key_code)
+            .is_some();
+        // Esc and Enter carry a vi/default action of their own. A chord may
+        // only take them when the user bound the key explicitly.
+        if !has_binding && code == KeyCode::Enter {
+            return false;
+        }
         match self.mode {
             // Insert has no grammar to defer to.
             ViMode::Insert => true,
             ViMode::Normal | ViMode::Visual => match code {
-                KeyCode::Char(_) if is_plain_char(modifiers) => self
-                    .keybindings()
-                    .find_binding(key.modifier, key.key_code)
-                    .is_some(),
+                KeyCode::Char(_) if is_plain_char(modifiers) => has_binding,
                 _ => true,
             },
         }

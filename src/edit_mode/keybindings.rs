@@ -5,6 +5,7 @@ use {
     std::collections::HashMap,
 };
 
+/// One keypress: a key code plus the modifiers held with it.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct KeyCombination {
     /// Modifier keys held for this key.
