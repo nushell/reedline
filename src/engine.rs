@@ -3330,8 +3330,17 @@ impl Reedline {
         // the whole buffer.
         let screen_width = self.painter.screen_width();
         let status_room = if self.status_line.is_some() && !self.hide_hints {
-            self.painter
-                .status_room(lines.required_lines(screen_width, false, None))
+            // An open menu hides the hint, so measure the block the painter
+            // draws above it. Active, not visible: a menu opening on this
+            // paint turns visible only in its update below. One that stays
+            // hidden gets its status line checked again by the painter.
+            let block_rows = match self.menus.iter().find(|menu| menu.is_active()) {
+                Some(menu) => lines
+                    .required_lines(screen_width, false, Some(menu))
+                    .saturating_sub(menu.menu_required_lines(screen_width)),
+                None => lines.required_lines(screen_width, false, None),
+            };
+            self.painter.status_room(block_rows)
         } else {
             0
         };
@@ -9576,6 +9585,34 @@ mod tests {
         let output = repaint_output_on(&mut rl, 10);
 
         assert!(output.contains(STATUS_TEXT));
+        assert!(output.contains("ls27"));
+        assert!(!output.contains("ls28"));
+    }
+
+    /// An open menu hides the hint, so a hint wrapping over rows must not
+    /// shorten the menu cut below the status line.
+    #[test]
+    fn columnar_menu_below_the_status_line_ignores_the_hidden_hint() {
+        let words = (0..60).map(|index| format!("ls{index:02}")).collect();
+        let hint: &'static str = "x".repeat(200).leak();
+        let (rl, _) = engine_with_status_line();
+        let mut rl = rl
+            .with_ansi_colors(false)
+            .with_hinter(Box::new(FixedHinter(hint)))
+            .with_completer(Box::new(DefaultCompleter::new(words)))
+            .with_menu(ReedlineMenu::EngineCompleter(Box::new(
+                ColumnarMenu::default().with_name("completion_menu"),
+            )));
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::Menu("completion_menu".to_string()),
+        )
+        .expect("menu opens");
+
+        let output = repaint_output_on(&mut rl, 10);
+
+        assert!(output.contains(STATUS_TEXT));
+        assert!(!output.contains(hint));
         assert!(output.contains("ls27"));
         assert!(!output.contains("ls28"));
     }
