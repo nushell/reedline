@@ -45,14 +45,16 @@ pub fn parse_readline_keyseq(seq: &str) -> Option<(KeyModifiers, KeyCode)> {
         // A bare ESC is one key on its own.
         "\\e" | "^[" => Some((KeyModifiers::NONE, KeyCode::Esc)),
         "^?" => Some((KeyModifiers::NONE, KeyCode::Backspace)),
-        _ => parse_control_or_meta(seq).or_else(|| {
-            // A single literal character.
-            let mut chars = seq.chars();
-            match (chars.next(), chars.next()) {
-                (Some(ch), None) => Some((KeyModifiers::NONE, KeyCode::Char(ch))),
-                _ => None,
-            }
-        }),
+        _ => parse_escape_prefixed(seq)
+            .or_else(|| parse_control_or_meta(seq))
+            .or_else(|| {
+                // A single literal character.
+                let mut chars = seq.chars();
+                match (chars.next(), chars.next()) {
+                    (Some(ch), None) => Some((KeyModifiers::NONE, KeyCode::Char(ch))),
+                    _ => None,
+                }
+            }),
     }
 }
 
@@ -80,8 +82,16 @@ pub fn split_readline_units(seq: &str) -> Option<Vec<&str>> {
                 .map(|(i, c)| i + c.len_utf8())?;
             (&rest[..end], &rest[end..])
         } else if let Some(tail) = rest.strip_prefix("\\e") {
-            let end = rest.len() - tail.len();
-            (&rest[..end], tail)
+            // `\e` alone is ESC; `\eX` is the meta form of one key (the
+            // same shape `parse_readline_keyseq` accepts as Alt+X), so it is
+            // not a unit boundary.
+            let mut chars = tail.chars();
+            let end = match (chars.next(), chars.next()) {
+                (Some('['), _) => unreachable!("handled above"),
+                (Some(ch), None) => rest.len() - tail.len() + ch.len_utf8(),
+                _ => rest.len() - tail.len(),
+            };
+            (&rest[..end], &rest[end..])
         } else if let Some(tail) = rest.strip_prefix('^') {
             let ch = tail.chars().next()?;
             let end = 1 + ch.len_utf8();
@@ -151,6 +161,17 @@ fn parse_named_key(seq: &str) -> Option<(KeyModifiers, KeyCode)> {
         _ => return None,
     };
     Some((modifiers, code))
+}
+
+/// `\eX` is the meta form of one key (readline spells Alt-C as `\ec`),
+/// which is why it is a single key and not an ESC chord unit.
+fn parse_escape_prefixed(seq: &str) -> Option<(KeyModifiers, KeyCode)> {
+    let tail = seq.strip_prefix("\\e")?;
+    let mut chars = tail.chars();
+    match (chars.next(), chars.next()) {
+        (Some(ch), None) => Some((KeyModifiers::ALT, KeyCode::Char(ch))),
+        _ => None,
+    }
 }
 
 fn parse_control_or_meta(seq: &str) -> Option<(KeyModifiers, KeyCode)> {
@@ -288,6 +309,12 @@ mod tests {
                 (KeyModifiers::CONTROL, KeyCode::Char('a')),
             ])
         );
+        // `\ec` is Alt-C as one key (the meta form), not ESC+c.
+        assert_eq!(
+            parse_readline_keyseq(r"\ec"),
+            Some((KeyModifiers::ALT, KeyCode::Char('c')))
+        );
+        assert_eq!(parse_readline_chord(r"\ec"), None);
         // Single keys and dangling units are not chords.
         assert_eq!(parse_readline_chord(r"\C-x"), None);
         assert_eq!(parse_readline_chord(r"\C-x\C-"), None);
