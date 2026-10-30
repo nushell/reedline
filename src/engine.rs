@@ -221,7 +221,7 @@ pub struct Reedline {
     hide_hints: bool,
 
     // Commentary on the line, drawn below it (errors, signatures, types).
-    // Shown and hidden together with the hints.
+    // Hidden with the hints on submit, but kept in history traversal.
     status_line: Option<Box<dyn StatusLine>>,
 
     // Use ansi coloring or not

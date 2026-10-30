@@ -111,15 +111,14 @@ fn evaluate(name: &str, args: &[&str]) -> Option<String> {
 /// `use_ansi_coloring`. Text wider than `columns` would wrap onto more rows,
 /// so it is cut to one.
 fn render(segments: &[(Style, String)], columns: u16, use_ansi_coloring: bool) -> String {
-    // One column short: text filling the row exactly leaves the terminal's
-    // wrap pending.
-    let mut room = usize::from(columns).saturating_sub(1);
+    let mut room = usize::from(columns);
     let mut out = String::new();
     for (style, text) in segments {
         let mut piece = String::new();
         let mut full = false;
         for c in text.chars() {
-            // Control characters have no width, and would move the cursor.
+            // Control characters have no width here, but reedline shows them
+            // escaped as `^X`, which would overrun the row.
             let Some(width) = c.width() else {
                 continue;
             };
