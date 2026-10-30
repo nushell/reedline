@@ -53,7 +53,7 @@ pub trait EditMode: Send {
         false
     }
 
-    /// Resolve a half-typed sequence after a timeout or a mode change.
+    /// Resolve a half-typed sequence after the engine's timeout expires.
     ///
     /// The mode applies its own fallback: emacs and vi insert replay the keys
     /// as single keys (self-inserting characters), vi normal replays them

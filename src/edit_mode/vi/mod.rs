@@ -1753,6 +1753,35 @@ mod test {
     }
 
     #[test]
+    fn an_insert_strict_prefix_waits_for_more_keys() {
+        let mut insert = default_vi_insert_keybindings();
+        insert.add_binding_sequence(
+            &[combo('a'), combo('b'), combo('c')],
+            ReedlineEvent::ClearScreen,
+        );
+        let mut vi = vi_with(
+            insert,
+            default_vi_normal_keybindings(),
+            default_vi_visual_keybindings(),
+            ViMode::Insert,
+        );
+
+        assert_eq!(
+            vi.parse_event(key(KeyCode::Char('a'), KeyModifiers::NONE)),
+            ReedlineEvent::None
+        );
+        assert_eq!(
+            vi.parse_event(key(KeyCode::Char('b'), KeyModifiers::NONE)),
+            ReedlineEvent::None
+        );
+        assert!(vi.has_pending_sequence());
+        assert_eq!(
+            vi.parse_event(key(KeyCode::Char('c'), KeyModifiers::NONE)),
+            ReedlineEvent::ClearScreen
+        );
+    }
+
+    #[test]
     fn an_insert_chord_timeout_self_inserts_the_prefix() {
         let mut insert = default_vi_insert_keybindings();
         insert.add_binding_sequence(&[combo('j'), combo('j')], ReedlineEvent::Esc);

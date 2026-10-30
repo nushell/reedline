@@ -22,6 +22,34 @@ argument of `f`. A key the sequence has no use for still reaches the table,
 and a binding found there fires and abandons the sequence: any non-character
 key in both, and in helix also a `Ctrl` or `Alt` chord.
 
+## Multi-key sequences
+
+`Keybindings::add_binding_sequence` binds a sequence of keypresses. A key may
+be both a binding and the start of a longer sequence:
+
+```rust
+use reedline::{default_emacs_keybindings, Emacs, KeyCode, KeyCombination,
+               KeyModifiers, ReedlineEvent};
+
+let j = KeyCombination { modifier: KeyModifiers::NONE, key_code: KeyCode::Char('j') };
+let mut keybindings = default_emacs_keybindings();
+keybindings.add_binding(KeyModifiers::NONE, KeyCode::Char('j'), ReedlineEvent::Down);
+keybindings.add_binding_sequence(&[j.clone(), j], ReedlineEvent::Esc);
+let edit_mode = Box::new(Emacs::new(keybindings));
+```
+
+`j` waits for a possible second `j`. If it arrives, the sequence fires; if
+another key arrives or the timeout expires, `j` falls back to its single-key
+binding. The default timeout is 500ms; set it with
+`Reedline::with_keyseq_timeout`.
+
+Fallback is the mode's: emacs and vi insert replay the prefix as typed text
+when it has no binding, vi normal replays it through its table. Vi's own
+grammar has priority: a chord may only start where an explicit binding would
+fire, so `dd`, `3f` and `g g` keep their vi meaning even if a sequence with
+the same first key exists. Once a chord is pending it owns the next keys.
+`Esc` cancels a pending chord instead of flushing it.
+
 ## Common bindings
 
 Four sets are shared between modes:
