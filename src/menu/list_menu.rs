@@ -390,7 +390,30 @@ impl Menu for ListMenu {
             self.reset_position();
         }
 
-        if parsed.remainder.is_empty() {
+        if parsed.remainder.is_empty() && input.is_empty() {
+            // `total_completions` and `partial_complete` both default to
+            // `complete()`. On an empty query that ran the completer twice.
+            // One call fills the size and the visible page.
+            let result = completer.complete(&input, pos);
+            if let Some(values) = result.into_shared() {
+                self.query_size = Some(values.len());
+                let skip = self
+                    .pages
+                    .iter()
+                    .take(self.page)
+                    .map(|page| page.size)
+                    .sum();
+                let take = self
+                    .pages
+                    .get(self.page)
+                    .map_or(self.page_size, |page| page.size);
+                let page = values.iter().skip(skip).take(take).cloned().collect();
+                self.values = escape_suggestions(page);
+            } else {
+                self.query_size = Some(0);
+                self.values = Vec::new().into();
+            }
+        } else if parsed.remainder.is_empty() {
             self.query_size = Some(completer.total_completions(parsed.remainder, pos));
 
             let skip = self
@@ -660,6 +683,27 @@ fn count_digits(mut n: usize) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_query_completes_once() {
+        use crate::{Completer, CompletionResult, Editor, Menu, MenuEvent};
+
+        #[derive(Default)]
+        struct Counting(usize);
+
+        impl Completer for Counting {
+            fn complete(&mut self, _line: &str, _pos: usize) -> CompletionResult {
+                self.0 += 1;
+                CompletionResult::fresh(vec![])
+            }
+        }
+
+        let (mut menu, mut editor, mut completer) =
+            (ListMenu::default(), Editor::default(), Counting::default());
+        menu.menu_event(MenuEvent::Activate(false));
+        menu.update_values(&mut editor, &mut completer);
+        assert_eq!(completer.0, 1);
+    }
 
     #[test]
     fn number_of_lines_test() {
