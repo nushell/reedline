@@ -325,7 +325,8 @@ pub use prompt::{
 mod edit_mode;
 pub use edit_mode::{
     default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
-    default_vi_visual_keybindings, CursorConfig, EditMode, Emacs, Keybindings, Vi,
+    default_vi_visual_keybindings, CursorConfig, EditMode, Emacs, KeyCombination, Keybindings,
+    SequenceResolution, SequenceResolver, Vi,
 };
 pub use edit_mode::{
     default_helix_insert_keybindings, default_helix_normal_keybindings,

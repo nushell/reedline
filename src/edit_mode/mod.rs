@@ -3,6 +3,7 @@ mod cursors;
 mod emacs;
 mod helix;
 mod keybindings;
+mod sequence;
 mod vi;
 
 pub use base::EditMode;
@@ -12,7 +13,8 @@ pub use helix::{
     default_helix_insert_keybindings, default_helix_normal_keybindings,
     default_helix_select_keybindings, Helix,
 };
-pub use keybindings::Keybindings;
+pub use keybindings::{KeyCombination, Keybindings};
+pub use sequence::{SequenceResolution, SequenceResolver};
 pub use vi::{
     default_vi_insert_keybindings, default_vi_normal_keybindings, default_vi_visual_keybindings, Vi,
 };
