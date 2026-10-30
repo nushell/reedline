@@ -376,3 +376,27 @@ since `;` is not available and this is otherwise the only way to drop one.
 
 `;`, `,`, `J`, `G`, `X`, `>`, `<`, the `/` `n` `N` search family, the `m` match
 mode and the multi-cursor commands.
+
+## Opt-in events
+
+`ReedlineEvent::QuotedInsert` implements readline's `quoted-insert`
+(`Ctrl-v` / `Ctrl-q`). It is **not** bound by default; add it to a keybinding
+table to enable it:
+
+```rust
+let mut keybindings = default_emacs_keybindings();
+keybindings.add_binding(
+    KeyModifiers::CONTROL,
+    KeyCode::Char('v'),
+    ReedlineEvent::QuotedInsert,
+);
+```
+
+The next key press is inserted literally instead of being looked up as a
+binding or a mode command. A control chord inserts the byte it stands for, so
+`Ctrl-v Ctrl-v` inserts `0x16`, `Ctrl-v Ctrl-a` inserts `0x01` and
+`Ctrl-v Ctrl-q` inserts `0x11`; `Tab`, `Enter`, `Backspace` and `Esc` insert
+`\t`, `\r`, `0x7f` and `0x1b`. Keys without a single-character representation,
+such as arrows and function keys, are consumed without inserting anything.
+Exactly one key press is consumed; resize, mouse, focus and paste events leave
+the quote pending.

@@ -252,6 +252,10 @@ pub struct Reedline {
     // Whether lines should be accepted immediately
     immediately_accept: bool,
 
+    // Set by `ReedlineEvent::QuotedInsert`: the next key press is inserted
+    // literally, bypassing the edit mode's `parse_event`.
+    quoted_insert: bool,
+
     // External break signal: when set to `true`, `read_line()` will return
     // `Signal::ExternalBreak` with the current buffer contents.
     break_signal: Option<Arc<AtomicBool>>,
@@ -467,6 +471,17 @@ fn burst_char(event: &Event) -> Option<char> {
     }
 }
 
+/// A key press (not a release) that a pending quoted insert should consume.
+fn is_key_press(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Key(KeyEvent {
+            kind: KeyEventKind::Press | KeyEventKind::Repeat,
+            ..
+        })
+    )
+}
+
 /// A key press that stands for a newline in pasted text: a bare `Enter` (CR),
 /// or `Ctrl-J`, which is how a raw LF arrives in raw mode.
 fn is_pasted_newline(event: &Event) -> bool {
@@ -546,6 +561,7 @@ impl Reedline {
             bracketed_paste: BracketedPasteGuard::default(),
             kitty_protocol: KittyProtocolGuard::default(),
             immediately_accept: false,
+            quoted_insert: false,
             break_signal: None,
             repaint_signal: None,
             poll_interval: DEFAULT_POLL_INTERVAL,
@@ -1282,6 +1298,9 @@ impl Reedline {
     /// ExternalBreak) for the painter to resume from.
     fn begin_read(&mut self) -> Option<PainterSuspendedState> {
         self.hide_hints = false;
+        // A quote left over from a previous call must not swallow the first
+        // key of this one.
+        self.quoted_insert = false;
 
         // The last command context belongs to the previous call. Only a
         // submit in this call may set it again, so a host command, Ctrl-C
@@ -1568,6 +1587,61 @@ impl Reedline {
         accept_lone_value
     }
 
+    /// Translate a raw key event into the literal text a pending
+    /// [`ReedlineEvent::QuotedInsert`] inserts.
+    ///
+    /// Returns `None` for keys without a single-character representation
+    /// (arrows, function keys, ...): the quote is still consumed, but nothing
+    /// is inserted.
+    fn quoted_insert_command(event: &Event) -> Option<EditCommand> {
+        let Event::Key(KeyEvent {
+            code, modifiers, ..
+        }) = event
+        else {
+            return None;
+        };
+
+        let c = match code {
+            KeyCode::Char(c) => {
+                if modifiers.contains(KeyModifiers::CONTROL) {
+                    Self::control_char(*c)
+                } else {
+                    *c
+                }
+            }
+            KeyCode::Tab => '\t',
+            KeyCode::Enter => '\r',
+            KeyCode::Backspace => '\x7f',
+            KeyCode::Esc => '\x1b',
+            _ => return None,
+        };
+
+        Some(EditCommand::InsertChar(c))
+    }
+
+    /// The character a control chord stands for, undoing the terminal's
+    /// `Ctrl-<key>` byte mapping.
+    ///
+    /// Combinations outside the standard mapping keep their printable form
+    /// (e.g. `Ctrl-1` inserts `1`) rather than guessing a control byte.
+    fn control_char(c: char) -> char {
+        let byte = match c {
+            'a'..='z' => c as u8 - b'a' + 0x01,
+            'A'..='Z' => c as u8 - b'A' + 0x01,
+            '@' | ' ' => 0x00,
+            '[' => 0x1b,
+            '\\' => 0x1c,
+            ']' => 0x1d,
+            '^' => 0x1e,
+            '_' => 0x1f,
+            '?' => 0x7f,
+            // crossterm decodes the raw bytes 0x1c..=0x1f as Ctrl-4..=Ctrl-7.
+            '4'..='7' => c as u8 - b'4' + 0x1c,
+            _ => return c,
+        };
+        byte as char
+    }
+
     fn process_input_batch(
         &mut self,
         prompt: &dyn Prompt,
@@ -1590,10 +1664,15 @@ impl Reedline {
         // it. Fully gated on `burst_batch` (only true when a hook is installed
         // AND a real burst was detected), so normal typing and the no-hook path
         // are byte-for-byte unchanged.
-        let burst_batch = self
-            .paste_burst
-            .as_ref()
-            .is_some_and(|h| h.is_burst_active());
+        // A pending quoted insert wins over burst coalescing: the batch must
+        // go through the per-key path so the first key can bypass the mode
+        // parser. Only the quoted key is affected; the rest of the batch is
+        // parsed normally.
+        let burst_batch = !self.quoted_insert
+            && self
+                .paste_burst
+                .as_ref()
+                .is_some_and(|h| h.is_burst_active());
         // A resize is kept whichever arm parses the batch: the burst drain
         // pushes every event it reads, so a resize arriving mid-paste lands in
         // the burst batch too and must not be swallowed there.
@@ -1646,6 +1725,19 @@ impl Reedline {
         } else {
             let mut edits = vec![];
             for event in events {
+                // A pending quoted insert owns the next key press: insert it
+                // verbatim instead of letting the edit mode translate it. This
+                // runs before the paste-burst reclassification, so `C-v Enter`
+                // inserts a carriage return rather than a newline. Release
+                // events and non-key events are not key presses and leave the
+                // quote pending.
+                if self.quoted_insert && is_key_press(&event) {
+                    self.quoted_insert = false;
+                    if let Some(edit) = Self::quoted_insert_command(&event) {
+                        edits.push(edit);
+                    }
+                    continue;
+                }
                 // Reclassify a newline key (bare `Enter`, or `Ctrl-J` for a raw
                 // LF) that the oracle judges paste-embedded into a newline even
                 // when a full burst was NOT detected (a short fast paste, e.g.
@@ -1662,6 +1754,7 @@ impl Reedline {
                 }
                 if let Ok(event) = ReedlineRawEvent::try_from(event) {
                     match self.edit_mode.parse_event(event) {
+                        ReedlineEvent::QuotedInsert => self.quoted_insert = true,
                         ReedlineEvent::Edit(edit) => edits.extend(edit),
                         ReedlineEvent::Resize(x, y) => resize = Some((x, y)),
                         event => {
@@ -1866,7 +1959,8 @@ impl Reedline {
             | ReedlineEvent::MenuRight
             | ReedlineEvent::MenuPageNext
             | ReedlineEvent::MenuPagePrevious
-            | ReedlineEvent::SwitchMode(_) => Ok(EventStatus::Inapplicable),
+            | ReedlineEvent::SwitchMode(_)
+            | ReedlineEvent::QuotedInsert => Ok(EventStatus::Inapplicable),
         }
     }
 
@@ -2210,6 +2304,10 @@ impl Reedline {
             }
             ReedlineEvent::Repaint => {
                 // A handled Event causes a repaint
+                Ok(EventStatus::Handled)
+            }
+            ReedlineEvent::QuotedInsert => {
+                self.quoted_insert = true;
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::PreviousHistory => {
@@ -9425,5 +9523,116 @@ mod tests {
         assert!(envs.contains(&(OsStr::new("REEDLINE_TEST_DROP"), None)));
 
         assert_eq!(command_into_string(actual), expected);
+    }
+
+    // --- quoted-insert -----------------------------------------------------
+
+    /// Emacs with `Ctrl-v` bound to `ReedlineEvent::QuotedInsert`, the way a
+    /// host opts in (there is no default binding).
+    fn quoted_insert_engine() -> Reedline {
+        seam_engine(emacs_with(
+            KeyModifiers::CONTROL,
+            KeyCode::Char('v'),
+            ReedlineEvent::QuotedInsert,
+        ))
+    }
+
+    #[test]
+    fn quoted_insert_is_not_bound_by_default() {
+        for kb in [
+            crate::default_emacs_keybindings(),
+            crate::default_vi_insert_keybindings(),
+            crate::default_vi_normal_keybindings(),
+            crate::default_vi_visual_keybindings(),
+            crate::default_helix_insert_keybindings(),
+            crate::default_helix_normal_keybindings(),
+            crate::default_helix_select_keybindings(),
+        ] {
+            assert!(
+                kb.find_binding(KeyModifiers::CONTROL, KeyCode::Char('v'))
+                    .is_none(),
+                "Ctrl-v must stay unbound"
+            );
+            assert!(
+                kb.find_binding(KeyModifiers::CONTROL, KeyCode::Char('q'))
+                    .is_none(),
+                "Ctrl-q must stay unbound"
+            );
+        }
+    }
+
+    #[test]
+    fn quoted_insert_inserts_character_literally() {
+        let mut rl = quoted_insert_engine();
+        // Same batch, so the parse loop must see the pending state set by the
+        // preceding event.
+        drive(&mut rl, &[ctrl('v'), ch('x')]);
+        assert_eq!(rl.editor.get_buffer(), "x");
+        assert_eq!(rl.current_insertion_point(), 1);
+    }
+
+    #[test]
+    fn quoted_insert_inserts_control_characters_verbatim() {
+        let mut rl = quoted_insert_engine();
+        // `C-v C-v` inserts the literal 0x16 of the second chord...
+        drive(&mut rl, &[ctrl('v'), ctrl('v')]);
+        assert_eq!(rl.editor.get_buffer(), "\x16");
+        // ...and `C-v C-a` inserts 0x01 instead of running `ToStart`.
+        drive(&mut rl, &[ctrl('v'), ctrl('a')]);
+        assert_eq!(rl.editor.get_buffer(), "\x16\x01");
+        assert_eq!(rl.current_insertion_point(), 2);
+    }
+
+    #[test]
+    fn quoted_insert_handles_named_character_keys() {
+        let mut rl = quoted_insert_engine();
+        drive(
+            &mut rl,
+            &[
+                ctrl('v'),
+                key(KeyCode::Enter),
+                ctrl('v'),
+                key(KeyCode::Tab),
+                ctrl('v'),
+                key(KeyCode::Esc),
+            ],
+        );
+        // Enter inserts a carriage return instead of submitting, Tab a tab,
+        // and Esc 0x1b instead of clearing the line.
+        assert_eq!(rl.editor.get_buffer(), "\r\t\x1b");
+    }
+
+    #[test]
+    fn quoted_insert_consumes_exactly_one_key() {
+        let mut rl = quoted_insert_engine();
+        drive(&mut rl, &[ch('a'), ch('b')]);
+
+        // The quote survives across batches, so it must not be reset when a
+        // batch ends without a key press.
+        drive(&mut rl, &[ctrl('v')]);
+        // An arrow has no single-character representation: it is consumed
+        // (inserting nothing) and must clear the pending state.
+        drive(&mut rl, &[key(KeyCode::Left)]);
+        assert_eq!(rl.editor.get_buffer(), "ab");
+        assert_eq!(rl.current_insertion_point(), 2);
+
+        // Had the arrow left the quote pending, this `Ctrl-a` would have been
+        // inserted as 0x01 rather than moving to the start.
+        drive(&mut rl, &[ctrl('a')]);
+        assert_eq!(rl.editor.get_buffer(), "ab");
+        assert_eq!(rl.current_insertion_point(), 0);
+    }
+
+    #[test]
+    fn quoted_insert_does_not_affect_following_keys() {
+        let mut rl = quoted_insert_engine();
+        // First `Ctrl-a` is quoted and inserts 0x01; the second one is an
+        // ordinary binding and moves to the start of the line.
+        drive(
+            &mut rl,
+            &[ch('a'), ch('b'), ctrl('v'), ctrl('a'), ctrl('a')],
+        );
+        assert_eq!(rl.editor.get_buffer(), "ab\x01");
+        assert_eq!(rl.current_insertion_point(), 0);
     }
 }

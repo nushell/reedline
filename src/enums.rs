@@ -1144,6 +1144,30 @@ pub enum ReedlineEvent {
     /// Run these commands in the editor
     Edit(Vec<EditCommand>),
 
+    /// GNU readline's `quoted-insert` (`C-v` / `C-q`): insert the next key
+    /// press literally instead of interpreting it.
+    ///
+    /// The next key press bypasses the active edit mode's
+    /// [`parse_event`](crate::EditMode::parse_event) entirely, so it cannot
+    /// trigger a binding or a mode command:
+    ///
+    /// - A printable character is inserted as itself.
+    /// - A control chord is inserted as the byte it stands for: `C-v C-v`
+    ///   inserts `0x16`, `C-v C-a` inserts `0x01`, `C-v C-q` inserts `0x11`.
+    /// - `Tab`, `Enter`, `Backspace` and `Esc` insert `\t`, `\r`, `0x7f` and
+    ///   `0x1b` respectively.
+    /// - Any other key (arrows, function keys, ...) has no single-character
+    ///   representation in a decoded terminal event, so it is consumed and
+    ///   inserts nothing. Re-synthesising its escape sequence would depend on
+    ///   the terminal and could re-trigger bindings.
+    ///
+    /// Exactly one key press is consumed. Release events and non-key events
+    /// (resize, mouse, focus, paste) leave the quote pending. There is no
+    /// default binding; hosts opt in, for example with
+    /// `Keybindings::add_binding(KeyModifiers::CONTROL, KeyCode::Char('v'),
+    /// ReedlineEvent::QuotedInsert)`.
+    QuotedInsert,
+
     /// Trigger full repaint
     Repaint,
 
