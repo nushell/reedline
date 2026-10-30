@@ -635,6 +635,8 @@ impl Menu for DescriptionMenu {
         let columns = self.get_cols();
         self.row_pos = (index as u16) / columns;
         self.col_pos = (index as u16) % columns;
+        self.skipped_rows = 0;
+        self.update_examples();
     }
 
     fn menu_required_lines(&self, _terminal_columns: u16) -> u16 {
@@ -851,5 +853,39 @@ mod tests {
         assert_eq!(menu.selection_at(9, 4, 100, 100), None);
         assert_eq!(menu.selection_at(10, 4, 100, 100), None);
         assert_eq!(menu.selection_at(19, 4, 100, 100), None);
+    }
+
+    struct ExampleCompleter;
+
+    impl Completer for ExampleCompleter {
+        fn complete(&mut self, _line: &str, pos: usize) -> crate::CompletionResult {
+            crate::CompletionResult::fresh(
+                ["alpha", "beta"]
+                    .map(|value| Suggestion {
+                        value: value.to_string(),
+                        span: Span { start: 0, end: pos },
+                        extra: Some(vec![format!("{value} example")]),
+                        ..Default::default()
+                    })
+                    .to_vec(),
+            )
+        }
+    }
+
+    /// A click selects like `NextElement` does, so Enter cannot insert the
+    /// example chosen for the entry selected before the click.
+    #[test]
+    fn set_selection_refreshes_examples() {
+        let mut menu = DescriptionMenu::default();
+        menu.update_values(&mut Editor::default(), &mut ExampleCompleter);
+        menu.update_examples();
+        menu.example_index = Some(0);
+        menu.skipped_rows = 2;
+
+        menu.set_selection(1);
+
+        assert_eq!(menu.examples, ["beta example"]);
+        assert_eq!(menu.example_index, None);
+        assert_eq!(menu.skipped_rows, 0);
     }
 }
