@@ -11,11 +11,76 @@ pub struct KeyCombination {
     pub key_code: KeyCode,
 }
 
+/// One node of the sequence trie.
+///
+/// A node may carry an event *and* children: `j` can be a complete binding
+/// while `j j` continues the sequence.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+struct SequenceNode {
+    event: Option<ReedlineEvent>,
+    children: HashMap<KeyCombination, SequenceNode>,
+}
+
+/// A prefix trie over multi-key sequences.
+///
+/// Single-key bindings stay in [`Keybindings::bindings`], so the long-standing
+/// `add_binding` / `find_binding` API is untouched. A sequence of length one
+/// given to [`Keybindings::add_binding_sequence`] is stored there too.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+struct SequenceTrie {
+    root: SequenceNode,
+}
+
+impl SequenceTrie {
+    fn insert(&mut self, keys: &[KeyCombination], event: ReedlineEvent) {
+        let mut node = &mut self.root;
+        for key in keys {
+            node = node.children.entry(key.clone()).or_default();
+        }
+        node.event = Some(event);
+    }
+
+    fn lookup(&self, keys: &[KeyCombination]) -> SequenceLookup {
+        let mut node = &self.root;
+        for key in keys {
+            match node.children.get(key) {
+                Some(child) => node = child,
+                None => {
+                    return SequenceLookup {
+                        exact: None,
+                        is_prefix: false,
+                    }
+                }
+            }
+        }
+        SequenceLookup {
+            exact: node.event.clone(),
+            is_prefix: !node.children.is_empty(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.root.children.is_empty()
+    }
+}
+
+/// What the trie knows about a key path: whether it is a complete binding and
+/// whether longer sequences continue through it.
+#[derive(Debug, Clone)]
+pub(crate) struct SequenceLookup {
+    pub(crate) exact: Option<ReedlineEvent>,
+    pub(crate) is_prefix: bool,
+}
+
 /// Main definition of editor keybindings
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Keybindings {
     /// Defines a keybinding for a reedline event
     pub bindings: HashMap<KeyCombination, ReedlineEvent>,
+    /// Multi-key sequences. Kept out of the public single-key map so direct
+    /// edits to `bindings` cannot leave a stale trie behind.
+    #[serde(default, skip_serializing_if = "SequenceTrie::is_empty")]
+    sequences: SequenceTrie,
 }
 
 impl Default for Keybindings {
@@ -29,6 +94,7 @@ impl Keybindings {
     pub fn new() -> Self {
         Self {
             bindings: HashMap::new(),
+            sequences: SequenceTrie::default(),
         }
     }
 
@@ -49,6 +115,63 @@ impl Keybindings {
     ) {
         let key_combo = KeyCombination { modifier, key_code };
         self.bindings.insert(key_combo, command);
+    }
+
+    /// Adds a multi-key sequence binding.
+    ///
+    /// `keys` are matched in order. A single key is accepted and stored exactly
+    /// like [`add_binding`](Self::add_binding), so the single-key lookup
+    /// behaviour is unchanged. An empty slice is a no-op.
+    ///
+    /// A key may be both a binding and the start of a longer sequence: binding
+    /// `j` with `add_binding` and `j j` here makes `j` wait for a possible
+    /// second `j`; the timeout or an unrelated key falls back to the `j`
+    /// binding.
+    pub fn add_binding_sequence(&mut self, keys: &[KeyCombination], command: ReedlineEvent) {
+        match keys {
+            [] => {}
+            [key] => {
+                self.bindings.insert(key.clone(), command);
+            }
+            keys => self.sequences.insert(keys, command),
+        }
+    }
+
+    /// Find a multi-key sequence binding, exactly.
+    ///
+    /// A one-key slice reads the ordinary single-key table.
+    pub fn find_sequence_binding(&self, keys: &[KeyCombination]) -> Option<ReedlineEvent> {
+        match keys {
+            [] => None,
+            [key] => self.bindings.get(key).cloned(),
+            keys => self.sequences.lookup(keys).exact,
+        }
+    }
+
+    /// Whether `keys` is a proper prefix of at least one longer sequence.
+    pub fn is_sequence_prefix(&self, keys: &[KeyCombination]) -> bool {
+        !keys.is_empty() && self.sequences.lookup(keys).is_prefix
+    }
+
+    /// The trie view used by [`SequenceResolver`](super::SequenceResolver).
+    pub(crate) fn lookup_sequence(&self, keys: &[KeyCombination]) -> SequenceLookup {
+        self.sequences.lookup(keys)
+    }
+
+    /// The longest multi-key sequence at the start of `keys`, with its length.
+    ///
+    /// Used when a pending prefix is flushed: a complete sequence inside the
+    /// prefix wins over replaying its keys one by one.
+    pub(crate) fn longest_sequence_prefix(
+        &self,
+        keys: &[KeyCombination],
+    ) -> Option<(usize, ReedlineEvent)> {
+        (2..=keys.len()).rev().find_map(|len| {
+            self.sequences
+                .lookup(&keys[..len])
+                .exact
+                .map(|event| (len, event))
+        })
     }
 
     /// Find a keybinding based on the modifier and keycode.
@@ -483,5 +606,99 @@ mod test {
         );
         assert_eq!(kb.find_binding(KeyModifiers::NONE, KeyCode::Tab), None);
         assert_eq!(kb.remove_binding(KeyModifiers::NONE, KeyCode::Tab), None);
+    }
+
+    fn combo(c: char) -> KeyCombination {
+        KeyCombination {
+            modifier: KeyModifiers::NONE,
+            key_code: KeyCode::Char(c),
+        }
+    }
+
+    #[test]
+    fn sequence_binding_is_found_exactly_and_as_a_prefix() {
+        let mut kb = Keybindings::new();
+        kb.add_binding_sequence(&[combo('j'), combo('j')], ReedlineEvent::Esc);
+
+        assert!(kb.is_sequence_prefix(&[combo('j')]));
+        assert!(!kb.is_sequence_prefix(&[combo('j'), combo('j')]));
+        assert_eq!(
+            kb.find_sequence_binding(&[combo('j'), combo('j')]),
+            Some(ReedlineEvent::Esc)
+        );
+        assert_eq!(kb.find_sequence_binding(&[combo('j')]), None);
+        assert_eq!(
+            kb.find_sequence_binding(&[combo('j'), combo('x')]),
+            None
+        );
+    }
+
+    #[test]
+    fn a_key_can_be_a_binding_and_a_prefix_at_once() {
+        let mut kb = Keybindings::new();
+        kb.add_binding(KeyModifiers::NONE, KeyCode::Char('j'), ReedlineEvent::Down);
+        kb.add_binding_sequence(&[combo('j'), combo('j')], ReedlineEvent::Esc);
+
+        // The single-key table is unchanged.
+        assert_eq!(
+            kb.find_binding(KeyModifiers::NONE, KeyCode::Char('j')),
+            Some(ReedlineEvent::Down)
+        );
+        // The trie still reports `j` as the start of a longer sequence.
+        assert!(kb.is_sequence_prefix(&[combo('j')]));
+        assert_eq!(
+            kb.find_sequence_binding(&[combo('j'), combo('j')]),
+            Some(ReedlineEvent::Esc)
+        );
+    }
+
+    #[test]
+    fn one_key_sequence_delegates_to_the_single_key_table() {
+        let mut kb = Keybindings::new();
+        kb.add_binding_sequence(&[combo('x')], ReedlineEvent::ClearScreen);
+
+        assert_eq!(
+            kb.find_binding(KeyModifiers::NONE, KeyCode::Char('x')),
+            Some(ReedlineEvent::ClearScreen)
+        );
+        assert_eq!(kb.get_keybindings().len(), 1);
+        assert!(!kb.is_sequence_prefix(&[combo('x')]));
+    }
+
+    #[test]
+    fn empty_sequence_is_a_no_op() {
+        let mut kb = Keybindings::new();
+        kb.add_binding_sequence(&[], ReedlineEvent::Esc);
+        assert!(kb.get_keybindings().is_empty());
+        assert!(!kb.is_sequence_prefix(&[]));
+    }
+
+    #[test]
+    fn longest_sequence_prefix_prefers_the_longest_complete_sequence() {
+        let mut kb = Keybindings::new();
+        kb.add_binding_sequence(&[combo('a'), combo('b')], ReedlineEvent::Up);
+        kb.add_binding_sequence(
+            &[combo('a'), combo('b'), combo('c')],
+            ReedlineEvent::Down,
+        );
+
+        assert_eq!(
+            kb.longest_sequence_prefix(&[combo('a'), combo('b'), combo('c')]),
+            Some((3, ReedlineEvent::Down))
+        );
+        assert_eq!(
+            kb.longest_sequence_prefix(&[combo('a'), combo('b'), combo('x')]),
+            Some((2, ReedlineEvent::Up))
+        );
+        assert_eq!(kb.longest_sequence_prefix(&[combo('a')]), None);
+    }
+
+    #[test]
+    fn a_table_without_sequences_deserializes() {
+        // Old serialized tables have no `sequences` field.
+        let json = r#"{"bindings":{}}"#;
+        let kb: Keybindings = serde_json::from_str(json).expect("deserialize");
+        assert!(kb.get_keybindings().is_empty());
+        assert!(!kb.is_sequence_prefix(&[combo('j')]));
     }
 }
