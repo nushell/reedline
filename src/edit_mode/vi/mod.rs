@@ -142,6 +142,10 @@ impl EditMode for Vi {
         self.resolver.is_pending()
     }
 
+    fn reset_pending_sequence(&mut self) {
+        self.resolver.reset();
+    }
+
     fn flush_pending_sequence(&mut self) -> ReedlineEvent {
         let pending = self.resolver.take_pending();
         if pending.is_empty() {

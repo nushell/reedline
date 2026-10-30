@@ -1297,6 +1297,10 @@ impl Reedline {
     /// ExternalBreak) for the painter to resume from.
     fn begin_read(&mut self) -> Option<PainterSuspendedState> {
         self.hide_hints = false;
+        self.keyseq_deadline = None;
+        // A sequence abandoned by a break, Ctrl-C or submit belongs to the
+        // previous call, not this prompt.
+        self.edit_mode.reset_pending_sequence();
 
         // The last command context belongs to the previous call. Only a
         // submit in this call may set it again, so a host command, Ctrl-C
@@ -3802,6 +3806,17 @@ mod tests {
 
         let rl = Reedline::create().with_keyseq_timeout(Duration::from_millis(42));
         assert_eq!(rl.keyseq_timeout, Duration::from_millis(42));
+    }
+
+    #[test]
+    fn a_new_read_line_drops_a_pending_sequence() {
+        let mut rl = emacs_with_sequence(&[chord_combo('j'), chord_combo('j')], ReedlineEvent::Esc);
+
+        drive(&mut rl, &[ch('j')]);
+        assert!(rl.edit_mode.has_pending_sequence());
+
+        rl.begin_read();
+        assert!(!rl.edit_mode.has_pending_sequence());
     }
 
     #[test]

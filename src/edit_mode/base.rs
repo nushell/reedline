@@ -53,6 +53,13 @@ pub trait EditMode: Send {
         false
     }
 
+    /// Drop a half-typed sequence without resolving it.
+    ///
+    /// Called when a `read_line` starts, so a sequence abandoned by a break or
+    /// a submit cannot leak into the next prompt. Modes without sequence
+    /// support keep the default no-op.
+    fn reset_pending_sequence(&mut self) {}
+
     /// Resolve a half-typed sequence after the engine's timeout expires.
     ///
     /// The mode applies its own fallback: emacs and vi insert replay the keys
