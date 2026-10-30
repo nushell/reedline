@@ -101,6 +101,36 @@ With the `system_clipboard` feature enabled, this set also carries:
 | `Ctrl-Shift-Home`, `Ctrl-Shift-End` | Extend the selection to the buffer start or end |
 | `Ctrl-Shift-a` | Select the whole buffer |
 
+## Completion events
+
+Completion is exposed as events rather than as fixed keys. `Complete` is what
+`Tab` triggers; the other events below have no default binding, matching
+readline's `M-?` and `M-*`, which an embedding application can bind itself:
+
+```rust
+let mut keybindings = default_emacs_keybindings();
+keybindings.add_binding(
+    KeyModifiers::ALT,
+    KeyCode::Char('?'),
+    ReedlineEvent::PossibleCompletions,
+);
+keybindings.add_binding(
+    KeyModifiers::ALT,
+    KeyCode::Char('*'),
+    ReedlineEvent::InsertCompletions,
+);
+```
+
+| Event | readline | Semantics |
+| --- | --- | --- |
+| `Complete` | `Tab` | Insert a lone completion, otherwise the prefix the candidates share. |
+| `PossibleCompletions` | `possible-completions` (`M-?`) | Show the candidates in the active menu, or the first registered one. Never edits the line, even with `quick_completions` or `partial_completions` enabled. Inapplicable when no menu is registered or there are no candidates. |
+| `InsertCompletions` | `insert-completions` (`M-*`) | Replace the word the engine completer reports with every candidate, each followed by a space, as one undoable edit. Dismisses an open menu. Inapplicable when there are no candidates. |
+
+`PossibleCompletions` is a listing action, not a completing one: it does not
+splice the common prefix. `InsertCompletions` is a bulk edit, not a listing:
+it does not open a menu.
+
 ## Emacs mode
 
 Reedline's default when no edit mode is configured. All four

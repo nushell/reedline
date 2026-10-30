@@ -1217,6 +1217,42 @@ pub enum ReedlineEvent {
     /// Move to the previous history page
     MenuPagePrevious,
 
+    /// List the possible completions without changing the line.
+    ///
+    /// The GNU readline counterpart is `possible-completions`, bound to `M-?` by
+    /// default there. This event shows the candidates in an open menu so they can
+    /// be paged through, but never splices anything into the buffer: unlike
+    /// [`Complete`](EditCommand::Complete), it does not insert a lone completion
+    /// and does not insert the shared prefix, even when `quick_completions` or
+    /// `partial_completions` are enabled.
+    ///
+    /// The candidates are drawn from the active menu, or from the first menu
+    /// registered with [`Reedline::with_menu`](crate::Reedline::with_menu) when
+    /// none is active. With no menu registered there is nowhere to draw them, so
+    /// the event is inapplicable. An empty result leaves the line untouched and
+    /// is inapplicable too, letting a binding fall through it.
+    ///
+    /// Reedline has no default binding for this event.
+    PossibleCompletions,
+
+    /// Insert every possible completion at once, separated by spaces.
+    ///
+    /// The GNU readline counterpart is `insert-completions`, bound to `M-*` by
+    /// default there. The candidates replace the span the completer reports for
+    /// the word before the cursor, and each one is followed by a space, so a
+    /// buffer of `th` with candidates `test`, `this`, `that` becomes
+    /// `test this that `. This is one undoable edit.
+    ///
+    /// The candidates come from the engine's [`Completer`](crate::Completer),
+    /// queried against the whole line and the completion point. A menu configured
+    /// with a completer of its own is bypassed; this event always uses the
+    /// engine's source, which is what the default engine-completer menu queries
+    /// too. An empty result is a no-op and reports inapplicable. Any open menu is
+    /// dismissed, since the line it was filtering no longer exists.
+    ///
+    /// Reedline has no default binding for this event.
+    InsertCompletions,
+
     /// Triggers an immediate return from [`Reedline::read_line()`](crate::Reedline::read_line) with an opaque payload.
     ///
     /// Reedline does not inspect or validate the contents of this string. It is

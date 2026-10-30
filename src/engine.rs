@@ -1568,6 +1568,105 @@ impl Reedline {
         accept_lone_value
     }
 
+    /// Show the current completions in a menu without touching the line.
+    ///
+    /// The readline `possible-completions` counterpart: candidates are displayed
+    /// only, never spliced in. Neither a lone suggestion nor the shared prefix
+    /// reaches the buffer, whatever `quick_completions` and `partial_completions`
+    /// say, because this event deliberately bypasses
+    /// [`decide_menu_completion`](Self::decide_menu_completion).
+    ///
+    /// An open menu is refreshed in place; otherwise the first registered menu is
+    /// activated to draw the list. With no menu there is nowhere to list them, and
+    /// a final empty result leaves nothing to show, so both report inapplicable.
+    fn list_possible_completions(&mut self) -> EventStatus {
+        let menu_index = self
+            .menus
+            .iter()
+            .position(|menu| menu.is_active())
+            .or_else(|| (!self.menus.is_empty()).then_some(0));
+
+        let Some(menu_index) = menu_index else {
+            return EventStatus::Inapplicable;
+        };
+
+        let was_active = self.menus[menu_index].is_active();
+        if !was_active {
+            // `true` because the values are refreshed right below; this keeps
+            // the paint cycle from asking the completer a second time.
+            self.menus[menu_index].menu_event(MenuEvent::Activate(true));
+            invalidate_anchor_if_host_completer_runs(&self.menus[menu_index], &mut self.painter);
+        }
+
+        self.menus[menu_index].update_values(
+            &mut self.editor,
+            self.completer.as_mut(),
+            self.history.as_ref(),
+        );
+
+        // A pending answer has no values yet but does not mean "no candidates":
+        // keep the menu open so settling can fill it. A final empty answer has
+        // nothing to show, so undo an activation made just for it.
+        let empty = self.menus[menu_index].get_values().is_empty();
+        if empty && !self.menus[menu_index].results_are_provisional() {
+            if !was_active {
+                self.menus[menu_index].menu_event(MenuEvent::Deactivate);
+            }
+            return EventStatus::Inapplicable;
+        }
+
+        EventStatus::Handled
+    }
+
+    /// Insert every completion at the cursor, separated by spaces.
+    ///
+    /// The readline `insert-completions` counterpart: the word the completer
+    /// reports is replaced by the whole list, each entry followed by a space, as
+    /// one undoable edit. An empty result changes nothing.
+    fn insert_all_completions(&mut self) -> EventStatus {
+        let buffer = self.editor.get_buffer().to_string();
+        let position = self.editor.completion_point();
+        let Some(suggestions) = self
+            .completer
+            .complete(&buffer, position)
+            .into_shared()
+            .filter(|suggestions| !suggestions.is_empty())
+        else {
+            return EventStatus::Inapplicable;
+        };
+
+        // Every suggestion describes the same word; readline deletes that word
+        // and writes the list in its place. Clamp in case a completer reported
+        // a span for a longer line.
+        let span = suggestions[0].span;
+        let start = span.start.min(buffer.len());
+        let end = span.end.min(buffer.len()).max(start);
+
+        let mut replacement = String::new();
+        for suggestion in suggestions.iter() {
+            replacement.push_str(&suggestion.value);
+            replacement.push(' ');
+        }
+
+        self.editor.clear_selection();
+        self.editor.edit_buffer(
+            |line_buffer| {
+                line_buffer.replace_range(start..end, &replacement);
+                line_buffer.set_insertion_point(start + replacement.len());
+            },
+            UndoBehavior::CreateUndoPoint,
+        );
+        if self.input_mode == InputMode::HistoryTraversal {
+            self.input_mode = InputMode::Regular;
+        }
+
+        // The menu was filtering a word that is no longer on the line, and any
+        // completion owed to an earlier keystroke no longer describes it either.
+        self.deactivate_menus();
+
+        EventStatus::Handled
+    }
+
     fn process_input_batch(
         &mut self,
         prompt: &dyn Prompt,
@@ -1866,6 +1965,8 @@ impl Reedline {
             | ReedlineEvent::MenuRight
             | ReedlineEvent::MenuPageNext
             | ReedlineEvent::MenuPagePrevious
+            | ReedlineEvent::PossibleCompletions
+            | ReedlineEvent::InsertCompletions
             | ReedlineEvent::SwitchMode(_) => Ok(EventStatus::Inapplicable),
         }
     }
@@ -1876,6 +1977,8 @@ impl Reedline {
         event: ReedlineEvent,
     ) -> io::Result<EventStatus> {
         match event {
+            ReedlineEvent::PossibleCompletions => Ok(self.list_possible_completions()),
+            ReedlineEvent::InsertCompletions => Ok(self.insert_all_completions()),
             ReedlineEvent::Menu(name) => {
                 if self.active_menu().is_none() {
                     if let Some(index) = self.menus.iter().position(|menu| menu.name() == name) {
@@ -7680,6 +7783,209 @@ mod tests {
             .unwrap();
         assert!(menu_is_active(&reedline));
         reedline
+    }
+
+    /// A completer that always answers with the same suggestions, so a test can
+    /// pin down both the candidates and the span they replace.
+    struct FixedCompleter {
+        suggestions: Vec<Suggestion>,
+    }
+
+    impl FixedCompleter {
+        fn new(values: &[&str], span: Span) -> Self {
+            Self {
+                suggestions: values
+                    .iter()
+                    .map(|value| Suggestion {
+                        value: (*value).to_string(),
+                        span,
+                        ..Default::default()
+                    })
+                    .collect(),
+            }
+        }
+    }
+
+    impl Completer for FixedCompleter {
+        fn complete(&mut self, _line: &str, _pos: usize) -> CompletionResult {
+            CompletionResult::fresh(self.suggestions.clone())
+        }
+    }
+
+    /// An engine with a completion menu and `buffer` already typed.
+    fn engine_with_completion_menu(
+        buffer: &str,
+        completer: Box<dyn Completer + Send>,
+        quick: bool,
+        partial: bool,
+    ) -> Reedline {
+        let completion_menu = ReedlineMenu::EngineCompleter(Box::new(
+            ColumnarMenu::default().with_name("completion_menu"),
+        ));
+        let mut reedline = Reedline::create()
+            .with_completer(completer)
+            .with_menu(completion_menu)
+            .with_quick_completions(quick)
+            .with_partial_completions(partial);
+        reedline.run_edit_commands(&[EditCommand::InsertString(buffer.to_string())]);
+        reedline
+    }
+
+    fn active_menu_value_count(reedline: &Reedline) -> usize {
+        reedline
+            .menus
+            .iter()
+            .find(|menu| menu.is_active())
+            .expect("menu open")
+            .get_values()
+            .len()
+    }
+
+    #[test]
+    fn insert_completions_inserts_every_candidate_separated_by_spaces() {
+        let mut reedline = engine_with_completion_menu(
+            "th",
+            Box::new(FixedCompleter::new(
+                &["test", "this", "that"],
+                Span::new(0, 2),
+            )),
+            false,
+            false,
+        );
+
+        let status = reedline
+            .handle_event(&DefaultPrompt::default(), ReedlineEvent::InsertCompletions)
+            .unwrap();
+
+        assert!(matches!(status, EventStatus::Handled));
+        assert_eq!(reedline.current_buffer_contents(), "test this that ");
+    }
+
+    #[test]
+    fn insert_completions_replaces_only_the_completer_span() {
+        let mut reedline = engine_with_completion_menu(
+            "git ch",
+            Box::new(FixedCompleter::new(
+                &["checkout", "cherry-pick"],
+                Span::new(4, 6),
+            )),
+            false,
+            false,
+        );
+
+        reedline
+            .handle_event(&DefaultPrompt::default(), ReedlineEvent::InsertCompletions)
+            .unwrap();
+
+        assert_eq!(
+            reedline.current_buffer_contents(),
+            "git checkout cherry-pick "
+        );
+    }
+
+    #[test]
+    fn insert_completions_is_a_no_op_without_candidates() {
+        let mut reedline = engine_with_completion_menu(
+            "zzz",
+            Box::new(FixedCompleter::new(&[], Span::new(0, 3))),
+            false,
+            false,
+        );
+
+        let status = reedline
+            .handle_event(&DefaultPrompt::default(), ReedlineEvent::InsertCompletions)
+            .unwrap();
+
+        assert!(matches!(status, EventStatus::Inapplicable));
+        assert_eq!(reedline.current_buffer_contents(), "zzz");
+    }
+
+    #[test]
+    fn possible_completions_lists_candidates_without_touching_the_line() {
+        let mut reedline = engine_with_completion_menu(
+            "th",
+            Box::new(FixedCompleter::new(
+                &["test", "this", "that"],
+                Span::new(0, 2),
+            )),
+            false,
+            false,
+        );
+
+        let status = reedline
+            .handle_event(
+                &DefaultPrompt::default(),
+                ReedlineEvent::PossibleCompletions,
+            )
+            .unwrap();
+
+        assert!(matches!(status, EventStatus::Handled));
+        assert_eq!(reedline.current_buffer_contents(), "th");
+        assert!(menu_is_active(&reedline));
+        assert_eq!(active_menu_value_count(&reedline), 3);
+    }
+
+    /// `possible-completions` lists, it never completes: a lone candidate must
+    /// stay in the menu even with the options that make Tab accept it.
+    #[test]
+    fn possible_completions_does_not_accept_a_lone_candidate() {
+        let mut reedline = engine_with_completion_menu(
+            "th",
+            Box::new(FixedCompleter::new(&["test"], Span::new(0, 2))),
+            true,
+            true,
+        );
+
+        let status = reedline
+            .handle_event(
+                &DefaultPrompt::default(),
+                ReedlineEvent::PossibleCompletions,
+            )
+            .unwrap();
+
+        assert!(matches!(status, EventStatus::Handled));
+        assert_eq!(reedline.current_buffer_contents(), "th");
+        assert!(menu_is_active(&reedline));
+    }
+
+    #[test]
+    fn possible_completions_is_a_no_op_without_candidates() {
+        let mut reedline = engine_with_completion_menu(
+            "zzz",
+            Box::new(FixedCompleter::new(&[], Span::new(0, 3))),
+            false,
+            false,
+        );
+
+        let status = reedline
+            .handle_event(
+                &DefaultPrompt::default(),
+                ReedlineEvent::PossibleCompletions,
+            )
+            .unwrap();
+
+        assert!(matches!(status, EventStatus::Inapplicable));
+        assert_eq!(reedline.current_buffer_contents(), "zzz");
+        assert!(!menu_is_active(&reedline), "nothing to leave open");
+    }
+
+    /// Without a menu there is nowhere to draw the list; the event must not fall
+    /// back to completing the line.
+    #[test]
+    fn possible_completions_without_a_menu_changes_nothing() {
+        let mut reedline = Reedline::create()
+            .with_completer(Box::new(FixedCompleter::new(&["test"], Span::new(0, 2))));
+        reedline.run_edit_commands(&[EditCommand::InsertString("th".to_string())]);
+
+        let status = reedline
+            .handle_event(
+                &DefaultPrompt::default(),
+                ReedlineEvent::PossibleCompletions,
+            )
+            .unwrap();
+
+        assert!(matches!(status, EventStatus::Inapplicable));
+        assert_eq!(reedline.current_buffer_contents(), "th");
     }
 
     /// The menu maintenance the paint cycle runs between keystrokes — value
