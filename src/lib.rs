@@ -279,12 +279,14 @@ mod auto_pairs;
 pub use auto_pairs::{AutoPairAction, AutoPairContext, AutoPairs};
 
 mod enums;
+mod keyseq;
 pub use enums::{
     Direction, EditCommand, EditCommandDiscriminants, EventStatus, FindStop, Granularity,
     MotionTarget, MouseButton, ReedlineEvent, ReedlineEventDiscriminants, ReedlineRawEvent, Signal,
     TextObject, TextObjectBracket, TextObjectQuote, TextObjectScope, TextObjectType, UndoBehavior,
     WordEdge, WordKind,
 };
+pub use keyseq::{parse_readline_chord, parse_readline_keyseq, split_readline_units};
 
 mod painting;
 pub use painting::{Painter, StyledText};
