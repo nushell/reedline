@@ -638,6 +638,20 @@ pub enum EditCommand {
     /// Paste the cut buffer after the insertion point (vi `p`)
     PasteCutBufferAfter,
 
+    /// Replace the text inserted by the preceding yank with the next older
+    /// entry from the kill ring (GNU readline's `M-y`).
+    ///
+    /// Only valid immediately after [`PasteCutBufferBefore`], [`Paste`], or
+    /// [`PasteCutBufferAfter`]. Any other command clears the rotation state,
+    /// so a later `YankPop` is a no-op. Repeated `YankPop`s walk the ring from
+    /// newest to oldest and wrap around; an empty ring is always a no-op.
+    /// No default key binding is installed for this command.
+    ///
+    /// [`PasteCutBufferBefore`]: EditCommand::PasteCutBufferBefore
+    /// [`Paste`]: EditCommand::Paste
+    /// [`PasteCutBufferAfter`]: EditCommand::PasteCutBufferAfter
+    YankPop,
+
     /// Paste the cut buffer at the selection edge in the given `direction` and
     /// select the pasted text (helix `p`/`P`). Selecting the result means the
     /// command cannot simply be issued twice for a count, so it carries `count`
@@ -937,6 +951,7 @@ impl EditCommand {
             | EditCommand::CutBigWordRightToNext
             | EditCommand::PasteCutBufferBefore
             | EditCommand::PasteCutBufferAfter
+            | EditCommand::YankPop
             | EditCommand::UppercaseWord
             | EditCommand::LowercaseWord
             | EditCommand::SwitchcaseChar
