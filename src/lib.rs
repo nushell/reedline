@@ -234,7 +234,7 @@
 //! - `bashisms`: Enable support for special text sequences that recall components from the history. e.g. `!!` and `!$`. For use in shells like `bash` or [`nushell`](https://nushell.sh).
 //! - `sqlite`: Provides the `SqliteBackedHistory` to store richer information in the history. Statically links the required sqlite version.
 //! - `sqlite-dynlib`: Alternative to the feature `sqlite`. Will not statically link. Requires `sqlite >= 3.38` to link dynamically!
-//! - `external_printer`: **Experimental:** `ExternalPrinter` to print lines from concurrently running threads; each thread gets its own thread-safe sender via `ExternalPrinter::sender()`.
+//! - `external_printer`: No-op, kept for compatibility. `ExternalPrinter` is always available.
 //!
 //! ## Are we prompt yet? (Development status)
 //!
@@ -348,6 +348,9 @@ pub use hinter::{DefaultHinter, Hinter};
 mod validator;
 pub use validator::{DefaultValidator, ValidationResult, Validator};
 
+mod status_line;
+pub use status_line::StatusLine;
+
 mod menu;
 pub use menu::{
     menu_functions, ColumnarMenu, DescriptionMenu, DescriptionMode, DescriptionPosition, IdeMenu,
@@ -370,6 +373,5 @@ pub use utils::{
 
 // Reexport the key types to be independent from an explicit crossterm dependency.
 pub use crossterm::event::{KeyCode, KeyModifiers};
-#[cfg(feature = "external_printer")]
-pub use external_printer::ExternalPrinter;
+pub use external_printer::{ExternalOutput, ExternalPrinter};
 pub use nu_ansi_term::Color;

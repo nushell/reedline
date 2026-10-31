@@ -2,17 +2,11 @@ use std::{collections::HashMap, ffi::OsStr, mem, ops::ControlFlow, path::PathBuf
 
 use nu_ansi_term::{Color, Style};
 
-use crate::{enums::ReedlineRawEvent, CursorConfig};
+use crate::{enums::ReedlineRawEvent, external_printer::ExternalOutput, CursorConfig};
 #[cfg(feature = "bashisms")]
 use crate::{
     history::SearchFilter,
     menu_functions::{parse_selection_char, ParseAction},
-};
-#[cfg(feature = "external_printer")]
-use {
-    crate::external_printer::ExternalPrinter,
-    std::io::{Error, ErrorKind},
-    std::sync::mpsc::TryRecvError,
 };
 use {
     crate::{
@@ -26,18 +20,23 @@ use {
             FileBackedHistory, History, HistoryCursor, HistoryItem, HistoryItemId,
             HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchQuery,
         },
-        painting::{Painter, PainterSuspendedState, PromptLines, RenderSnapshot, W},
+        painting::{
+            escape_control, escape_control_keep_sgr, Painter, PainterSuspendedState, PromptLines,
+            RenderSnapshot, W,
+        },
         prompt::{PromptEditMode, PromptHistorySearchStatus},
         result::{ReedlineError, ReedlineErrorVariants},
         terminal_extensions::{
             bracketed_paste::BracketedPasteGuard,
             kitty::KittyProtocolGuard,
             semantic_prompt::{Osc133ClickEventsMarkers, SemanticPromptMarkers},
+            tty_mode::TtyModeGuard,
         },
         utils::text_manipulation,
         AbbrExpandContext, AutoPairAction, AutoPairContext, AutoPairs, EditCommand,
         ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, MouseButton, Prompt,
-        PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult, Validator,
+        PromptHistorySearch, ReedlineMenu, Signal, StatusLine, UndoBehavior, ValidationResult,
+        Validator,
     },
     crossterm::{
         cursor::SetCursorStyle,
@@ -221,6 +220,10 @@ pub struct Reedline {
     hinter: Option<Box<dyn Hinter>>,
     hide_hints: bool,
 
+    // Commentary on the line, drawn below it (errors, signatures, types).
+    // Hidden with the hints on submit, but kept in history traversal.
+    status_line: Option<Box<dyn StatusLine>>,
+
     // Use ansi coloring or not
     use_ansi_coloring: bool,
 
@@ -267,8 +270,7 @@ pub struct Reedline {
     // Only used when external_printer or idle_callback is configured.
     poll_interval: Duration,
 
-    #[cfg(feature = "external_printer")]
-    external_printer: Option<ExternalPrinter<String>>,
+    external_printer: Option<Box<dyn ExternalOutput>>,
 
     // Callback function that is called periodically while waiting for input.
     // Useful for processing external events (e.g., GUI updates) during idle time.
@@ -537,6 +539,7 @@ impl Reedline {
             visual_selection_cursor_style: None,
             hinter,
             hide_hints: false,
+            status_line: None,
             validator,
             use_ansi_coloring: true,
             auto_pairs: None,
@@ -552,7 +555,6 @@ impl Reedline {
             break_signal: None,
             repaint_signal: None,
             poll_interval: DEFAULT_POLL_INTERVAL,
-            #[cfg(feature = "external_printer")]
             external_printer: None,
             idle_callback: None,
         }
@@ -634,6 +636,25 @@ impl Reedline {
     #[must_use]
     pub fn disable_hints(mut self) -> Self {
         self.hinter = None;
+        self
+    }
+
+    /// A builder that draws the text of `status_line` below the buffer, above
+    /// any open menu, and returns the engine with it set.
+    ///
+    /// Like the hint, it is hidden in history search and erased before the
+    /// line is submitted. Unlike the hint, it stays while Up and Down walk
+    /// through history, describing each line they recall.
+    #[must_use]
+    pub fn with_status_line(mut self, status_line: Box<dyn StatusLine>) -> Self {
+        self.status_line = Some(status_line);
+        self
+    }
+
+    /// Remove current [`StatusLine`], returning the engine without one.
+    #[must_use]
+    pub fn disable_status_line(mut self) -> Self {
+        self.status_line = None;
         self
     }
 
@@ -1232,9 +1253,10 @@ impl Reedline {
         self.editor.get_selection()
     }
 
-    /// Writes `msg` to the terminal with a following carriage return and newline
+    /// Writes `msg` to the terminal with a following carriage return and newline,
+    /// its control characters shown rather than sent
     fn print_line(&mut self, msg: &str) -> Result<()> {
-        self.painter.paint_line(msg)
+        self.painter.paint_line(&escape_control(msg))
     }
 
     /// Clear the screen by printing enough whitespace to start the prompt or
@@ -1269,7 +1291,6 @@ impl Reedline {
                 .as_ref()
                 .is_some_and(|sig| Arc::strong_count(&sig.flag) > 1);
 
-        #[cfg(feature = "external_printer")]
         {
             poll |= self.external_printer.is_some();
         }
@@ -1337,12 +1358,9 @@ impl Reedline {
                 self.repaint(prompt)?;
             }
 
-            #[cfg(feature = "external_printer")]
-            if let Some(ref external_printer) = self.external_printer {
-                // get messages from printer as crlf separated "lines"
-                let messages = Self::external_messages(external_printer)?;
+            if let Some(printer) = self.external_printer.as_mut() {
+                let messages = printer.drain()?;
                 if !messages.is_empty() {
-                    // print the message(s)
                     self.painter.print_external_message(messages)?;
                     self.repaint(prompt)?;
                 }
@@ -1359,23 +1377,6 @@ impl Reedline {
                 self.settle_completions(prompt)?;
             }
 
-            // Helper function that returns true if the input is complete and
-            // can be sent to the hosting application.
-            fn completed(events: &[Event]) -> bool {
-                if let Some(event) = events.last() {
-                    matches!(
-                        event,
-                        Event::Key(KeyEvent {
-                            code: KeyCode::Enter,
-                            modifiers: KeyModifiers::NONE,
-                            ..
-                        })
-                    )
-                } else {
-                    false
-                }
-            }
-
             let mut events: Vec<Event> = vec![];
 
             if !self.immediately_accept {
@@ -1390,7 +1391,8 @@ impl Reedline {
 
                 // Receive all events in the queue without blocking. Will stop when
                 // a line of input is completed.
-                while !completed(&events) && event::poll(Duration::from_millis(0))? {
+                while !Self::line_input_completed(&events) && event::poll(Duration::from_millis(0))?
+                {
                     events.push(crossterm::event::read()?);
                 }
 
@@ -1399,7 +1401,7 @@ impl Reedline {
                 if events.len() > EVENTS_THRESHOLD
                     || events.iter().any(|e| matches!(e, Event::Resize(_, _)))
                 {
-                    while !completed(&events) && event::poll(POLL_WAIT)? {
+                    while !Self::line_input_completed(&events) && event::poll(POLL_WAIT)? {
                         events.push(crossterm::event::read()?);
                     }
                 }
@@ -1408,7 +1410,7 @@ impl Reedline {
                 // burst detector (a multi-char poll(0) batch is itself a paste
                 // signal — normal typing yields ~1 char per read-loop iteration),
                 // then, while a real burst is coalescing, keep draining the queue
-                // past the `completed()`/`EVENTS_THRESHOLD` stops so a multi-line
+                // past the `line_input_completed()`/`EVENTS_THRESHOLD` stops so a multi-line
                 // paste lands in one batch. Fully gated on an installed hook, so
                 // the no-hook path above is byte-for-byte unchanged.
                 if let Some(hook) = self.paste_burst.clone() {
@@ -1446,6 +1448,36 @@ impl Reedline {
             if let ControlFlow::Break(signal) = batch_result {
                 return Ok(signal);
             }
+        }
+    }
+
+    /// Returns true if the last collected event ends a line of input and the
+    /// batch can be handed to the hosting application.
+    ///
+    /// Besides a plain `Enter`, a `Ctrl+J` (what a piped LF parses to in raw
+    /// mode) also ends a line: without this, several LF-terminated lines that
+    /// arrive in one drain merge into a single batch, and every line after the
+    /// first is silently dropped when the batch breaks on the first submit.
+    ///
+    /// `Ctrl+J` is `Enter` in every insert keymap (emacs, vi and helix
+    /// insert). In the other vi and helix modes it is unbound, so ending the
+    /// drain there only adds a loop iteration and the line is unaffected.
+    fn line_input_completed(events: &[Event]) -> bool {
+        if let Some(event) = events.last() {
+            matches!(
+                event,
+                Event::Key(KeyEvent {
+                    code: KeyCode::Enter,
+                    modifiers: KeyModifiers::NONE,
+                    ..
+                }) | Event::Key(KeyEvent {
+                    code: KeyCode::Char('j'),
+                    modifiers: KeyModifiers::CONTROL,
+                    ..
+                })
+            )
+        } else {
+            false
         }
     }
 
@@ -2773,15 +2805,15 @@ impl Reedline {
 
     /// Accept the history hint, all of it when `whole`, else its next word.
     /// `Handled` only when a non-empty hint applies: hints active, no menu
-    /// open, and the cursor either at the buffer end or followed only by
-    /// auto-pair closers the hint accounts for.
+    /// open, and the cursor either at the buffer end or, for a hinter that
+    /// continues the text before the cursor, followed only by auto-pair
+    /// closers the hint closes.
     ///
     /// At the buffer end the text is appended, positioned past the last
     /// grapheme first: a block caret (vi normal) rests *on* it, so a plain
-    /// insert would split it. Before trailing closers it goes in the way
-    /// typing it would with auto-pairs on: each closer it contains steps over
-    /// the matching one, and the closers it does not reach stay after the
-    /// cursor.
+    /// insert would split it. Before trailing closers the text goes in at the
+    /// cursor: the closers it closes, as the highlighter says, are replaced by
+    /// the ones it contains, and the others stay after the cursor.
     fn accept_history_hint(&mut self, whole: bool) -> EventStatus {
         let Some(hinter) = self.hinter.as_ref() else {
             return EventStatus::Inapplicable;
@@ -2798,14 +2830,24 @@ impl Reedline {
 
         // Checked before the buffer end: a block caret resting on the last
         // closer counts as at the end, but the text belongs before it.
-        if let Some(closers) = self.trailing_auto_pair_closers().map(str::to_owned) {
-            // A selection would be replaced by the edit, as at the buffer end.
-            if self.editor.cursor_is_a_selection()
-                || closers_stepped_over(&full, &closers) != closers.len()
-            {
+        if let Some(closers) = self.trailing_closers_for_hint().map(str::to_owned) {
+            let offsets = closer_offsets_for_hint(
+                self.highlighter.as_ref(),
+                self.editor.get_buffer(),
+                self.editor.insertion_point(),
+                &full,
+                &closers,
+            );
+            // A partial acceptance must be a prefix of the hint to know which
+            // closers it has reached.
+            let Some(offsets) = offsets.filter(|_| full.starts_with(&accepted)) else {
                 return EventStatus::Inapplicable;
-            }
-            let left_over = &closers[closers_stepped_over(&accepted, &closers)..];
+            };
+            let closed = offsets.iter().filter(|&&at| at < accepted.len()).count();
+            let left_over = closers
+                .char_indices()
+                .nth(closed)
+                .map_or("", |(index, _)| &closers[index..]);
             self.editor.sync_edit_mode(self.edit_mode.edit_mode());
             self.editor.replace_to_line_end(&accepted, left_over);
             return EventStatus::Handled;
@@ -2821,13 +2863,25 @@ impl Reedline {
     }
 
     /// The text after the cursor when it is nothing but closers of the
-    /// configured auto-pairs, like the `)` in `(gs|)`. A history hint for the
-    /// text before the cursor can stand in for them.
+    /// configured auto-pairs, like the `)` in `(gs|)`.
     fn trailing_auto_pair_closers(&self) -> Option<&str> {
         let auto_pairs = self.auto_pairs.as_ref()?;
         let after = &self.editor.get_buffer()[self.editor.insertion_point()..];
         let only_closers = after.chars().all(|c| auto_pairs.closing_pair(c).is_some());
         (!after.is_empty() && only_closers).then_some(after)
+    }
+
+    /// The trailing auto-pair closers a history hint may stand in for: those
+    /// of [`Self::trailing_auto_pair_closers`], when the hinter continues the
+    /// text before the cursor and nothing else claims the cursor area, which a
+    /// selection or an open menu does.
+    fn trailing_closers_for_hint(&self) -> Option<&str> {
+        let hinter = self.hinter.as_ref()?;
+        let free = hinter.continues_text_before_cursor()
+            && self.hints_active()
+            && !self.menus.iter().any(|menu| menu.is_active())
+            && !self.editor.cursor_is_a_selection();
+        free.then(|| self.trailing_auto_pair_closers()).flatten()
     }
 
     /// Repaint of either the buffer or the parts for reverse history search
@@ -3085,6 +3139,11 @@ impl Reedline {
         // below the old one.
         let suspended_state = self.painter.state_before_suspension();
         {
+            // Put back the raw mode the editor found once it exits,
+            // whatever mode it leaves behind. Dropped at the end of
+            // this block, before the position query below.
+            let _tty_mode = TtyModeGuard::save();
+
             let mut child = if buffer_editor.is_template {
                 buffer_editor
                     .render_command(self.editor.line_buffer())
@@ -3134,7 +3193,10 @@ impl Reedline {
                     PromptHistorySearchStatus::Passing
                 };
 
-            let prompt_history_search = PromptHistorySearch::new(status, substring.clone());
+            // The prompt passes through raw, but the search term is typed or
+            // pasted, not the host's.
+            let prompt_history_search =
+                PromptHistorySearch::new(status, escape_control(&substring).into_owned());
 
             let res_string = self.history_cursor.string_at_cursor().unwrap_or_default();
 
@@ -3144,7 +3206,7 @@ impl Reedline {
                 let styled = match_highlighter.highlight(&res_string, 0);
                 styled.render_simple()
             } else {
-                res_string
+                escape_control(&res_string).into_owned()
             };
 
             let lines = PromptLines::new(
@@ -3164,6 +3226,10 @@ impl Reedline {
                 use_ansi_coloring,
                 &self.cursor_shapes,
             )?;
+        } else {
+            // Nothing to paint, but a commit just before may have left its
+            // frame open and its bytes unsent, waiting for this repaint.
+            self.painter.finish_frame()?;
         }
 
         Ok(())
@@ -3207,10 +3273,11 @@ impl Reedline {
             self.painter.semantic_markers(),
         );
 
-        // With only auto-pair closers after the cursor, as in `(gs|)`, hint
-        // from the text before them and draw the hint in their place. A hint
-        // that does not close them would drop them on accept, so none shows.
-        let trailing_closers = self.trailing_auto_pair_closers().map(str::to_owned);
+        // With only auto-pair closers after the cursor, as in `(gs|)`, a
+        // hinter that continues the text before it hints from that text and
+        // its hint is drawn in place of the closers. A hint the highlighter
+        // does not see closing them would drop them on accept, so none shows.
+        let trailing_closers = self.trailing_closers_for_hint().map(str::to_owned);
         let hinted_line = match trailing_closers {
             Some(_) => &buffer_to_paint[..cursor_position_in_buffer],
             None => buffer_to_paint,
@@ -3219,6 +3286,9 @@ impl Reedline {
         // Decided from the hint this paint looked up, never a stale one: the
         // paint that submit makes with hints hidden must draw the closers.
         let mut hint_replaces_closers = false;
+        // Escaped here rather than in each hinter, so a host's own hinter is
+        // covered too. SGR is kept only while coloring is on: hinters style
+        // their own output, and with coloring off any SGR came from history.
         let hint: String = if self.hints_active() {
             self.hinter.as_mut().map_or_else(String::new, |hinter| {
                 let hint = hinter.handle(
@@ -3233,12 +3303,26 @@ impl Reedline {
                             .to_string()
                     }),
                 );
+                let hint = if use_ansi_coloring {
+                    escape_control_keep_sgr(&hint).into_owned()
+                } else {
+                    escape_control(&hint).into_owned()
+                };
                 let Some(closers) = trailing_closers.as_deref() else {
                     return hint;
                 };
+                // The raw hint, not the escaped one: the closers' offsets
+                // index what accepting inserts.
                 let full = hinter.complete_hint();
-                hint_replaces_closers =
-                    !full.is_empty() && closers_stepped_over(&full, closers) == closers.len();
+                hint_replaces_closers = !full.is_empty()
+                    && closer_offsets_for_hint(
+                        self.highlighter.as_ref(),
+                        buffer_to_paint,
+                        cursor_position_in_buffer,
+                        &full,
+                        closers,
+                    )
+                    .is_some();
                 if hint_replaces_closers {
                     hint
                 } else {
@@ -3252,7 +3336,7 @@ impl Reedline {
         // Needs to add return carriage to newlines because when not in raw mode
         // some OS don't fully return the carriage
 
-        let mut lines = if hint_replaces_closers {
+        let lines = if hint_replaces_closers {
             // The exit path reprints what follows the cursor, which is still
             // the closers, not the hint drawn over them.
             PromptLines::new(
@@ -3274,6 +3358,40 @@ impl Reedline {
                 &hint,
             )
         };
+        // History search paints elsewhere, so only submit hides the status
+        // line here. Measured only with one to show, since the measure walks
+        // the whole buffer.
+        let screen_width = self.painter.screen_width();
+        let status_room = if self.status_line.is_some() && !self.hide_hints {
+            // An open menu hides the hint, so measure the block the painter
+            // draws above it. Active, not visible: a menu opening on this
+            // paint turns visible only in its update below. One that stays
+            // hidden gets its status line checked again by the painter.
+            let block_rows = match self.menus.iter().find(|menu| menu.is_active()) {
+                Some(menu) => lines
+                    .required_lines(screen_width, false, Some(menu))
+                    .saturating_sub(menu.menu_required_lines(screen_width)),
+                None => lines.required_lines(screen_width, false, None),
+            };
+            self.painter.status_room(block_rows)
+        } else {
+            0
+        };
+        // Not asked without a row to draw it on: it gives way to a buffer
+        // that fills the screen.
+        let status = match self.status_line.as_mut() {
+            Some(status_line) if status_room > 0 => status_line.status(
+                buffer_to_paint,
+                cursor_position_in_buffer,
+                screen_width,
+                use_ansi_coloring,
+            ),
+            _ => String::new(),
+        };
+        let mut lines = lines.with_status(&status, use_ansi_coloring);
+        // Before the menus size themselves below the status line.
+        self.painter
+            .reserve_status_rows(lines.status_rows(screen_width), status_room);
 
         // Updating the working details of the active menu
         for menu in self.menus.iter_mut() {
@@ -3284,7 +3402,7 @@ impl Reedline {
                     lines.prompt_indicator = menu.indicator().to_owned().into();
                 }
                 // If the menu requires the cursor position, update it (ide menu)
-                let cursor_pos = lines.cursor_pos(self.painter.screen_width());
+                let cursor_pos = lines.cursor_pos(screen_width);
                 menu.set_cursor_pos(cursor_pos);
 
                 menu.update_working_details(
@@ -3334,12 +3452,8 @@ impl Reedline {
     }
 
     /// Adds an external printer
-    ///
-    /// ## Required feature:
-    /// `external_printer`
-    #[cfg(feature = "external_printer")]
-    pub fn with_external_printer(mut self, printer: ExternalPrinter<String>) -> Self {
-        self.external_printer = Some(printer);
+    pub fn with_external_printer(mut self, printer: impl ExternalOutput + 'static) -> Self {
+        self.external_printer = Some(Box::new(printer));
         self
     }
 
@@ -3390,30 +3504,6 @@ impl Reedline {
     pub fn with_idle_callback(mut self, callback: Box<dyn FnMut() + Send>) -> Self {
         self.idle_callback = Some(callback);
         self
-    }
-
-    #[cfg(feature = "external_printer")]
-    fn external_messages(external_printer: &ExternalPrinter<String>) -> Result<Vec<String>> {
-        let mut messages = Vec::new();
-        loop {
-            let result = external_printer.receiver().try_recv();
-            match result {
-                Ok(line) => {
-                    let lines = line.lines().map(String::from).collect::<Vec<_>>();
-                    messages.extend(lines);
-                }
-                Err(TryRecvError::Empty) => {
-                    break;
-                }
-                Err(TryRecvError::Disconnected) => {
-                    return Err(Error::new(
-                        ErrorKind::NotConnected,
-                        TryRecvError::Disconnected,
-                    ));
-                }
-            }
-        }
-        Ok(messages)
     }
 
     /// Offer an open menu first refusal on a keypress that would otherwise
@@ -3532,16 +3622,30 @@ impl Reedline {
     }
 }
 
-/// How much of `closers` typing `text` before them would step over, in bytes:
-/// the longest prefix of `closers` that `text` contains in order.
-fn closers_stepped_over(text: &str, closers: &str) -> usize {
-    let mut text = text.chars();
-    // Find the first closer the rest of `text` does not contain. `any`
-    // consumes `text`, so each closer must come after the one before it.
-    closers
-        .char_indices()
-        .find(|&(_, closer)| !text.any(|c| c == closer))
-        .map_or(closers.len(), |(index, _)| index)
+/// Asks `highlighter` how `candidate`, a hint for the text before `cursor` in
+/// `line`, closes `closers`, the text after the cursor. The answer counts only
+/// if it is sound: one strictly increasing offset per closer, each at a
+/// character of `candidate` that is that closer.
+fn closer_offsets_for_hint(
+    highlighter: &dyn Highlighter,
+    line: &str,
+    cursor: usize,
+    candidate: &str,
+    closers: &str,
+) -> Option<Vec<usize>> {
+    let offsets = highlighter.hint_closer_offsets(line, cursor, candidate, closers)?;
+    let mut previous = None;
+    let sound = offsets.len() == closers.chars().count()
+        && offsets
+            .iter()
+            .zip(closers.chars())
+            .all(|(&offset, closer)| {
+                let ascending = previous.is_none_or(|previous| offset > previous);
+                previous = Some(offset);
+                ascending
+                    && candidate.get(offset..).and_then(|rest| rest.chars().next()) == Some(closer)
+            });
+    sound.then_some(offsets)
 }
 
 #[cfg(test)]
@@ -3623,6 +3727,29 @@ mod tests {
 
     fn auto_pair_engine(pairs: &[(char, char)]) -> Reedline {
         Reedline::create().with_auto_pairs(AutoPairs::new(pairs.iter().copied()))
+    }
+
+    #[test]
+    fn line_input_completed_treats_ctrl_j_as_line_ending() {
+        // A plain Enter still completes the batch.
+        assert!(Reedline::line_input_completed(&[Event::Key(key(
+            KeyCode::Enter
+        ))]));
+        // A piped LF arrives as Ctrl+J in raw mode; it must also end the
+        // batch, otherwise several LF-terminated lines that land in one drain
+        // merge into a single batch and every line after the first is silently
+        // dropped when the batch breaks on the first submit (issue #1262).
+        assert!(Reedline::line_input_completed(&[Event::Key(
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL)
+        )]));
+        // Ordinary keys do not complete the batch.
+        assert!(!Reedline::line_input_completed(&[Event::Key(ch('a'))]));
+        // Alt+J is not a line ending.
+        assert!(!Reedline::line_input_completed(&[Event::Key(
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::ALT)
+        )]));
+        // An empty batch is not complete either.
+        assert!(!Reedline::line_input_completed(&[]));
     }
 
     #[test]
@@ -5542,6 +5669,7 @@ mod tests {
             first_buffer_col: 0,
             menu_active: false,
             menu_start_row: None,
+            status_start_row: None,
             large_buffer_extra_rows_after_prompt: None,
             large_buffer_offset: None,
             right_prompt: None,
@@ -8681,6 +8809,48 @@ mod tests {
         }
     }
 
+    /// Paints `echo ` with a host hinter offering `hint`, returning the engine
+    /// and what reached the terminal. A host hinter, not one of ours: the
+    /// engine escapes whatever it returns.
+    fn paint_with_hint(hint: &'static str, use_ansi_coloring: bool) -> (Reedline, String) {
+        let mut rl = Reedline::create()
+            .with_ansi_colors(use_ansi_coloring)
+            .with_hinter(Box::new(FixedHinter(hint)));
+        // A capturing painter, anchored as `seam_engine` anchors its sink.
+        rl.painter = Painter::new(W::capture());
+        rl.painter.force_prompt_anchored_for_test(0);
+        rl.run_edit_commands(&[EditCommand::InsertString("echo ".into())]);
+        rl.repaint(&DefaultPrompt::default()).unwrap();
+        let painted = String::from_utf8_lossy(rl.painter.captured_for_test()).into_owned();
+        (rl, painted)
+    }
+
+    #[test]
+    fn a_hint_shows_its_escape_sequences_but_completes_them_raw() {
+        let (mut rl, painted) = paint_with_hint("\x1b[2Khi", true);
+        assert!(painted.contains("^[[2Khi"), "hint not shown: {painted:?}");
+        assert!(!painted.contains("\x1b[2Khi"), "sent an erase: {painted:?}");
+
+        send(&mut rl, ReedlineEvent::HistoryHintComplete);
+        assert_eq!(rl.current_buffer_contents(), "echo \x1b[2Khi");
+    }
+
+    #[test]
+    fn a_hint_keeps_its_sgr_only_while_coloring_is_on() {
+        let (_, painted) = paint_with_hint("\x1b[8mhidden", true);
+        assert!(
+            painted.contains("\x1b[8mhidden"),
+            "lost its style: {painted:?}"
+        );
+
+        let (_, painted) = paint_with_hint("\x1b[8mhidden", false);
+        assert!(
+            painted.contains("^[[8mhidden"),
+            "hint not shown: {painted:?}"
+        );
+        assert!(!painted.contains("\x1b[8m"), "sent a conceal: {painted:?}");
+    }
+
     fn vi_with_hint(hint: &'static str) -> Reedline {
         seam_engine(Box::<crate::Vi>::default()).with_hinter(Box::new(FixedHinter(hint)))
     }
@@ -8774,80 +8944,230 @@ mod tests {
         assert_eq!(rl.editor.get_buffer(), "abc");
     }
 
-    /// Offers `hint` whole and its first word the way `DefaultHinter` does,
-    /// and records the line it was last asked about.
+    /// The line and position a hinter was last asked about.
+    type Asked = Arc<std::sync::Mutex<(String, usize)>>;
+
+    /// Offers `hint` whole and its first word the way `DefaultHinter` does
+    /// (or `token`, when set), and records what it was last asked about.
     struct RecordingHinter {
         hint: &'static str,
-        asked: Arc<std::sync::Mutex<String>>,
+        token: Option<&'static str>,
+        continues_text_before_cursor: bool,
+        asked: Asked,
+    }
+    impl RecordingHinter {
+        fn new(hint: &'static str, asked: &Asked) -> Self {
+            Self {
+                hint,
+                token: None,
+                continues_text_before_cursor: true,
+                asked: Arc::clone(asked),
+            }
+        }
     }
     impl Hinter for RecordingHinter {
-        fn handle(&mut self, line: &str, _: usize, _: &dyn History, _: bool, _: &str) -> String {
-            *self.asked.lock().unwrap() = line.to_string();
+        fn handle(&mut self, line: &str, pos: usize, _: &dyn History, _: bool, _: &str) -> String {
+            *self.asked.lock().unwrap() = (line.to_string(), pos);
             self.hint.to_string()
         }
         fn complete_hint(&self) -> String {
             self.hint.to_string()
         }
         fn next_hint_token(&self) -> String {
-            crate::hinter::get_first_token(self.hint)
+            self.token
+                .map_or_else(|| crate::hinter::get_first_token(self.hint), str::to_owned)
+        }
+        fn continues_text_before_cursor(&self) -> bool {
+            self.continues_text_before_cursor
         }
     }
 
-    /// An emacs engine pairing `()` with `hint` on offer, after typing `(gs`,
-    /// which auto-pairs into `(gs|)`.
-    fn paired_line_with_hint(hint: &'static str) -> (Reedline, Arc<std::sync::Mutex<String>>) {
-        let asked = Arc::default();
-        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+    /// Answers `hint_closer_offsets` with a fixed table, whatever the line,
+    /// instead of parsing a language.
+    struct ClosingOffsets(Option<Vec<usize>>);
+    impl Highlighter for ClosingOffsets {
+        fn highlight(&self, line: &str, _cursor: usize) -> crate::StyledText {
+            let mut text = crate::StyledText::new();
+            text.push((nu_ansi_term::Style::new(), line.to_string()));
+            text
+        }
+
+        fn hint_closer_offsets(&self, _: &str, _: usize, _: &str, _: &str) -> Option<Vec<usize>> {
+            self.0.clone()
+        }
+    }
+
+    /// An engine pairing `()` and offering `hinter`'s hint, after `typed` is
+    /// typed in `edit_mode`, which auto-pairs each `(`.
+    fn paired_line(
+        edit_mode: Box<dyn EditMode>,
+        typed: &str,
+        hinter: RecordingHinter,
+        highlighter: Box<dyn Highlighter>,
+    ) -> Reedline {
+        let mut rl = seam_engine(edit_mode)
             .with_auto_pairs(AutoPairs::new([('(', ')')]))
-            .with_hinter(Box::new(RecordingHinter {
-                hint,
-                asked: Arc::clone(&asked),
-            }));
-        drive(&mut rl, &[ch('('), ch('g'), ch('s')]);
-        assert_eq!(
-            (rl.editor.get_buffer(), rl.editor.insertion_point()),
-            ("(gs)", 3),
-            "setup"
+            .with_highlighter(highlighter)
+            .with_hinter(Box::new(hinter));
+        drive(&mut rl, &typed.chars().map(ch).collect::<Vec<_>>());
+        rl
+    }
+
+    /// An emacs engine that hints `hint` with the closers' offsets in it given
+    /// by `offsets`, after `typed` is typed.
+    fn paired_line_with_hint(
+        typed: &str,
+        hint: &'static str,
+        offsets: Option<&[usize]>,
+    ) -> (Reedline, Asked) {
+        let asked = Asked::default();
+        let rl = paired_line(
+            Box::<crate::Emacs>::default(),
+            typed,
+            RecordingHinter::new(hint, &asked),
+            Box::new(ClosingOffsets(offsets.map(<[usize]>::to_vec))),
         );
         (rl, asked)
     }
 
-    // With only auto-pair closers after the cursor, the hint is looked up for
-    // the text before them: history holds `(gstat).branch`, not `(gs)...`.
-    #[test]
-    fn history_hint_looks_up_the_text_before_trailing_closers() {
-        let (_, asked) = paired_line_with_hint("tat).branch");
-        assert_eq!(*asked.lock().unwrap(), "(gs");
-    }
-
-    // Accepting before trailing closers goes in the way typing it would with
-    // auto-pairs on: a closer in the accepted text steps over the one at the
-    // cursor, the rest stay put. A hint that leaves a pair open is refused,
-    // since taking it would drop the closer.
-    #[rstest]
-    #[case::whole_hint(true, "tat).branch", "(gstat).branch", 14)]
-    #[case::word_before_the_closer(false, "tat).branch", "(gstat)", 6)]
-    #[case::word_is_the_closer(false, ") | lines", "(gs)", 4)]
-    #[case::hint_leaves_the_pair_open(true, "tat", "(gs)", 3)]
-    fn history_hint_accepts_before_trailing_closers(
-        #[case] whole: bool,
-        #[case] hint: &'static str,
-        #[case] buffer: &str,
-        #[case] cursor: usize,
-    ) {
-        let (mut rl, _) = paired_line_with_hint(hint);
+    fn accept_hint(rl: &mut Reedline, whole: bool) {
         let event = if whole {
             ReedlineEvent::HistoryHintComplete
         } else {
             ReedlineEvent::HistoryHintWordComplete
         };
-
         rl.handle_event(&DefaultPrompt::default(), event).unwrap();
+    }
 
-        assert_eq!(
-            (rl.editor.get_buffer(), rl.editor.insertion_point()),
-            (buffer, cursor)
+    fn buffer_and_cursor(rl: &Reedline) -> (&str, usize) {
+        (rl.editor.get_buffer(), rl.editor.insertion_point())
+    }
+
+    /// What one repaint writes to the terminal.
+    fn repaint_output(rl: &mut Reedline) -> String {
+        rl.painter = Painter::new(W::capture());
+        rl.painter.force_prompt_anchored_for_test(0);
+        rl.repaint(&DefaultPrompt::default()).unwrap();
+        String::from_utf8_lossy(rl.painter.captured_for_test()).into_owned()
+    }
+
+    // With only auto-pair closers after the cursor, a hinter that continues the
+    // text before the cursor is asked about that text alone: history holds
+    // `(gstat).branch`, not `(gs)...`.
+    #[test]
+    fn history_hint_looks_up_the_text_before_trailing_closers() {
+        let (_, asked) = paired_line_with_hint("(gs", "tat).branch", Some(&[3]));
+        assert_eq!(*asked.lock().unwrap(), ("(gs".to_string(), 3));
+    }
+
+    // Any other hinter keeps being asked about the whole buffer, and its hint,
+    // drawn after the buffer, is out of reach from before the closers.
+    #[test]
+    fn hinter_that_does_not_continue_the_text_gets_the_whole_buffer() {
+        let asked = Asked::default();
+        let mut hinter = RecordingHinter::new("tat).branch", &asked);
+        hinter.continues_text_before_cursor = false;
+        let mut rl = paired_line(
+            Box::<crate::Emacs>::default(),
+            "(gs",
+            hinter,
+            Box::new(ClosingOffsets(Some(vec![3]))),
         );
+        assert_eq!(*asked.lock().unwrap(), ("(gs)".to_string(), 3));
+        assert!(repaint_output(&mut rl).contains("branch"));
+
+        accept_hint(&mut rl, true);
+
+        assert_eq!(buffer_and_cursor(&rl), ("(gs)", 3));
+    }
+
+    // Without a highlighter that says how the hint closes them, the closers
+    // are left alone: no hint is drawn over them and none is accepted.
+    #[test]
+    fn default_highlighter_leaves_trailing_closers_alone() {
+        let asked = Asked::default();
+        let mut rl = paired_line(
+            Box::<crate::Emacs>::default(),
+            "(gs",
+            RecordingHinter::new("tat).branch", &asked),
+            Box::<ExampleHighlighter>::default(),
+        );
+        assert!(!repaint_output(&mut rl).contains("branch"));
+
+        accept_hint(&mut rl, true);
+
+        assert_eq!(buffer_and_cursor(&rl), ("(gs)", 3));
+    }
+
+    // Accepting before trailing closers puts the hint in at the cursor: the
+    // closers it closes, by the highlighter's offsets, are the ones in it, and
+    // the rest stay after the cursor. A `)` inside a string closes nothing, so
+    // it is never mistaken for the closer after the cursor.
+    #[rstest]
+    #[case::whole_hint("(gs", "tat).branch", &[3], true, "(gstat).branch", 14)]
+    #[case::word_before_the_closer("(gs", "tat).branch", &[3], false, "(gstat)", 6)]
+    #[case::word_is_the_closer("(gs", ") | lines", &[0], false, "(gs)", 4)]
+    #[case::nested_whole("((a", ") c)", &[0, 3], true, "((a) c)", 7)]
+    #[case::nested_word_keeps_the_outer("((a", ") c)", &[0, 3], false, "((a))", 4)]
+    #[case::closer_in_a_string_whole("f(", r#"")")"#, &[3], true, r#"f(")")"#, 6)]
+    #[case::closer_in_a_string_word(r#"f(""#, r#")")"#, &[2], false, r#"f("))"#, 4)]
+    fn history_hint_accepts_before_trailing_closers(
+        #[case] typed: &str,
+        #[case] hint: &'static str,
+        #[case] offsets: &[usize],
+        #[case] whole: bool,
+        #[case] buffer: &str,
+        #[case] cursor: usize,
+    ) {
+        let (mut rl, _) = paired_line_with_hint(typed, hint, Some(offsets));
+
+        accept_hint(&mut rl, whole);
+
+        assert_eq!(buffer_and_cursor(&rl), (buffer, cursor));
+    }
+
+    // Offsets that do not hold for the hint are as good as none.
+    #[rstest]
+    #[case::too_few("(gs", "tat)", &[])]
+    #[case::too_many("(gs", "tat)", &[3, 4])]
+    #[case::not_the_closer("(gs", "tat)", &[2])]
+    #[case::out_of_bounds("(gs", "tat)", &[9])]
+    #[case::inside_a_character("(gs", "é)", &[1])]
+    #[case::not_increasing("((a", "b))", &[2, 2])]
+    fn history_hint_is_refused_for_unsound_offsets(
+        #[case] typed: &str,
+        #[case] hint: &'static str,
+        #[case] offsets: &[usize],
+    ) {
+        let (mut rl, _) = paired_line_with_hint(typed, hint, Some(offsets));
+        let (buffer, cursor) = (
+            rl.editor.get_buffer().to_owned(),
+            rl.editor.insertion_point(),
+        );
+        assert!(!repaint_output(&mut rl).contains(hint));
+
+        accept_hint(&mut rl, true);
+
+        assert_eq!(buffer_and_cursor(&rl), (buffer.as_str(), cursor));
+    }
+
+    // A word that is not the start of the hint cannot be told apart from the
+    // closers' offsets, which index the hint.
+    #[test]
+    fn history_hint_word_must_start_the_hint() {
+        let asked = Asked::default();
+        let mut hinter = RecordingHinter::new("tat).branch", &asked);
+        hinter.token = Some("branch");
+        let mut rl = paired_line(
+            Box::<crate::Emacs>::default(),
+            "(gs",
+            hinter,
+            Box::new(ClosingOffsets(Some(vec![3]))),
+        );
+
+        accept_hint(&mut rl, false);
+
+        assert_eq!(buffer_and_cursor(&rl), ("(gs)", 3));
     }
 
     // The exit path reprints what follows the cursor. While the hint is drawn
@@ -8861,7 +9181,8 @@ mod tests {
                 .exit_after_cursor_for_test()
                 .is_some_and(|text| text.contains(')'))
         };
-        let (mut rl, _) = paired_line_with_hint("tat).branch");
+        let (mut rl, _) = paired_line_with_hint("(gs", "tat).branch", Some(&[3]));
+        assert!(repaint_output(&mut rl).contains("branch"), "hint showing");
         assert!(keeps_the_closer(&rl), "hint showing");
 
         rl.hide_hints = true;
@@ -8869,65 +9190,72 @@ mod tests {
         assert!(keeps_the_closer(&rl), "hints hidden");
     }
 
+    // An open menu owns the area under the cursor and the painter draws no
+    // hint with it, so the closers must stay in the line, not be left to a
+    // hint that never shows.
     #[test]
-    fn one_undo_takes_back_a_hint_accepted_before_closers() {
-        let (mut rl, _) = paired_line_with_hint("tat).branch");
+    fn open_menu_keeps_trailing_closers_out_of_the_hint() {
+        let (mut rl, asked) = paired_line_with_hint("(gs", "tat).branch", Some(&[3]));
+        rl = rl.with_menu(ReedlineMenu::HistoryMenu(Box::new(
+            ListMenu::default().with_name("history_menu"),
+        )));
         rl.handle_event(
             &DefaultPrompt::default(),
-            ReedlineEvent::HistoryHintComplete,
+            ReedlineEvent::Menu("history_menu".into()),
         )
         .unwrap();
+        assert!(menu_is_active(&rl), "setup: menu is open");
+
+        let output = repaint_output(&mut rl);
+        assert_eq!(*asked.lock().unwrap(), ("(gs)".to_string(), 3));
+        assert!(output.contains(')'), "closers dropped: {output:?}");
+
+        accept_hint(&mut rl, true);
+        assert_eq!(buffer_and_cursor(&rl), ("(gs)", 3));
+    }
+
+    #[test]
+    fn one_undo_takes_back_a_hint_accepted_before_closers() {
+        let (mut rl, _) = paired_line_with_hint("(gs", "tat).branch", Some(&[3]));
+        accept_hint(&mut rl, true);
 
         rl.run_edit_commands(&[EditCommand::Undo]);
 
-        assert_eq!(
-            (rl.editor.get_buffer(), rl.editor.insertion_point()),
-            ("(gs)", 3)
-        );
+        assert_eq!(buffer_and_cursor(&rl), ("(gs)", 3));
     }
 
     // Vi normal rests a block caret on the closer itself; the word goes in
     // before it all the same.
     #[test]
     fn vi_normal_accepts_a_hint_word_before_trailing_closers() {
-        let mut rl = seam_engine(Box::<crate::Vi>::default())
-            .with_auto_pairs(AutoPairs::new([('(', ')')]))
-            .with_hinter(Box::new(RecordingHinter {
-                hint: "tat).branch",
-                asked: Arc::default(),
-            }));
-        type_each(
-            &mut rl,
-            &[ch('('), ch('g'), ch('s'), key(KeyCode::Esc), ch('l')],
+        let asked = Asked::default();
+        let mut rl = paired_line(
+            Box::<crate::Vi>::default(),
+            "(gs",
+            RecordingHinter::new("tat).branch", &asked),
+            Box::new(ClosingOffsets(Some(vec![3]))),
         );
+        type_each(&mut rl, &[key(KeyCode::Esc), ch('l')]);
         assert_eq!(
-            (rl.editor.get_buffer(), rl.editor.insertion_point()),
+            buffer_and_cursor(&rl),
             ("(gs)", 3),
             "setup: caret on the closer"
         );
 
-        rl.handle_event(
-            &DefaultPrompt::default(),
-            ReedlineEvent::HistoryHintWordComplete,
-        )
-        .unwrap();
+        accept_hint(&mut rl, false);
 
         assert_eq!(rl.editor.get_buffer(), "(gstat)");
     }
 
     #[test]
     fn selection_blocks_hint_completion_before_trailing_closers() {
-        let (mut rl, _) = paired_line_with_hint("tat).branch");
+        let (mut rl, _) = paired_line_with_hint("(gs", "tat).branch", Some(&[3]));
         rl.run_edit_commands(&[
             EditCommand::MoveLeft { select: false },
             EditCommand::MoveRight { select: true },
         ]);
 
-        rl.handle_event(
-            &DefaultPrompt::default(),
-            ReedlineEvent::HistoryHintComplete,
-        )
-        .unwrap();
+        accept_hint(&mut rl, true);
 
         assert_eq!(rl.editor.get_buffer(), "(gs)");
     }
@@ -9190,5 +9518,135 @@ mod tests {
         assert!(envs.contains(&(OsStr::new("REEDLINE_TEST_DROP"), None)));
 
         assert_eq!(command_into_string(actual), expected);
+    }
+
+    const STATUS_TEXT: &str = "status-from-the-host";
+
+    /// Answers [`STATUS_TEXT`] and counts the times it is asked.
+    struct CountingStatus(Arc<std::sync::atomic::AtomicUsize>);
+
+    impl StatusLine for CountingStatus {
+        fn status(&mut self, _line: &str, _pos: usize, _columns: u16, _color: bool) -> String {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            STATUS_TEXT.to_string()
+        }
+    }
+
+    /// An engine with `ls` typed and a [`CountingStatus`], with its count.
+    fn engine_with_status_line() -> (Reedline, Arc<std::sync::atomic::AtomicUsize>) {
+        let asked = Arc::default();
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_status_line(Box::new(CountingStatus(Arc::clone(&asked))));
+        drive(&mut rl, &[ch('l'), ch('s')]);
+        (rl, asked)
+    }
+
+    /// What one repaint writes to an 80-column terminal `height` rows tall.
+    fn repaint_output_on(rl: &mut Reedline, height: u16) -> String {
+        rl.painter = Painter::new(W::capture());
+        // Size first: `handle_resize` invalidates the anchor the next line pins.
+        rl.painter.handle_resize(80, height);
+        rl.painter.force_prompt_anchored_for_test(0);
+        rl.repaint(&DefaultPrompt::default()).unwrap();
+        String::from_utf8_lossy(rl.painter.captured_for_test()).into_owned()
+    }
+
+    // The status line describes the line in the buffer, a recalled one too.
+    // Submit hides it with the hint, and history search paints neither.
+    #[rstest]
+    #[case::editing(|_: &mut Reedline| {}, true)]
+    #[case::walking_history(|rl: &mut Reedline| rl.input_mode = InputMode::HistoryTraversal, true)]
+    #[case::submitting(|rl: &mut Reedline| rl.hide_hints = true, false)]
+    #[case::history_search(Reedline::enter_history_search, false)]
+    fn status_line_shows_except_on_submit_and_in_history_search(
+        #[case] enter: fn(&mut Reedline),
+        #[case] shown: bool,
+    ) {
+        let (mut rl, _) = engine_with_status_line();
+
+        enter(&mut rl);
+
+        assert_eq!(repaint_output_on(&mut rl, 24).contains(STATUS_TEXT), shown);
+    }
+
+    // A buffer filling the screen leaves no row for the status line, so the
+    // host is not asked for text that would be thrown away.
+    #[test]
+    fn status_line_is_not_asked_for_without_a_row_to_draw_it() {
+        let (mut rl, asked) = engine_with_status_line();
+        let before = asked.load(std::sync::atomic::Ordering::Relaxed);
+
+        let output = repaint_output_on(&mut rl, 1);
+
+        assert!(!output.contains(STATUS_TEXT));
+        assert_eq!(asked.load(std::sync::atomic::Ordering::Relaxed), before);
+    }
+
+    #[test]
+    fn disabled_status_line_is_never_asked() {
+        let asked = Arc::default();
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_status_line(Box::new(CountingStatus(Arc::clone(&asked))))
+            .disable_status_line();
+
+        let output = repaint_output_on(&mut rl, 24);
+
+        assert!(!output.contains(STATUS_TEXT));
+        assert_eq!(asked.load(std::sync::atomic::Ordering::Relaxed), 0);
+    }
+
+    // Sixty completions in four columns make a grid of 15 rows, taller than
+    // the screen. It is cut to the 7 rows below the status line, rather than
+    // take them back and paint as a large buffer, which draws no status line.
+    #[test]
+    fn status_line_stays_above_a_columnar_menu_taller_than_the_screen() {
+        let words = (0..60).map(|index| format!("ls{index:02}")).collect();
+        let (rl, _) = engine_with_status_line();
+        // Plain, so each entry reaches the output in one piece.
+        let mut rl = rl
+            .with_ansi_colors(false)
+            .with_completer(Box::new(DefaultCompleter::new(words)))
+            .with_menu(ReedlineMenu::EngineCompleter(Box::new(
+                ColumnarMenu::default().with_name("completion_menu"),
+            )));
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::Menu("completion_menu".to_string()),
+        )
+        .expect("menu opens");
+
+        let output = repaint_output_on(&mut rl, 10);
+
+        assert!(output.contains(STATUS_TEXT));
+        assert!(output.contains("ls27"));
+        assert!(!output.contains("ls28"));
+    }
+
+    /// An open menu hides the hint, so a hint wrapping over rows must not
+    /// shorten the menu cut below the status line.
+    #[test]
+    fn columnar_menu_below_the_status_line_ignores_the_hidden_hint() {
+        let words = (0..60).map(|index| format!("ls{index:02}")).collect();
+        let hint: &'static str = "x".repeat(200).leak();
+        let (rl, _) = engine_with_status_line();
+        let mut rl = rl
+            .with_ansi_colors(false)
+            .with_hinter(Box::new(FixedHinter(hint)))
+            .with_completer(Box::new(DefaultCompleter::new(words)))
+            .with_menu(ReedlineMenu::EngineCompleter(Box::new(
+                ColumnarMenu::default().with_name("completion_menu"),
+            )));
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::Menu("completion_menu".to_string()),
+        )
+        .expect("menu opens");
+
+        let output = repaint_output_on(&mut rl, 10);
+
+        assert!(output.contains(STATUS_TEXT));
+        assert!(!output.contains(hint));
+        assert!(output.contains("ls27"));
+        assert!(!output.contains("ls28"));
     }
 }

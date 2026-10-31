@@ -8,8 +8,9 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     menu::{InputMode, MenuSettings, OutputMode},
-    painting::Painter,
-    CompletionOrigin, CompletionResult, Editor, Partial, Suggestion, Suggestions, UndoBehavior,
+    painting::{escape_control, escape_control_keep_sgr, sgr_len, Painter},
+    CompletionOrigin, CompletionResult, Editor, Partial, Span, Suggestion, Suggestions,
+    UndoBehavior,
 };
 
 /// Appended to whatever `truncate_with_ansi` keeps, so callers must allow at
@@ -432,6 +433,7 @@ impl CompletionDisplay {
         base_ranges: &[Range<usize>],
         computed_for: CompletionOrigin,
     ) -> Self {
+        let values = escape_suggestions(values);
         let display_widths: Vec<usize> = values
             .iter()
             .map(|suggestion| strip_ansi_escapes::strip_str(suggestion.display_value()).width())
@@ -496,27 +498,97 @@ impl CompletionDisplay {
     }
 }
 
-/// Longest common prefix across suggestions sharing a span
-fn derive_common_prefix(line: &str, suggestions: &[Suggestion]) -> Option<Partial> {
-    let span = suggestions.first()?.span;
-    let mut values = suggestions
-        .iter()
-        .filter(|s| s.span == span)
-        .map(|s| s.value.as_str());
+/// Escapes the control characters in what a menu shows of each suggestion,
+/// keeping the SGR styling of a `display_override`, description and extra
+/// (see [`escape_control_keep_sgr`]).
+///
+/// `value` is never touched: it is what accepting inserts, and the buffer
+/// renders it escaped. Escaping shifts the characters `match_indices` points
+/// at, so a rewritten entry drops them and its highlighting falls back to
+/// finding the typed text. A clean list keeps its `Arc`.
+pub(crate) fn escape_suggestions(values: Suggestions) -> Suggestions {
+    let mut escaped: Option<Vec<Suggestion>> = None;
+    for (i, suggestion) in values.iter().enumerate() {
+        if let Some(shown) = escape_suggestion(suggestion) {
+            escaped.get_or_insert_with(|| values.to_vec())[i] = shown;
+        }
+    }
+    escaped.map_or(values, Into::into)
+}
 
-    let mut insert = values.next()?.to_string();
-    for value in values {
+/// `suggestion` with its shown fields escaped, if any of them needed it.
+fn escape_suggestion(suggestion: &Suggestion) -> Option<Suggestion> {
+    fn changed(text: Cow<str>) -> Option<String> {
+        match text {
+            Cow::Owned(text) => Some(text),
+            Cow::Borrowed(_) => None,
+        }
+    }
+    fn escaped(text: &str) -> Option<String> {
+        changed(escape_control_keep_sgr(text))
+    }
+
+    // Only a `display_override` is styled by the completer. Shown bare, `value`
+    // is data, so its SGR is escaped too.
+    let shown = match &suggestion.display_override {
+        Some(display) => escaped(display),
+        None => changed(escape_control(&suggestion.value)),
+    };
+
+    let mut out: Option<Suggestion> = None;
+    if let Some(shown) = shown {
+        let out = out.get_or_insert_with(|| suggestion.clone());
+        out.display_override = Some(shown);
+        out.match_indices = None;
+    }
+    if let Some(description) = suggestion.description.as_deref().and_then(escaped) {
+        out.get_or_insert_with(|| suggestion.clone()).description = Some(description);
+    }
+    if let Some(extra) = &suggestion.extra {
+        let shown: Vec<Cow<str>> = extra.iter().map(|e| escape_control_keep_sgr(e)).collect();
+        if shown.iter().any(|e| matches!(e, Cow::Owned(_))) {
+            out.get_or_insert_with(|| suggestion.clone()).extra =
+                Some(shown.into_iter().map(Cow::into_owned).collect());
+        }
+    }
+    out
+}
+
+/// Longest common prefix of what the suggestions would leave on the line.
+///
+/// Suggestions can replace different spans, such as `README.md` for `re` and
+/// `foo rebase` for `foo re`. Each one is read as the text it leaves between the
+/// earliest span start and the latest span end, so the prefix keeps only what every
+/// suggestion agrees on: here `foo `, which doesn't extend `foo re`.
+fn derive_common_prefix(line: &str, suggestions: &[Suggestion]) -> Option<Partial> {
+    // Snapped to char boundaries, so slicing `line` with them can't panic
+    let bounds = |span: Span| {
+        let end = floor_char_boundary(line, span.end);
+        (floor_char_boundary(line, span.start).min(end), end)
+    };
+    let (start, end) = suggestions
+        .iter()
+        .map(|s| bounds(s.span))
+        .reduce(|(start, end), (s_start, s_end)| (start.min(s_start), end.max(s_end)))?;
+    // Lazy `char` iterators, so only the first outcome is allocated
+    let mut outcomes = suggestions.iter().map(|s| {
+        let (s_start, s_end) = bounds(s.span);
+        line[start..s_start]
+            .chars()
+            .chain(s.value.chars())
+            .chain(line[s_end..end].chars())
+    });
+
+    let mut insert: String = outcomes.next()?.collect();
+    for mut outcome in outcomes {
         let shared = insert
             .char_indices()
-            .zip(value.chars())
-            .find_map(|((i, a), b)| (a != b).then_some(i))
-            .unwrap_or(insert.len().min(value.len()));
+            .find_map(|(i, a)| (outcome.next() != Some(a)).then_some(i))
+            .unwrap_or(insert.len());
         insert.truncate(shared);
     }
 
-    let end = floor_char_boundary(line, span.end);
-    let start = floor_char_boundary(line, span.start).min(end);
-    let entered = line.get(start..end)?;
+    let entered = &line[start..end];
 
     // Ensure prefix extends (not overwrites) user input
     let extends = !insert.is_empty()
@@ -525,7 +597,10 @@ fn derive_common_prefix(line: &str, suggestions: &[Suggestion]) -> Option<Partia
             .as_str()
             .to_lowercase()
             .contains(&entered.to_lowercase());
-    extends.then_some(Partial { span, insert })
+    extends.then_some(Partial {
+        span: Span::new(start, end),
+        insert,
+    })
 }
 
 /// Apply partial to buffer. No-op if buffer already matches
@@ -621,35 +696,19 @@ fn parse_ansi<'a>(s: &'a str) -> Vec<AnsiSegment<'a>> {
     let mut segments = Vec::new();
 
     let find_escape_end = |sgr_args_start: usize| {
+        let csi_start = sgr_args_start - ANSI_SGR_START.len();
+        // `sgr_len` decides what counts as SGR, so the escaping that keeps
+        // these sequences and the parsing here cannot disagree.
+        let escape_end = csi_start + sgr_len(&s[csi_start..])?;
         let mut escape_start = sgr_args_start;
         let mut contains_reset = false;
         // Whether all digits of the current argument have been 0 so far (this
         // is true for empty arguments too). A 0 (or empty argument) represents
         // the reset attribute.
         let mut all_zeroes = true;
-        for (i, c) in s[sgr_args_start..].char_indices() {
+        for (i, c) in s[sgr_args_start..escape_end - 1].char_indices() {
             match c {
-                'm' => {
-                    let csi_start = sgr_args_start - ANSI_SGR_START.len();
-                    let escape_end = sgr_args_start + i + 1;
-                    if all_zeroes {
-                        return Some(AnsiEscape {
-                            csi_start,
-                            escape_start: None,
-                            escape_end,
-                            had_reset: true,
-                        });
-                    } else {
-                        return Some(AnsiEscape {
-                            csi_start,
-                            escape_start: Some(escape_start),
-                            escape_end,
-                            had_reset: contains_reset,
-                        });
-                    }
-                }
                 '0' => {}
-                '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' => all_zeroes = false,
                 ';' => {
                     if all_zeroes {
                         contains_reset = true;
@@ -657,11 +716,25 @@ fn parse_ansi<'a>(s: &'a str) -> Vec<AnsiSegment<'a>> {
                     }
                     all_zeroes = true;
                 }
-                _ => return None,
+                // `1` to `9`: `sgr_len` let nothing else through.
+                _ => all_zeroes = false,
             }
         }
-        // No ending "m" to terminate SGR sequence
-        None
+        Some(if all_zeroes {
+            AnsiEscape {
+                csi_start,
+                escape_start: None,
+                escape_end,
+                had_reset: true,
+            }
+        } else {
+            AnsiEscape {
+                csi_start,
+                escape_start: Some(escape_start),
+                escape_end,
+                had_reset: contains_reset,
+            }
+        })
     };
 
     let find_escape = |mut search_start: usize| {
@@ -955,9 +1028,58 @@ pub(crate) fn truncate_with_ansi(s: &str, max_width: usize) -> Cow<'_, str> {
 mod tests {
     use super::*;
     use crate::PromptHelixMode;
-    use crate::{EditCommand, LineBuffer, PromptEditMode, PromptViMode, Span};
+    use crate::{
+        Completer, DefaultCompleter, EditCommand, LineBuffer, PromptEditMode, PromptViMode,
+    };
     use nu_ansi_term::Color;
     use rstest::rstest;
+
+    #[test]
+    fn suggestions_show_escape_sequences_but_keep_their_value() {
+        let poisoned = Suggestion {
+            value: "foo\x1b[2Kbar".into(),
+            description: Some("\x1b]52;c;aGk=\x07".into()),
+            extra: Some(vec!["\x1b[Gx".into()]),
+            match_indices: Some(vec![0, 1, 2]),
+            ..Default::default()
+        };
+        // nushell styles `display_override` with SGR; that has to survive.
+        let styled = Suggestion {
+            value: "sirlancelot".into(),
+            display_override: Some("sir\x1b[1mlancelot".into()),
+            match_indices: Some(vec![0]),
+            ..Default::default()
+        };
+        // A bare `value` is data, a file name or a history entry: its SGR could
+        // hide part of the entry, so it is shown escaped like any other control.
+        let concealed = Suggestion {
+            value: "\x1b[8mevil\x1b[0mfoo".into(),
+            ..Default::default()
+        };
+        let values: Suggestions = vec![poisoned.clone(), styled.clone(), concealed.clone()].into();
+
+        let escaped = escape_suggestions(values);
+
+        assert_eq!(escaped[0].value, poisoned.value);
+        assert_eq!(escaped[0].display_value(), "foo^[[2Kbar");
+        assert_eq!(escaped[0].description.as_deref(), Some("^[]52;c;aGk=^G"));
+        assert_eq!(escaped[0].extra, Some(vec!["^[[Gx".to_string()]));
+        assert_eq!(escaped[0].match_indices, None);
+        assert_eq!(escaped[1], styled);
+        assert_eq!(escaped[2].value, concealed.value);
+        assert_eq!(escaped[2].display_value(), "^[[8mevil^[[0mfoo");
+    }
+
+    #[test]
+    fn clean_suggestions_keep_their_allocation() {
+        let values: Suggestions = vec![Suggestion {
+            value: "plain".into(),
+            ..Default::default()
+        }]
+        .into();
+        let escaped = escape_suggestions(values.clone());
+        assert!(std::sync::Arc::ptr_eq(&values, &escaped));
+    }
 
     /// A caret cursor rests on the last grapheme of the word, so completion must
     /// count that grapheme as part of the word instead of stranding it after the
@@ -1201,28 +1323,108 @@ mod tests {
         }
     }
 
+    /// Editor holding `line`, with the cursor at its end
+    fn editor_with(line: &str) -> Editor {
+        let mut editor = Editor::default();
+        editor.set_buffer(line.to_string(), UndoBehavior::CreateUndoPoint);
+        editor
+    }
+
+    /// Fresh display for `values`, without a completer-supplied partial
+    fn display_for(editor: &Editor, values: Vec<Suggestion>) -> CompletionDisplay {
+        CompletionDisplay::from_result(CompletionResult::fresh(values), &[], editor)
+            .expect("a fresh result always has a display")
+    }
+
+    /// Tab on `line` with suggestions that replace different spans: only text that
+    /// every suggestion would leave on the line is inserted.
+    #[rstest]
+    // nushell `foo re`: a file replaces `re`, subcommands replace `foo re`
+    #[case::file_first(
+        "foo re",
+        &[("README.md", 4..6), ("foo rebase", 0..6), ("foo rebuild", 0..6)],
+        "foo re"
+    )]
+    #[case::subcommands_first(
+        "foo re",
+        &[("foo rebase", 0..6), ("foo rebuild", 0..6), ("README.md", 4..6)],
+        "foo re"
+    )]
+    #[case::spans_agree_in_part("foo re", &[("rebase", 4..6), ("foo rebuild", 0..6)], "foo reb")]
+    #[case::spans_agree("x ab", &[("abc1", 2..4), ("abc2", 2..4), ("x abc3", 0..4)], "x abc")]
+    // `abcb` (`a` replaced, `b` kept) and `abcd` share `abc`
+    #[case::ends_differ("ab", &[("abc", 0..1), ("abcd", 0..2)], "abc")]
+    fn common_prefix_keeps_what_every_span_agrees_on(
+        #[case] line: &str,
+        #[case] values: &[(&str, Range<usize>)],
+        #[case] expected: &str,
+    ) {
+        let mut editor = editor_with(line);
+        let values = values
+            .iter()
+            .map(|(value, range)| Suggestion {
+                value: value.to_string(),
+                span: Span::new(range.start, range.end),
+                ..Default::default()
+            })
+            .collect();
+        let display = display_for(&editor, values);
+
+        assert_eq!(display.common_prefix(&mut editor), line != expected);
+        assert_eq!(editor.get_buffer(), expected);
+    }
+
+    /// Mirrors demo example: `DefaultCompleter` suggests entries for the last word
+    /// (replacing `th` or `he`) and for the whole line (replacing all of it).
+    #[rstest]
+    // `this is the reedline crate` over `th` would repeat `this is `
+    #[case::disagree("this is th", "this is th")]
+    // `hello world` for the last word, `hello word` for the line
+    #[case::agree_in_part(
+        "hello another very large option for hello w",
+        "hello another very large option for hello wor"
+    )]
+    #[case::agree(
+        "hello another very large option for he",
+        "hello another very large option for hello "
+    )]
+    fn common_prefix_over_default_completer_word_groups(
+        #[case] line: &str,
+        #[case] expected: &str,
+    ) {
+        let mut completer = DefaultCompleter::new_with_wordlen(
+            vec![
+                "test".into(),
+                "hello world".into(),
+                "hello another very large option for hello word that will force one column".into(),
+                "this is the reedline crate".into(),
+            ],
+            2,
+        );
+        let mut editor = editor_with(line);
+        let display =
+            CompletionDisplay::from_result(completer.complete(line, line.len()), &[], &editor)
+                .expect("a fresh result always has a display");
+
+        assert_eq!(display.common_prefix(&mut editor), line != expected);
+        assert_eq!(editor.get_buffer(), expected);
+    }
+
     /// Verifies fallback to built-in derivation without completer-supplied Partial
     #[test]
     fn common_prefix_falls_back_to_derivation_without_a_completer_supplied_partial() {
-        let mut editor = Editor::default();
-        editor.set_buffer("ab".to_string(), UndoBehavior::CreateUndoPoint);
+        let mut editor = editor_with("ab");
 
         // Mirrors demo example: "ab" + Tab -> longest prefix "abaaa"
-        let values: Suggestions = ["abaaacas", "abaaac", "abaaaxyc", "abaaarabc"]
+        let values = ["abaaacas", "abaaac", "abaaaxyc", "abaaarabc"]
             .into_iter()
             .map(|value| Suggestion {
                 value: value.to_string(),
                 span: Span::new(0, 2),
                 ..Default::default()
             })
-            .collect::<Vec<_>>()
-            .into();
-        let display = CompletionDisplay::new(
-            values,
-            None,
-            &[],
-            CompletionOrigin::new(editor.get_buffer(), editor.insertion_point()),
-        );
+            .collect();
+        let display = display_for(&editor, values);
 
         assert!(display.common_prefix(&mut editor));
         assert_eq!(editor.get_buffer(), "abaaa");

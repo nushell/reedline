@@ -2,7 +2,7 @@ use {
     super::{menu_functions::parse_selection_char, Menu, MenuBuilder, MenuEvent, MenuSettings},
     crate::{
         core_editor::Editor,
-        menu_functions::{replace_in_buffer, resolve_completer_input},
+        menu_functions::{escape_suggestions, replace_in_buffer, resolve_completer_input},
         painting::{estimate_single_line_wraps, Painter},
         Completer, Suggestion, Suggestions,
     },
@@ -184,8 +184,11 @@ impl ListMenu {
 
     fn printable_entries(&self, painter: &Painter) -> usize {
         // The number 2 comes from the prompt line and the banner printed at the bottom
-        // of the menu
-        let available_lines = painter.screen_height().saturating_sub(2);
+        // of the menu. A status line takes its rows between the prompt and the menu.
+        let available_lines = painter
+            .screen_height()
+            .saturating_sub(2)
+            .saturating_sub(painter.reserved_status_rows());
         let (printable_entries, _) =
             self.get_values()
                 .iter()
@@ -405,7 +408,7 @@ impl Menu for ListMenu {
                 .get(self.page)
                 .map_or(self.page_size, |page| page.size);
 
-            self.values = completer.partial_complete(&input, pos, skip, take);
+            self.values = escape_suggestions(completer.partial_complete(&input, pos, skip, take));
         } else {
             self.query_size = None;
 
@@ -413,7 +416,7 @@ impl Menu for ListMenu {
             // completion is still in flight with nothing to show yet), so we keep
             // the current suggestions rather than blanking the menu.
             if let Some(values) = completer.complete(&input, pos).into_shared() {
-                self.values = values;
+                self.values = escape_suggestions(values);
             }
         }
     }
@@ -700,6 +703,30 @@ mod tests {
     use crate::{painting::W, Span};
 
     use super::*;
+
+    // A status line takes its rows between the prompt and the menu, so the
+    // menu fits fewer entries on the screen.
+    #[test]
+    fn printable_entries_leave_the_status_rows_free() {
+        let menu = ListMenu {
+            query_size: Some(5),
+            values: (0..5)
+                .map(|index| Suggestion {
+                    value: format!("v{index}"),
+                    ..Default::default()
+                })
+                .collect::<Vec<_>>()
+                .into(),
+            ..ListMenu::default()
+        };
+        let mut painter = Painter::new(W::sink());
+        painter.handle_resize(20, 6);
+        let without = menu.printable_entries(&painter);
+
+        painter.reserve_status_rows(1, 1);
+
+        assert_eq!(menu.printable_entries(&painter), without - 1);
+    }
 
     #[test]
     fn number_of_lines_test() {

@@ -129,6 +129,21 @@ impl EditMode for Vi {
     }
 }
 
+/// Append `ReedlineEvent::Repaint` unless the event already ends with one,
+/// flattening into an existing `Multiple` rather than nesting it.
+fn with_trailing_repaint(event: ReedlineEvent) -> ReedlineEvent {
+    match event {
+        ReedlineEvent::Repaint => event,
+        ReedlineEvent::Multiple(mut events) => {
+            if events.last() != Some(&ReedlineEvent::Repaint) {
+                events.push(ReedlineEvent::Repaint);
+            }
+            ReedlineEvent::Multiple(events)
+        }
+        event => ReedlineEvent::Multiple(vec![event, ReedlineEvent::Repaint]),
+    }
+}
+
 impl Vi {
     /// Route one keypress: the meta prefix first, then the mode's own grammar
     /// and tables. A method rather than the body of `parse_event` so the meta
@@ -174,11 +189,26 @@ impl Vi {
                         ReedlineEvent::None
                     } else if res.is_complete(self.mode) {
                         let event = res.to_reedline_event(self);
-                        if let Some(mode) = res.changes_mode(self.mode) {
-                            self.mode = mode;
-                        }
+                        let previous_mode = self.mode;
+                        let mode_changed = match res.changes_mode(previous_mode) {
+                            Some(mode) => {
+                                self.mode = mode;
+                                mode != previous_mode
+                            }
+                            None => false,
+                        };
                         self.cache.clear();
-                        event
+                        // A mode change must repaint even when the edit is a
+                        // no-op (e.g. `a` at line end), mirroring helix's
+                        // `Multiple([event, Repaint])` on a mode switch.
+                        // `changes_mode` can also report the current mode
+                        // (`dw`/`yy` report `Normal` from `Normal`), so only
+                        // an actual change gains the trailing `Repaint`.
+                        if mode_changed {
+                            with_trailing_repaint(event)
+                        } else {
+                            event
+                        }
                     } else {
                         ReedlineEvent::None
                     }
@@ -890,9 +920,13 @@ mod test {
 
         assert_eq!(
             result,
-            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutSelection {
-                granularity: Granularity::CharWise
-            }])]),
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Edit(vec![EditCommand::CutSelection {
+                    granularity: Granularity::CharWise
+                }]),
+                // Leaving Visual for Normal is an actual mode change.
+                ReedlineEvent::Repaint,
+            ]),
         );
         assert!(matches!(vi.mode, ViMode::Normal));
     }
@@ -979,6 +1013,129 @@ mod test {
         };
         let _ = vi.parse_event(key(KeyCode::Char('i'), KeyModifiers::NONE));
         assert!(matches!(vi.mode, ViMode::Insert));
+    }
+
+    /// Entering Insert from Normal repaints at the dispatch layer, even
+    /// though the parser/command layer now emits only the cursor move.
+    #[rstest]
+    #[case::append('a', KeyModifiers::NONE, EditCommand::MoveRight { select: false })]
+    #[case::append_to_end('a', KeyModifiers::SHIFT, EditCommand::MoveToLineEnd { select: false })]
+    #[case::prepend_to_start('i', KeyModifiers::SHIFT, EditCommand::MoveToLineStart { select: false })]
+    fn entering_insert_repaints_after_the_cursor_move(
+        #[case] c: char,
+        #[case] modifiers: KeyModifiers,
+        #[case] edit: EditCommand,
+    ) {
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+        let result = vi.parse_event(key(KeyCode::Char(c), modifiers));
+
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Edit(vec![edit]),
+                ReedlineEvent::Repaint,
+            ])
+        );
+        assert!(matches!(vi.mode, ViMode::Insert));
+    }
+
+    #[test]
+    fn i_in_normal_repaints_without_duplicating_its_bare_repaint() {
+        // `i` already yields `Multiple([Repaint])` from the command layer;
+        // the dispatch-layer wrap must not add a second one.
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+        let result = vi.parse_event(key(KeyCode::Char('i'), KeyModifiers::NONE));
+
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Repaint])
+        );
+        assert!(matches!(vi.mode, ViMode::Insert));
+    }
+
+    #[test]
+    fn cw_repaints_without_duplicating_the_change_semihack_repaint() {
+        // `c<motion>` already ends with `Repaint` (the semihack in
+        // `command.rs`); entering Insert must not add another.
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+        let _ = vi.parse_event(key(KeyCode::Char('c'), KeyModifiers::NONE));
+        let result = vi.parse_event(key(KeyCode::Char('w'), KeyModifiers::NONE));
+
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Edit(vec![EditCommand::Cut {
+                    target: MotionTarget::Word {
+                        kind: WordKind::Word,
+                        edge: WordEdge::End,
+                        direction: Direction::Forward,
+                    },
+                    granularity: Granularity::CharWise
+                }]),
+                ReedlineEvent::Repaint,
+            ])
+        );
+        assert!(matches!(vi.mode, ViMode::Insert));
+    }
+
+    #[test]
+    fn commands_staying_in_normal_do_not_gain_a_repaint() {
+        // `dw`/`yy` report `Some(Normal)` from `changes_mode` while already
+        // in Normal, and a plain move reports no mode at all; none of them
+        // may gain a spurious trailing `Repaint`.
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+        let _ = vi.parse_event(key(KeyCode::Char('d'), KeyModifiers::NONE));
+        let dw = vi.parse_event(key(KeyCode::Char('w'), KeyModifiers::NONE));
+        assert_eq!(
+            dw,
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Cut {
+                target: MotionTarget::Word {
+                    kind: WordKind::Word,
+                    edge: WordEdge::Start,
+                    direction: Direction::Forward,
+                },
+                granularity: Granularity::CharWise
+            }])]),
+        );
+        assert!(matches!(vi.mode, ViMode::Normal));
+
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+        let _ = vi.parse_event(key(KeyCode::Char('y'), KeyModifiers::NONE));
+        let yy = vi.parse_event(key(KeyCode::Char('y'), KeyModifiers::NONE));
+        assert_eq!(
+            yy,
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Copy {
+                target: MotionTarget::LineEdge(Direction::Forward),
+                granularity: Granularity::LineWise
+            }])]),
+        );
+        assert!(matches!(vi.mode, ViMode::Normal));
+
+        assert_eq!(
+            in_normal(KeyCode::Char('w'), KeyModifiers::NONE),
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Move(
+                MotionTarget::Word {
+                    kind: WordKind::Word,
+                    edge: WordEdge::Start,
+                    direction: Direction::Forward,
+                }
+            )])]),
+        );
     }
 
     #[test]

@@ -3,24 +3,19 @@
 //! See example:
 //!
 //! ``` shell
-//! cargo run --example external_printer --features=external_printer
+//! cargo run --example external_printer
 //! ```
-#[cfg(feature = "external_printer")]
 use std::{
     fmt::Display,
+    io,
     sync::mpsc::{sync_channel, Receiver, SendError, SyncSender},
 };
 
-#[cfg(feature = "external_printer")]
 pub const EXTERNAL_PRINTER_DEFAULT_CAPACITY: usize = 20;
 
 /// An ExternalPrinter allows to print messages of text while editing a line.
 /// The message is printed as a new line, the line-edit will continue below the
 /// output.
-///
-/// ## Required feature:
-/// `external_printer`
-#[cfg(feature = "external_printer")]
 #[derive(Debug)]
 pub struct ExternalPrinter<T>
 where
@@ -30,7 +25,6 @@ where
     receiver: Receiver<T>,
 }
 
-#[cfg(feature = "external_printer")]
 impl<T> ExternalPrinter<T>
 where
     T: Display,
@@ -60,7 +54,6 @@ where
     }
 }
 
-#[cfg(feature = "external_printer")]
 impl<T> Default for ExternalPrinter<T>
 where
     T: Display,
@@ -70,7 +63,29 @@ where
     }
 }
 
-#[cfg(all(test, feature = "external_printer"))]
+/// A source of text that arrives while a line is being edited.
+pub trait ExternalOutput: Send {
+    /// Text received since the last call, in arrival order. Must not block.
+    ///
+    /// Each string is printed as whole lines, split at its newlines. One
+    /// without a trailing newline still ends its line, so a source that
+    /// reads in chunks should hand over complete lines.
+    fn drain(&mut self) -> io::Result<Vec<String>>;
+}
+
+impl<T: Display + Send> ExternalOutput for ExternalPrinter<T> {
+    fn drain(&mut self) -> io::Result<Vec<String>> {
+        let mut messages = Vec::new();
+        // `Disconnected` cannot happen while `self.sender` is alive, so any
+        // `Err` just ends the drain.
+        while let Ok(message) = self.receiver.try_recv() {
+            messages.push(message.to_string());
+        }
+        Ok(messages)
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -90,5 +105,14 @@ mod tests {
         let printer = ExternalPrinter::<String>::new(1);
         printer.print("via print".to_string()).unwrap();
         assert_eq!(printer.get_line().as_deref(), Some("via print"));
+    }
+
+    #[test]
+    fn drain_returns_messages_in_order() {
+        let mut printer = ExternalPrinter::<String>::new(2);
+        printer.print("one\ntwo".to_string()).unwrap();
+        printer.print("three".to_string()).unwrap();
+        assert_eq!(printer.drain().unwrap(), ["one\ntwo", "three"]);
+        assert!(printer.drain().unwrap().is_empty());
     }
 }

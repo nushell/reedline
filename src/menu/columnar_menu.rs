@@ -83,6 +83,10 @@ pub struct ColumnarMenu {
     /// Number of rows that are skipped when printing,
     /// depending on selected value and terminal height
     skip_rows: usize,
+    /// Rows the menu is cut to so the status line above it stays on the
+    /// screen, `None` without one. Set on every layout from
+    /// `Painter::menu_room_below_status`.
+    status_cap: Option<u16>,
     /// Event sent to the menu
     event: Option<MenuEvent>,
     /// String collected after the menu is activated
@@ -102,6 +106,7 @@ impl Default for ColumnarMenu {
             col_pos: 0,
             row_pos: 0,
             skip_rows: 0,
+            status_cap: None,
             event: None,
             input: None,
         }
@@ -582,7 +587,14 @@ impl ColumnarMenu {
                 possible_columns.min(self.default_details.columns).max(1);
         }
 
-        let available = available_lines(painter, self.min_rows(), u16::MAX);
+        // A grid taller than the screen would push the status line out, so it
+        // scrolls within the rows left below it instead.
+        self.status_cap = painter.menu_room_below_status(self.min_rows());
+        let available = available_lines(
+            painter,
+            self.min_rows(),
+            self.status_cap.unwrap_or(u16::MAX),
+        );
         self.skip_rows = scroll_offset_usize(self.row_pos, self.skip_rows, usize::from(available));
     }
 }
@@ -751,10 +763,13 @@ impl Menu for ColumnarMenu {
     }
 
     fn menu_required_lines(&self, _terminal_columns: u16) -> u16 {
-        self.get_rows()
+        self.get_rows().min(self.status_cap.unwrap_or(u16::MAX))
     }
 
     fn menu_string(&self, available_lines: u16, use_ansi_coloring: bool) -> String {
+        // No more rows than `menu_required_lines` booked: the painter offers
+        // every row down to the bottom of the screen.
+        let available_lines = available_lines.min(self.status_cap.unwrap_or(u16::MAX));
         if self.get_values().is_empty() {
             if self.phase.awaiting_results() {
                 // A background completion is still running; draw nothing rather
@@ -1183,6 +1198,66 @@ mod tests {
         assert_eq!(menu.index(), 65_549);
         let (row, col) = menu.position_from_index(menu.index());
         assert_eq!((row, col), (32_774, 1));
+    }
+
+    /// A menu of `count` suggestions `item-0`, `item-1`, ... on a 20x10
+    /// painter, two to a row once laid out.
+    fn tall_menu(count: usize) -> (ColumnarMenu, Painter) {
+        let values: Vec<_> = (0..count)
+            .map(|index| Suggestion {
+                value: format!("item-{index}"),
+                span: Span { start: 0, end: 0 },
+                ..Default::default()
+            })
+            .collect();
+        let menu = ColumnarMenu {
+            completions: CompletionDisplay::from_result(
+                crate::CompletionResult::fresh(values),
+                &[],
+                &Editor::default(),
+            )
+            .expect("fresh completions"),
+            ..Default::default()
+        };
+        let mut painter = Painter::new(W::sink());
+        painter.handle_resize(20, 10);
+        (menu, painter)
+    }
+
+    // A status line takes its row above the menu. A grid taller than the
+    // screen is cut to the rows left below it, scrolls within them, and draws
+    // no more than it booked, so the block stays off the large-buffer path.
+    #[test]
+    fn a_tall_grid_is_cut_to_the_rows_below_the_status_line() {
+        let (mut menu, mut painter) = tall_menu(30);
+        // A one-row buffer: 10 rows, less the buffer and the spare last row.
+        painter.reserve_status_rows(1, painter.status_room(1));
+        // Laid out before the selection moves, as every paint does.
+        menu.recompute_layout(&painter);
+        (0..20).for_each(|_| menu.move_next());
+
+        menu.recompute_layout(&painter);
+
+        assert_eq!(menu.get_rows(), 15);
+        assert_eq!(menu.menu_required_lines(20), 7);
+        let drawn = menu.menu_string(9, false);
+        assert_eq!(drawn.lines().count(), 7);
+        assert!(drawn.contains(">ITEM-20"));
+    }
+
+    // Without a status line, or with too little room below it to show
+    // `min_rows`, the grid keeps its height: in the second case it takes the
+    // status line's rows back.
+    #[test]
+    fn a_tall_grid_is_not_cut_without_room_for_its_min_rows() {
+        let (mut menu, mut painter) = tall_menu(30);
+        menu.recompute_layout(&painter);
+        assert_eq!(menu.menu_required_lines(20), 15);
+
+        painter.reserve_status_rows(1, 3);
+        menu.recompute_layout(&painter);
+
+        assert_eq!(menu.menu_required_lines(20), 15);
     }
 
     #[test]
