@@ -5,7 +5,9 @@ mod item;
 #[cfg(feature = "_sqlite")]
 mod sqlite_backed;
 #[cfg(feature = "_sqlite")]
-pub use sqlite_backed::SqliteBackedHistory;
+pub use sqlite_backed::{
+    SqliteBackedArchivalData, SqliteBackedArchivalHandler, SqliteBackedHistory,
+};
 
 pub use base::{
     CommandLineSearch, History, HistoryNavigationQuery, JsonFilterValue, SearchDirection,
@@ -17,4 +19,4 @@ pub use item::{
     IgnoreAllExtraInfo,
 };
 
-pub use file_backed::{FileBackedHistory, HISTORY_SIZE};
+pub use file_backed::{FileBackedArchivalHandler, FileBackedHistory, HISTORY_SIZE};
