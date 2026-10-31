@@ -348,6 +348,9 @@ pub use hinter::{DefaultHinter, Hinter};
 mod validator;
 pub use validator::{DefaultValidator, ValidationResult, Validator};
 
+mod status_line;
+pub use status_line::StatusLine;
+
 mod menu;
 pub use menu::{
     menu_functions, ColumnarMenu, DescriptionMenu, DescriptionMode, DescriptionPosition, IdeMenu,

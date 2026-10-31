@@ -184,8 +184,11 @@ impl ListMenu {
 
     fn printable_entries(&self, painter: &Painter) -> usize {
         // The number 2 comes from the prompt line and the banner printed at the bottom
-        // of the menu
-        let available_lines = painter.screen_height().saturating_sub(2);
+        // of the menu. A status line takes its rows between the prompt and the menu.
+        let available_lines = painter
+            .screen_height()
+            .saturating_sub(2)
+            .saturating_sub(painter.reserved_status_rows());
         let (printable_entries, _) =
             self.get_values()
                 .iter()
@@ -660,6 +663,31 @@ fn count_digits(mut n: usize) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::painting::W;
+
+    // A status line takes its rows between the prompt and the menu, so the
+    // menu fits fewer entries on the screen.
+    #[test]
+    fn printable_entries_leave_the_status_rows_free() {
+        let menu = ListMenu {
+            query_size: Some(5),
+            values: (0..5)
+                .map(|index| Suggestion {
+                    value: format!("v{index}"),
+                    ..Default::default()
+                })
+                .collect::<Vec<_>>()
+                .into(),
+            ..ListMenu::default()
+        };
+        let mut painter = Painter::new(W::sink());
+        painter.handle_resize(20, 6);
+        let without = menu.printable_entries(&painter);
+
+        painter.reserve_status_rows(1, 1);
+
+        assert_eq!(menu.printable_entries(&painter), without - 1);
+    }
 
     #[test]
     fn number_of_lines_test() {
