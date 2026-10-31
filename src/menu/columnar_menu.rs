@@ -53,6 +53,8 @@ struct ColumnDetails {
     pub columns: u16,
     /// Column width
     pub col_width: usize,
+    /// Number of rows that fit on screen, used as the page size
+    pub visible_rows: u16,
 }
 
 /// Menu to present suggestions in a columnar fashion
@@ -192,6 +194,21 @@ impl ColumnarMenu {
         } else {
             new_row
         }
+    }
+
+    /// Move menu cursor one page down, stopping at the last row of the column
+    fn move_next_page(&mut self) {
+        self.row_pos = self
+            .row_pos
+            .saturating_add(usize::from(self.working_details.visible_rows.max(1)))
+            .min(self.get_last_row_at_col(self.col_pos));
+    }
+
+    /// Move menu cursor one page up, stopping at the first row
+    fn move_previous_page(&mut self) {
+        self.row_pos = self
+            .row_pos
+            .saturating_sub(usize::from(self.working_details.visible_rows.max(1)));
     }
 
     /// Move menu cursor left
@@ -540,9 +557,8 @@ impl ColumnarMenu {
             MenuEvent::MoveDown => self.move_down(),
             MenuEvent::MoveLeft => self.move_left(),
             MenuEvent::MoveRight => self.move_right(),
-            MenuEvent::PreviousPage | MenuEvent::NextPage => {
-                // The columnar menu doest have the concept of pages, yet
-            }
+            MenuEvent::NextPage => self.move_next_page(),
+            MenuEvent::PreviousPage => self.move_previous_page(),
         }
     }
 
@@ -595,6 +611,7 @@ impl ColumnarMenu {
             self.min_rows(),
             self.status_cap.unwrap_or(u16::MAX),
         );
+        self.working_details.visible_rows = available;
         self.skip_rows = scroll_offset_usize(self.row_pos, self.skip_rows, usize::from(available));
     }
 }
@@ -1514,6 +1531,32 @@ mod tests {
 
         assert!(menu.can_partially_complete(false, &mut editor, &mut completer));
         assert_eq!(editor.get_buffer(), "abaaa");
+    }
+
+    #[test]
+    fn page_moves_stop_at_first_and_last_row() {
+        let vs: Vec<String> = (0..10).map(|v| v.to_string()).collect();
+        let vs: Vec<_> = vs.iter().map(|v| v.as_ref()).collect();
+        let mut completer = FakeCompleter::new(&vs);
+        let mut menu = ColumnarMenu::default().with_name("testmenu");
+        menu.working_details.columns = 1;
+        menu.working_details.visible_rows = 4;
+        let mut editor = Editor::default();
+        menu.update_values(&mut editor, &mut completer);
+
+        let mut rows = vec![];
+        for _ in 0..4 {
+            menu.move_next_page();
+            rows.push(menu.row_pos);
+        }
+        assert_eq!(rows, [4, 8, 9, 9]);
+
+        rows.clear();
+        for _ in 0..4 {
+            menu.move_previous_page();
+            rows.push(menu.row_pos);
+        }
+        assert_eq!(rows, [5, 1, 0, 0]);
     }
 
     #[test]

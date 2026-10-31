@@ -269,9 +269,10 @@ pub fn floor_char_boundary(s: &str, index: usize) -> usize {
     }
 }
 
-/// Number of lines available for the menu body
+/// Number of lines available for the menu body once the painter has scrolled
+/// to make room for it
 pub(crate) fn available_lines(painter: &Painter, min_rows: u16, max_lines: u16) -> u16 {
-    let lines = painter.remaining_lines_real().min(max_lines);
+    let lines = painter.remaining_lines_after_scroll().min(max_lines);
     if lines == 0 {
         // Handle the case where a prompt uses the entire screen.
         // Drawing the menu has priority over the drawing the prompt.

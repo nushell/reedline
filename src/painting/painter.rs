@@ -620,6 +620,15 @@ impl Painter {
         (self.status_rows > 0 && self.menu_room >= min_rows).then_some(self.menu_room)
     }
 
+    /// Returns the empty lines below the prompt once it is scrolled to the top.
+    ///
+    /// A paint scrolls the prompt up to fit the menu below it, so this is the
+    /// room a menu laid out now gets when drawn, even when
+    /// [`Painter::remaining_lines_real`] still reads the space before the scroll.
+    pub(crate) fn remaining_lines_after_scroll(&self) -> u16 {
+        self.screen_height().saturating_sub(self.prompt_height)
+    }
+
     /// Returns the number of lines that are available or can be made available by
     /// stripping the prompt, less the rows set aside for the status line.
     ///
@@ -2222,6 +2231,19 @@ mod tests {
 
         assert_eq!(painter.prompt_start_row, PromptStartRow::Stale(9));
         assert_eq!(painter.stdout.captured(), b"\x1b[?25l\r\n");
+    }
+
+    /// A prompt near the bottom has little room below it, but the paint
+    /// scrolls it up to fit a menu, so menus lay out for the scrolled space.
+    #[test]
+    fn remaining_lines_after_scroll_ignores_prompt_row() {
+        let mut painter = Painter::new(W::sink());
+        painter.terminal_size = (20, 10);
+        painter.prompt_height = 1;
+        painter.prompt_start_row.mark_verified(8);
+
+        assert_eq!(painter.remaining_lines_real(), 1);
+        assert_eq!(painter.remaining_lines_after_scroll(), 9);
     }
 
     #[test]

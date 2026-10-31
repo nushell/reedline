@@ -196,6 +196,23 @@ impl DescriptionMenu {
         }
     }
 
+    /// Move menu cursor one page down, stopping at the last row of the column
+    fn move_next_page(&mut self) {
+        let values = self.get_values().len() as u16;
+        let last_row = values.saturating_sub(self.col_pos + 1) / self.get_cols();
+        self.row_pos = self
+            .row_pos
+            .saturating_add(self.default_details.selection_rows.max(1))
+            .min(last_row);
+    }
+
+    /// Move menu cursor one page up, stopping at the first row
+    fn move_previous_page(&mut self) {
+        self.row_pos = self
+            .row_pos
+            .saturating_sub(self.default_details.selection_rows.max(1));
+    }
+
     /// Menu index based on column and row position
     fn index(&self) -> usize {
         let index = self.row_pos * self.get_cols() + self.col_pos;
@@ -529,7 +546,16 @@ impl Menu for DescriptionMenu {
                         self.skipped_rows = allowed_skips;
                     }
                 }
-                MenuEvent::PreviousPage | MenuEvent::NextPage => {}
+                MenuEvent::NextPage => {
+                    self.skipped_rows = 0;
+                    self.move_next_page();
+                    self.update_examples();
+                }
+                MenuEvent::PreviousPage => {
+                    self.skipped_rows = 0;
+                    self.move_previous_page();
+                    self.update_examples();
+                }
             }
 
             let max_width = self
@@ -708,6 +734,7 @@ mod tests {
     use super::*;
     use crate::painting::{Painter, W};
     use crate::{Span, Suggestion};
+    use rstest::rstest;
 
     struct FakeCompleter {
         completions: Vec<String>,
@@ -770,6 +797,39 @@ mod tests {
         painter.handle_resize(0, 0);
         menu.menu_event(MenuEvent::Activate(false));
         menu.update_working_details(&mut editor, &mut completer, &painter);
+    }
+
+    /// Pages move by `selection_rows` and stop at the first row and at the
+    /// last row of the selected column, which is short in an uneven grid.
+    #[rstest]
+    #[case::one_column(1, 0, [4, 8, 9, 9], [5, 1, 0, 0])]
+    #[case::short_last_column(3, 2, [2, 2, 2, 2], [0, 0, 0, 0])]
+    #[case::full_last_column(3, 0, [3, 3, 3, 3], [0, 0, 0, 0])]
+    fn page_moves_stop_at_first_and_last_row(
+        #[case] columns: u16,
+        #[case] col_pos: u16,
+        #[case] down: [u16; 4],
+        #[case] up: [u16; 4],
+    ) {
+        let mut completer = FakeCompleter {
+            completions: (0..10).map(|v| v.to_string()).collect(),
+        };
+        let mut menu = DescriptionMenu::default().with_selection_rows(4);
+        menu.working_details.columns = columns;
+        menu.update_values(&mut Editor::default(), &mut completer);
+        menu.col_pos = col_pos;
+
+        let rows = [(); 4].map(|_| {
+            menu.move_next_page();
+            menu.row_pos
+        });
+        assert_eq!(rows, down);
+
+        let rows = [(); 4].map(|_| {
+            menu.move_previous_page();
+            menu.row_pos
+        });
+        assert_eq!(rows, up);
     }
 
     #[test]
