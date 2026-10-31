@@ -315,8 +315,9 @@ impl EditorCommand {
     /// Columns are counted as graphemes from the start of the line.
     ///
     /// The returned arguments exclude the executable name. Rendering leaves
-    /// the stored command unchanged. The conversion to Unicode is lossy, but
-    /// appended file paths retain their native encoding.
+    /// the stored command unchanged. Only an argument holding a placeholder
+    /// is converted to Unicode, lossily; the others and an appended file path
+    /// keep their native encoding.
     pub fn render(&self, file: impl AsRef<Path>, line: usize, col: usize) -> Vec<OsString> {
         let mut rendered = Vec::new();
 
@@ -330,6 +331,10 @@ impl EditorCommand {
 
         for arg in self.0.get_args() {
             has_file_arg |= arg == file_os_str;
+            if !Self::is_template_arg(arg) {
+                rendered.push(arg.to_owned());
+                continue;
+            }
             let arg = arg.to_string_lossy();
             has_file_arg |= arg.contains(Self::FILE);
 
@@ -9553,6 +9558,22 @@ mod tests {
         assert!(envs.contains(&(OsStr::new("REEDLINE_TEST_DROP"), None)));
 
         assert_eq!(command_into_string(actual), expected);
+    }
+
+    /// Only an argument holding a placeholder goes through a string, so the
+    /// others reach the editor byte for byte.
+    #[cfg(unix)]
+    #[test]
+    fn render_keeps_arguments_without_placeholders_as_given() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let raw = OsStr::from_bytes(b"--dir=\xff");
+        let mut command = Command::new("vim");
+        command.arg(raw).arg("+{line}");
+
+        let rendered = EditorCommand::new(command).render("foo.rs", 2, 1);
+
+        assert_eq!(rendered, [raw, OsStr::new("+2"), OsStr::new("foo.rs")]);
     }
 
     const STATUS_TEXT: &str = "status-from-the-host";
