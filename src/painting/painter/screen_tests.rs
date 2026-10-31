@@ -116,6 +116,24 @@ impl Session {
         self.screen.sync(self.painter.stdout.captured());
     }
 
+    /// As [`Session::paint`], with a hint, a status line and a menu.
+    fn paint_with(
+        &mut self,
+        prompt: &FixedPrompt,
+        before: &str,
+        hint: &str,
+        status: &str,
+        menu: Option<&ReedlineMenu>,
+    ) {
+        let lines = PromptLines::new(prompt, PromptEditMode::Default, None, before, "", hint)
+            .with_status(status, false);
+        super::tests::reserve_status(&mut self.painter, &lines);
+        self.painter
+            .repaint_buffer(prompt, &lines, PromptEditMode::Default, menu, false, &None)
+            .expect("repaint_buffer failed");
+        self.screen.sync(self.painter.stdout.captured());
+    }
+
     /// The lines [`Session::paint`] paints for the same arguments.
     fn lines<'p>(prompt: &'p FixedPrompt, before: &'p str, after: &'p str) -> PromptLines<'p> {
         PromptLines::new(prompt, PromptEditMode::Default, None, before, after, "")
@@ -392,4 +410,209 @@ fn large_buffer_of_one_wrapped_line_stays_on_screen() {
     }
     assert_eq!(session.screen.row(4), "xx");
     assert_eq!(session.screen.cursor(), (2, 4));
+}
+
+#[test]
+fn status_line_draws_below_the_buffer() {
+    let mut session = Session::new(20, 6, 1);
+
+    session.paint_with(&FixedPrompt::new("> ", ""), "pwd", "", "status", None);
+
+    assert_eq!(session.screen.rows()[1..4], ["> pwd", "status", ""]);
+    assert_eq!(session.screen.cursor(), (5, 1));
+}
+
+#[test]
+fn status_line_follows_the_hint_and_a_wrapped_buffer() {
+    let mut session = Session::new(10, 6, 0);
+
+    session.paint_with(
+        &FixedPrompt::new("> ", ""),
+        "abcdefgh",
+        "ij",
+        "status",
+        None,
+    );
+
+    assert_eq!(
+        session.screen.rows()[..4],
+        ["> abcdefgh", "ij", "status", ""]
+    );
+    assert_eq!(session.screen.cursor(), (0, 1));
+}
+
+// The rows are reserved like any others, so a prompt on the last row scrolls
+// up far enough for a wrapped status line to land on screen.
+#[test]
+fn status_line_at_the_bottom_scrolls_into_view() {
+    let mut session = Session::after_output(10, 4, &["o1", "o2", "o3"]);
+
+    session.paint_with(&FixedPrompt::new("> ", ""), "pwd", "", "0123456789ab", None);
+
+    assert_eq!(session.screen.rows(), ["o3", "> pwd", "0123456789", "ab"]);
+    assert_eq!(session.screen.cursor(), (5, 1));
+}
+
+#[test]
+fn repaint_without_a_status_line_erases_it() {
+    let mut session = Session::new(20, 6, 1);
+    let prompt = FixedPrompt::new("> ", "");
+
+    session.paint_with(&prompt, "pwd", "", "status", None);
+    session.paint_with(&prompt, "pwd", "", "", None);
+
+    assert_eq!(session.screen.rows()[1..3], ["> pwd", ""]);
+}
+
+// A menu opens below the cursor's row. The status line takes that row and the
+// menu moves down past it, so both stay visible.
+#[test]
+fn status_line_sits_between_the_buffer_and_a_menu() {
+    let mut session = Session::new(20, 8, 1);
+    let menu = ReedlineMenu::EngineCompleter(Box::new(super::tests::TestMenu::new("m1\r\nm2")));
+
+    session.paint_with(
+        &FixedPrompt::new("> ", ""),
+        "pwd",
+        "",
+        "status",
+        Some(&menu),
+    );
+
+    assert_eq!(
+        session.screen.rows()[1..6],
+        ["> pwd", "status", "m1", "m2", ""]
+    );
+    assert_eq!(session.screen.cursor(), (5, 1));
+    assert_eq!(
+        session
+            .painter
+            .last_layout
+            .as_ref()
+            .map(|l| l.menu_start_row),
+        Some(Some(3))
+    );
+}
+
+// The status line gives way to the buffer: a block that only fits on the
+// screen without it is drawn without it, rather than as a large buffer.
+#[test]
+fn buffer_too_tall_for_the_status_line_draws_without_it() {
+    let mut session = Session::new(20, 3, 0);
+
+    session.paint_with(&FixedPrompt::new("> ", ""), "a\r\nb", "", "status", None);
+
+    assert_eq!(session.screen.rows(), ["> a", "b", ""]);
+    assert!(!session.painter.large_buffer);
+    assert_eq!(session.screen.scrolled(), 0);
+}
+
+// Every menu sizes itself from one of the two, so none draws over the rows.
+#[test]
+fn menus_size_themselves_around_the_reserved_status_rows() {
+    let mut session = Session::new(20, 10, 2);
+    session.painter.prompt_height = 1;
+    let real = session.painter.remaining_lines_real();
+    let remaining = session.painter.remaining_lines();
+
+    session.painter.reserve_status_rows(2, 2);
+
+    assert_eq!(session.painter.remaining_lines_real(), real - 2);
+    assert_eq!(session.painter.remaining_lines(), remaining - 2);
+    assert_eq!(session.painter.reserved_status_rows(), 2);
+}
+
+#[test]
+fn status_line_without_room_reserves_no_rows() {
+    let mut session = Session::new(20, 10, 2);
+
+    session.painter.reserve_status_rows(3, 2);
+
+    assert_eq!(session.painter.reserved_status_rows(), 0);
+}
+
+// A reservation is for the paint after it. History search paints without
+// making one, and must not lay out the rows of the status line before it.
+#[test]
+fn a_paint_that_reserves_nothing_draws_no_status_rows() {
+    let mut session = Session::new(20, 6, 1);
+    let prompt = FixedPrompt::new("> ", "");
+    session.paint_with(&prompt, "pwd", "", "status", None);
+
+    session.paint(&prompt, "pwd", "");
+
+    assert_eq!(session.screen.rows()[1..3], ["> pwd", ""]);
+    let layout = session.painter.last_layout.as_ref().expect("painted");
+    assert_eq!(layout.status_start_row, None);
+    assert_eq!(session.painter.last_required_lines, 1);
+}
+
+// The rows are set aside before the menu sizes itself. A menu that cannot
+// shrink to leave them free takes them back, rather than push the block onto
+// the large-buffer path.
+#[test]
+fn a_menu_too_tall_for_the_status_line_draws_without_it() {
+    let mut session = Session::new(20, 5, 0);
+    let menu =
+        ReedlineMenu::EngineCompleter(Box::new(super::tests::TestMenu::new("m1\r\nm2\r\nm3")));
+
+    session.paint_with(
+        &FixedPrompt::new("> ", ""),
+        "pwd",
+        "",
+        "status",
+        Some(&menu),
+    );
+
+    assert_eq!(session.screen.rows(), ["> pwd", "m1", "m2", "m3", ""]);
+    assert!(!session.painter.large_buffer);
+}
+
+// A status ending in a line break would print it after the last row it was
+// given, scrolling the screen when that row is the bottom one and leaving the
+// prompt below the row the painter believes it is on.
+#[test]
+fn status_line_ending_in_a_newline_at_the_bottom_scrolls_once() {
+    let mut session = Session::after_output(10, 4, &["o1", "o2", "o3"]);
+    let prompt = FixedPrompt::new("> ", "");
+
+    session.paint_with(&prompt, "pwd", "", "error: x\n", None);
+    session.paint_with(&prompt, "pwd", "", "error: x\n", None);
+
+    assert_eq!(session.screen.rows(), ["o2", "o3", "> pwd", "error: x"]);
+    assert_eq!(session.screen.cursor(), (5, 2));
+}
+
+// With a menu open, the status line takes the row where the text after the
+// cursor would continue, and that text is erased. A click there lands nowhere.
+#[test]
+fn click_on_the_status_line_above_a_menu_lands_nowhere() {
+    let mut session = Session::new(20, 8, 1);
+    let prompt = FixedPrompt::new("> ", "");
+    let menu = ReedlineMenu::EngineCompleter(Box::new(super::tests::TestMenu::new("m1")));
+    let lines = PromptLines::new(&prompt, PromptEditMode::Default, None, "a", "\r\nb", "")
+        .with_status("status", false);
+    super::tests::reserve_status(&mut session.painter, &lines);
+    session
+        .painter
+        .repaint_buffer(
+            &prompt,
+            &lines,
+            PromptEditMode::Default,
+            Some(&menu),
+            false,
+            &None,
+        )
+        .expect("repaint_buffer failed");
+    session.screen.sync(session.painter.stdout.captured());
+    let layout = session.painter.last_layout.as_ref().expect("painted");
+    let snapshot = session
+        .painter
+        .render_snapshot(&lines, Some(&menu), "a", "\nb", layout);
+
+    assert_eq!(session.screen.row(2), "status");
+    assert_eq!(
+        session.painter.screen_to_buffer_offset(&snapshot, 0, 2),
+        None
+    );
 }

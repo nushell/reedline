@@ -1,4 +1,10 @@
-use std::{collections::HashMap, ffi::OsStr, mem, ops::ControlFlow, path::PathBuf};
+use std::{
+    collections::HashMap,
+    ffi::{OsStr, OsString},
+    mem,
+    ops::ControlFlow,
+    path::{Path, PathBuf},
+};
 
 use nu_ansi_term::{Color, Style};
 
@@ -20,18 +26,23 @@ use {
             FileBackedHistory, History, HistoryCursor, HistoryItem, HistoryItemId,
             HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchQuery,
         },
-        painting::{Painter, PainterSuspendedState, PromptLines, RenderSnapshot, W},
+        painting::{
+            escape_control, escape_control_keep_sgr, Painter, PainterSuspendedState, PromptLines,
+            RenderSnapshot, W,
+        },
         prompt::{PromptEditMode, PromptHistorySearchStatus},
         result::{ReedlineError, ReedlineErrorVariants},
         terminal_extensions::{
             bracketed_paste::BracketedPasteGuard,
             kitty::KittyProtocolGuard,
             semantic_prompt::{Osc133ClickEventsMarkers, SemanticPromptMarkers},
+            tty_mode::TtyModeGuard,
         },
         utils::text_manipulation,
         AbbrExpandContext, AutoPairAction, AutoPairContext, AutoPairs, EditCommand,
         ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, MouseButton, Prompt,
-        PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult, Validator,
+        PromptHistorySearch, ReedlineMenu, Signal, StatusLine, UndoBehavior, ValidationResult,
+        Validator,
     },
     crossterm::{
         cursor::SetCursorStyle,
@@ -215,6 +226,10 @@ pub struct Reedline {
     hinter: Option<Box<dyn Hinter>>,
     hide_hints: bool,
 
+    // Commentary on the line, drawn below it (errors, signatures, types).
+    // Hidden with the hints on submit, but kept in history traversal.
+    status_line: Option<Box<dyn StatusLine>>,
+
     // Use ansi coloring or not
     use_ansi_coloring: bool,
 
@@ -268,90 +283,122 @@ pub struct Reedline {
     idle_callback: Option<Box<dyn FnMut() + Send>>,
 }
 
-struct BufferEditor {
-    command: Command,
-    temp_file: PathBuf,
-    is_template: bool,
-}
+/// A command to spawn a buffer editor. The arguments may contain template
+/// placeholders for the file path and cursor position.
+pub struct EditorCommand(Command);
 
-impl BufferEditor {
+impl EditorCommand {
     const FILE: &str = "{file}";
     const LINE: &str = "{line}";
     const COL: &str = "{col}";
 
-    fn new(mut command: Command, temp_file: PathBuf) -> BufferEditor {
+    /// Creates an editor command.
+    pub fn new(command: Command) -> EditorCommand {
+        EditorCommand(command)
+    }
+    fn is_template(&self) -> bool {
+        self.0.get_args().any(EditorCommand::is_template_arg)
+    }
+
+    fn is_template_arg(arg: &OsStr) -> bool {
+        let arg = arg.to_string_lossy();
+        arg.contains(Self::FILE) || arg.contains(Self::LINE) || arg.contains(Self::COL)
+    }
+
+    /// Returns the editor arguments with `{file}`, `{line}`, and `{col}`
+    /// placeholders replaced by the supplied values. If no argument contains
+    /// the `{file}` placeholder, or exactly matches the path of the passed
+    /// file, the file path is appended.
+    ///
+    /// Line and column numbers are one-based; zero is treated as one.
+    /// Columns are counted as graphemes from the start of the line.
+    ///
+    /// The returned arguments exclude the executable name. Rendering leaves
+    /// the stored command unchanged. Only an argument holding a placeholder
+    /// is converted to Unicode, lossily; the others and an appended file path
+    /// keep their native encoding.
+    pub fn render(&self, file: impl AsRef<Path>, line: usize, col: usize) -> Vec<OsString> {
+        let mut rendered = Vec::new();
+
+        let file_os_str = file.as_ref().as_os_str();
+        let file_str = file.as_ref().to_string_lossy();
         let mut has_file_arg = false;
-        let mut is_template = false;
 
-        for arg in command.get_args() {
-            has_file_arg |= arg == temp_file.as_os_str();
+        // right now, the API is 1-based, so we silently clamp to 1.
+        let line = line.max(1).to_string();
+        let col = col.max(1).to_string();
 
-            if let Some(arg) = arg.to_str() {
-                has_file_arg |= arg.contains(BufferEditor::FILE);
-
-                is_template |= arg.contains(BufferEditor::FILE)
-                    || arg.contains(BufferEditor::LINE)
-                    || arg.contains(BufferEditor::COL);
+        for arg in self.0.get_args() {
+            has_file_arg |= arg == file_os_str;
+            if !Self::is_template_arg(arg) {
+                rendered.push(arg.to_owned());
+                continue;
             }
+            let arg = arg.to_string_lossy();
+            has_file_arg |= arg.contains(Self::FILE);
+
+            let arg = arg
+                .replace(Self::FILE, &file_str)
+                .replace(Self::LINE, &line)
+                .replace(Self::COL, &col);
+
+            rendered.push(arg.into());
         }
 
         if !has_file_arg {
-            command.arg(&temp_file);
+            rendered.push(file_os_str.to_owned());
         }
 
-        BufferEditor {
-            command,
-            temp_file,
-            is_template,
+        rendered
+    }
+}
+
+impl From<Command> for EditorCommand {
+    fn from(command: Command) -> EditorCommand {
+        EditorCommand::new(command)
+    }
+}
+
+struct BufferEditor {
+    command: EditorCommand,
+    temp_file: PathBuf,
+}
+
+impl BufferEditor {
+    fn new(mut command: EditorCommand, temp_file: PathBuf) -> BufferEditor {
+        if !command
+            .0
+            .get_args()
+            .any(|arg| EditorCommand::is_template_arg(arg) || arg == temp_file.as_os_str())
+        {
+            command.0.arg(&temp_file);
         }
+
+        BufferEditor { command, temp_file }
     }
 
-    /// renders the editor command template,
-    /// substituting template placeholders where present.
-    pub(crate) fn render_command(&self, line_buffer: &LineBuffer) -> Command {
-        let mut rendered = Command::new(self.command.get_program());
+    pub(crate) fn build_command(&self, line_buffer: &LineBuffer) -> Command {
+        let mut rendered = Command::new(self.command.0.get_program());
 
-        for (key, value) in self.command.get_envs() {
+        for (key, value) in self.command.0.get_envs() {
             match value {
                 Some(value) => rendered.env(key, value),
                 None => rendered.env_remove(key),
             };
         }
 
-        if let Some(dir) = self.command.get_current_dir() {
+        if let Some(dir) = self.command.0.get_current_dir() {
             rendered.current_dir(dir);
         }
 
-        let file = self.temp_file.to_string_lossy();
-        let line = (line_buffer.line() + 1).to_string();
-        let col = (line_buffer.col() + 1).to_string();
-
-        for arg in self.command.get_args().map(OsStr::to_string_lossy) {
-            let arg = arg
-                .replace(Self::FILE, &file)
-                .replace(Self::LINE, &line)
-                .replace(Self::COL, &col);
-
-            rendered.arg(arg);
-        }
+        let args = self.command.render(
+            &self.temp_file,
+            line_buffer.line() + 1,
+            line_buffer.col() + 1,
+        );
+        rendered.args(args);
 
         rendered
-    }
-
-    /// writes the buffer to the temp file,
-    /// in preparation for spawning the buffer editor
-    pub(crate) fn write_current_buffer(&self, buffer_contents: &str) -> Result<()> {
-        let mut file = File::create(&self.temp_file)?;
-        write!(file, "{buffer_contents}")
-    }
-
-    /// reads the buffer from the temp file,
-    /// expected to be called after the buffer editor exits
-    pub(crate) fn get_edited_buffer(&self) -> Result<String> {
-        let mut res = std::fs::read_to_string(&self.temp_file)?;
-        let content_len = res.trim_end().len();
-        res.truncate(content_len);
-        Ok(res)
     }
 }
 
@@ -530,6 +577,7 @@ impl Reedline {
             visual_selection_cursor_style: None,
             hinter,
             hide_hints: false,
+            status_line: None,
             validator,
             use_ansi_coloring: true,
             auto_pairs: None,
@@ -626,6 +674,25 @@ impl Reedline {
     #[must_use]
     pub fn disable_hints(mut self) -> Self {
         self.hinter = None;
+        self
+    }
+
+    /// A builder that draws the text of `status_line` below the buffer, above
+    /// any open menu, and returns the engine with it set.
+    ///
+    /// Like the hint, it is hidden in history search and erased before the
+    /// line is submitted. Unlike the hint, it stays while Up and Down walk
+    /// through history, describing each line they recall.
+    #[must_use]
+    pub fn with_status_line(mut self, status_line: Box<dyn StatusLine>) -> Self {
+        self.status_line = Some(status_line);
+        self
+    }
+
+    /// Remove current [`StatusLine`], returning the engine without one.
+    #[must_use]
+    pub fn disable_status_line(mut self) -> Self {
+        self.status_line = None;
         self
     }
 
@@ -943,8 +1010,12 @@ impl Reedline {
     /// the `Command`, such as stdio redirection or `env_clear`, do not carry over.
     /// A command without placeholders is spawned as given.
     #[must_use]
-    pub fn with_buffer_editor(mut self, editor: Command, temp_file: PathBuf) -> Self {
-        self.buffer_editor = Some(BufferEditor::new(editor, temp_file));
+    pub fn with_buffer_editor(
+        mut self,
+        command: impl Into<EditorCommand>,
+        temp_file: PathBuf,
+    ) -> Self {
+        self.buffer_editor = Some(BufferEditor::new(command.into(), temp_file));
         self
     }
 
@@ -1224,9 +1295,10 @@ impl Reedline {
         self.editor.get_selection()
     }
 
-    /// Writes `msg` to the terminal with a following carriage return and newline
+    /// Writes `msg` to the terminal with a following carriage return and newline,
+    /// its control characters shown rather than sent
     fn print_line(&mut self, msg: &str) -> Result<()> {
-        self.painter.paint_line(msg)
+        self.painter.paint_line(&escape_control(msg))
     }
 
     /// Clear the screen by printing enough whitespace to start the prompt or
@@ -2359,9 +2431,24 @@ impl Reedline {
             Some(snapshot) => snapshot,
             None => return Ok(()),
         };
-        if self.input_mode != InputMode::Regular || self.menus.iter().any(|m| m.is_active()) {
+        if self.input_mode != InputMode::Regular {
             return Ok(());
         }
+
+        // Try to select the entry under the pointer if a menu is active
+        if snapshot.menu_active {
+            let Some(menu_start_row) = snapshot.menu_start_row else {
+                return Ok(());
+            };
+            let Some(menu_row) = row.checked_sub(menu_start_row) else {
+                return Ok(());
+            };
+            let terminal_columns = snapshot.screen_width;
+            let available_lines = snapshot.screen_height.saturating_sub(menu_start_row);
+            self.accept_menu_click(column, menu_row, terminal_columns, available_lines);
+            return Ok(());
+        }
+
         let buffer = self.editor.get_buffer();
         if let Some(offset) = self.painter.screen_to_buffer_offset(snapshot, column, row) {
             if buffer.is_char_boundary(offset) {
@@ -2372,6 +2459,24 @@ impl Reedline {
             }
         }
         Ok(())
+    }
+
+    fn accept_menu_click(
+        &mut self,
+        column: u16,
+        menu_row: u16,
+        terminal_columns: u16,
+        available_lines: u16,
+    ) {
+        let Some(menu) = self.menus.iter_mut().find(|menu| menu.is_visible()) else {
+            return;
+        };
+        let Some(index) = menu.selection_at(column, menu_row, terminal_columns, available_lines)
+        else {
+            return;
+        };
+
+        menu.set_selection(index);
     }
 
     fn active_menu(&mut self) -> Option<&mut ReedlineMenu> {
@@ -3067,7 +3172,9 @@ impl Reedline {
             return Ok(());
         };
 
-        buffer_editor.write_current_buffer(self.editor.get_buffer())?;
+        let mut file = File::create(&buffer_editor.temp_file)?;
+        write!(file, "{}", self.editor.get_buffer())?;
+        drop(file);
 
         // Capture the prompt's screen range so that an editor
         // that leaves the cursor untouched (e.g. an editor that
@@ -3076,12 +3183,17 @@ impl Reedline {
         // below the old one.
         let suspended_state = self.painter.state_before_suspension();
         {
-            let mut child = if buffer_editor.is_template {
+            // Put back the raw mode the editor found once it exits,
+            // whatever mode it leaves behind. Dropped at the end of
+            // this block, before the position query below.
+            let _tty_mode = TtyModeGuard::save();
+
+            let mut child = if buffer_editor.command.is_template() {
                 buffer_editor
-                    .render_command(self.editor.line_buffer())
+                    .build_command(self.editor.line_buffer())
                     .spawn()?
             } else {
-                buffer_editor.command.spawn()?
+                buffer_editor.command.0.spawn()?
             };
 
             // The child owns the tty now; invalidate eagerly so
@@ -3102,7 +3214,9 @@ impl Reedline {
             .painter
             .initialize_prompt_position(Some(&suspended_state));
 
-        let res = buffer_editor.get_edited_buffer()?;
+        let mut res = std::fs::read_to_string(&buffer_editor.temp_file)?;
+        let content_len = res.trim_end().len();
+        res.truncate(content_len);
 
         self.editor.set_buffer(res, UndoBehavior::CreateUndoPoint);
 
@@ -3125,7 +3239,10 @@ impl Reedline {
                     PromptHistorySearchStatus::Passing
                 };
 
-            let prompt_history_search = PromptHistorySearch::new(status, substring.clone());
+            // The prompt passes through raw, but the search term is typed or
+            // pasted, not the host's.
+            let prompt_history_search =
+                PromptHistorySearch::new(status, escape_control(&substring).into_owned());
 
             let res_string = self.history_cursor.string_at_cursor().unwrap_or_default();
 
@@ -3135,7 +3252,7 @@ impl Reedline {
                 let styled = match_highlighter.highlight(&res_string, 0);
                 styled.render_simple()
             } else {
-                res_string
+                escape_control(&res_string).into_owned()
             };
 
             let lines = PromptLines::new(
@@ -3215,6 +3332,9 @@ impl Reedline {
         // Decided from the hint this paint looked up, never a stale one: the
         // paint that submit makes with hints hidden must draw the closers.
         let mut hint_replaces_closers = false;
+        // Escaped here rather than in each hinter, so a host's own hinter is
+        // covered too. SGR is kept only while coloring is on: hinters style
+        // their own output, and with coloring off any SGR came from history.
         let hint: String = if self.hints_active() {
             self.hinter.as_mut().map_or_else(String::new, |hinter| {
                 let hint = hinter.handle(
@@ -3229,9 +3349,16 @@ impl Reedline {
                             .to_string()
                     }),
                 );
+                let hint = if use_ansi_coloring {
+                    escape_control_keep_sgr(&hint).into_owned()
+                } else {
+                    escape_control(&hint).into_owned()
+                };
                 let Some(closers) = trailing_closers.as_deref() else {
                     return hint;
                 };
+                // The raw hint, not the escaped one: the closers' offsets
+                // index what accepting inserts.
                 let full = hinter.complete_hint();
                 hint_replaces_closers = !full.is_empty()
                     && closer_offsets_for_hint(
@@ -3255,7 +3382,7 @@ impl Reedline {
         // Needs to add return carriage to newlines because when not in raw mode
         // some OS don't fully return the carriage
 
-        let mut lines = if hint_replaces_closers {
+        let lines = if hint_replaces_closers {
             // The exit path reprints what follows the cursor, which is still
             // the closers, not the hint drawn over them.
             PromptLines::new(
@@ -3277,6 +3404,40 @@ impl Reedline {
                 &hint,
             )
         };
+        // History search paints elsewhere, so only submit hides the status
+        // line here. Measured only with one to show, since the measure walks
+        // the whole buffer.
+        let screen_width = self.painter.screen_width();
+        let status_room = if self.status_line.is_some() && !self.hide_hints {
+            // An open menu hides the hint, so measure the block the painter
+            // draws above it. Active, not visible: a menu opening on this
+            // paint turns visible only in its update below. One that stays
+            // hidden gets its status line checked again by the painter.
+            let block_rows = match self.menus.iter().find(|menu| menu.is_active()) {
+                Some(menu) => lines
+                    .required_lines(screen_width, false, Some(menu))
+                    .saturating_sub(menu.menu_required_lines(screen_width)),
+                None => lines.required_lines(screen_width, false, None),
+            };
+            self.painter.status_room(block_rows)
+        } else {
+            0
+        };
+        // Not asked without a row to draw it on: it gives way to a buffer
+        // that fills the screen.
+        let status = match self.status_line.as_mut() {
+            Some(status_line) if status_room > 0 => status_line.status(
+                buffer_to_paint,
+                cursor_position_in_buffer,
+                screen_width,
+                use_ansi_coloring,
+            ),
+            _ => String::new(),
+        };
+        let mut lines = lines.with_status(&status, use_ansi_coloring);
+        // Before the menus size themselves below the status line.
+        self.painter
+            .reserve_status_rows(lines.status_rows(screen_width), status_room);
 
         // Updating the working details of the active menu
         for menu in self.menus.iter_mut() {
@@ -3287,7 +3448,7 @@ impl Reedline {
                     lines.prompt_indicator = menu.indicator().to_owned().into();
                 }
                 // If the menu requires the cursor position, update it (ide menu)
-                let cursor_pos = lines.cursor_pos(self.painter.screen_width());
+                let cursor_pos = lines.cursor_pos(screen_width);
                 menu.set_cursor_pos(cursor_pos);
 
                 menu.update_working_details(
@@ -5554,6 +5715,7 @@ mod tests {
             first_buffer_col: 0,
             menu_active: false,
             menu_start_row: None,
+            status_start_row: None,
             large_buffer_extra_rows_after_prompt: None,
             large_buffer_offset: None,
             right_prompt: None,
@@ -8693,6 +8855,48 @@ mod tests {
         }
     }
 
+    /// Paints `echo ` with a host hinter offering `hint`, returning the engine
+    /// and what reached the terminal. A host hinter, not one of ours: the
+    /// engine escapes whatever it returns.
+    fn paint_with_hint(hint: &'static str, use_ansi_coloring: bool) -> (Reedline, String) {
+        let mut rl = Reedline::create()
+            .with_ansi_colors(use_ansi_coloring)
+            .with_hinter(Box::new(FixedHinter(hint)));
+        // A capturing painter, anchored as `seam_engine` anchors its sink.
+        rl.painter = Painter::new(W::capture());
+        rl.painter.force_prompt_anchored_for_test(0);
+        rl.run_edit_commands(&[EditCommand::InsertString("echo ".into())]);
+        rl.repaint(&DefaultPrompt::default()).unwrap();
+        let painted = String::from_utf8_lossy(rl.painter.captured_for_test()).into_owned();
+        (rl, painted)
+    }
+
+    #[test]
+    fn a_hint_shows_its_escape_sequences_but_completes_them_raw() {
+        let (mut rl, painted) = paint_with_hint("\x1b[2Khi", true);
+        assert!(painted.contains("^[[2Khi"), "hint not shown: {painted:?}");
+        assert!(!painted.contains("\x1b[2Khi"), "sent an erase: {painted:?}");
+
+        send(&mut rl, ReedlineEvent::HistoryHintComplete);
+        assert_eq!(rl.current_buffer_contents(), "echo \x1b[2Khi");
+    }
+
+    #[test]
+    fn a_hint_keeps_its_sgr_only_while_coloring_is_on() {
+        let (_, painted) = paint_with_hint("\x1b[8mhidden", true);
+        assert!(
+            painted.contains("\x1b[8mhidden"),
+            "lost its style: {painted:?}"
+        );
+
+        let (_, painted) = paint_with_hint("\x1b[8mhidden", false);
+        assert!(
+            painted.contains("^[[8mhidden"),
+            "hint not shown: {painted:?}"
+        );
+        assert!(!painted.contains("\x1b[8m"), "sent a conceal: {painted:?}");
+    }
+
     fn vi_with_hint(hint: &'static str) -> Reedline {
         seam_engine(Box::<crate::Vi>::default()).with_hinter(Box::new(FixedHinter(hint)))
     }
@@ -9290,14 +9494,14 @@ mod tests {
         assert_eq!(rl.editor.insertion_point(), 3);
     }
 
-    fn command_from_strs(command: &[&str], current_dir: impl AsRef<Path>) -> Command {
+    fn editor_command_from_strs(command: &[&str], current_dir: impl AsRef<Path>) -> EditorCommand {
         let (program, args) = command.split_first().unwrap();
         let mut command = Command::new(program);
         command.args(args);
         command.current_dir(current_dir);
         command.env("REEDLINE_TEST_KEEP", "kept");
         command.env_remove("REEDLINE_TEST_DROP");
-        command
+        EditorCommand::new(command)
     }
 
     fn command_into_string(command: Command) -> String {
@@ -9329,12 +9533,12 @@ mod tests {
         let current_dir = "test-dir";
 
         let line_editor = Reedline::create().with_buffer_editor(
-            command_from_strs(command, current_dir),
+            editor_command_from_strs(command, current_dir),
             PathBuf::from("foo.rs"),
         );
         let buffer_editor = line_editor.buffer_editor.as_ref().unwrap();
 
-        assert_eq!(buffer_editor.is_template, is_template);
+        assert_eq!(buffer_editor.command.is_template(), is_template);
 
         let line_buffer = {
             let mut line_buffer = LineBuffer::new();
@@ -9348,7 +9552,7 @@ mod tests {
             line_buffer
         };
 
-        let actual = buffer_editor.render_command(&line_buffer);
+        let actual = buffer_editor.build_command(&line_buffer);
 
         let current_dir = current_dir.as_ref();
         assert_eq!(actual.get_current_dir(), Some(current_dir));
@@ -9360,5 +9564,151 @@ mod tests {
         assert!(envs.contains(&(OsStr::new("REEDLINE_TEST_DROP"), None)));
 
         assert_eq!(command_into_string(actual), expected);
+    }
+
+    /// Only an argument holding a placeholder goes through a string, so the
+    /// others reach the editor byte for byte.
+    #[cfg(unix)]
+    #[test]
+    fn render_keeps_arguments_without_placeholders_as_given() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let raw = OsStr::from_bytes(b"--dir=\xff");
+        let mut command = Command::new("vim");
+        command.arg(raw).arg("+{line}");
+
+        let rendered = EditorCommand::new(command).render("foo.rs", 2, 1);
+
+        assert_eq!(rendered, [raw, OsStr::new("+2"), OsStr::new("foo.rs")]);
+    }
+
+    const STATUS_TEXT: &str = "status-from-the-host";
+
+    /// Answers [`STATUS_TEXT`] and counts the times it is asked.
+    struct CountingStatus(Arc<std::sync::atomic::AtomicUsize>);
+
+    impl StatusLine for CountingStatus {
+        fn status(&mut self, _line: &str, _pos: usize, _columns: u16, _color: bool) -> String {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            STATUS_TEXT.to_string()
+        }
+    }
+
+    /// An engine with `ls` typed and a [`CountingStatus`], with its count.
+    fn engine_with_status_line() -> (Reedline, Arc<std::sync::atomic::AtomicUsize>) {
+        let asked = Arc::default();
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_status_line(Box::new(CountingStatus(Arc::clone(&asked))));
+        drive(&mut rl, &[ch('l'), ch('s')]);
+        (rl, asked)
+    }
+
+    /// What one repaint writes to an 80-column terminal `height` rows tall.
+    fn repaint_output_on(rl: &mut Reedline, height: u16) -> String {
+        rl.painter = Painter::new(W::capture());
+        // Size first: `handle_resize` invalidates the anchor the next line pins.
+        rl.painter.handle_resize(80, height);
+        rl.painter.force_prompt_anchored_for_test(0);
+        rl.repaint(&DefaultPrompt::default()).unwrap();
+        String::from_utf8_lossy(rl.painter.captured_for_test()).into_owned()
+    }
+
+    // The status line describes the line in the buffer, a recalled one too.
+    // Submit hides it with the hint, and history search paints neither.
+    #[rstest]
+    #[case::editing(|_: &mut Reedline| {}, true)]
+    #[case::walking_history(|rl: &mut Reedline| rl.input_mode = InputMode::HistoryTraversal, true)]
+    #[case::submitting(|rl: &mut Reedline| rl.hide_hints = true, false)]
+    #[case::history_search(Reedline::enter_history_search, false)]
+    fn status_line_shows_except_on_submit_and_in_history_search(
+        #[case] enter: fn(&mut Reedline),
+        #[case] shown: bool,
+    ) {
+        let (mut rl, _) = engine_with_status_line();
+
+        enter(&mut rl);
+
+        assert_eq!(repaint_output_on(&mut rl, 24).contains(STATUS_TEXT), shown);
+    }
+
+    // A buffer filling the screen leaves no row for the status line, so the
+    // host is not asked for text that would be thrown away.
+    #[test]
+    fn status_line_is_not_asked_for_without_a_row_to_draw_it() {
+        let (mut rl, asked) = engine_with_status_line();
+        let before = asked.load(std::sync::atomic::Ordering::Relaxed);
+
+        let output = repaint_output_on(&mut rl, 1);
+
+        assert!(!output.contains(STATUS_TEXT));
+        assert_eq!(asked.load(std::sync::atomic::Ordering::Relaxed), before);
+    }
+
+    #[test]
+    fn disabled_status_line_is_never_asked() {
+        let asked = Arc::default();
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_status_line(Box::new(CountingStatus(Arc::clone(&asked))))
+            .disable_status_line();
+
+        let output = repaint_output_on(&mut rl, 24);
+
+        assert!(!output.contains(STATUS_TEXT));
+        assert_eq!(asked.load(std::sync::atomic::Ordering::Relaxed), 0);
+    }
+
+    // Sixty completions in four columns make a grid of 15 rows, taller than
+    // the screen. It is cut to the 7 rows below the status line, rather than
+    // take them back and paint as a large buffer, which draws no status line.
+    #[test]
+    fn status_line_stays_above_a_columnar_menu_taller_than_the_screen() {
+        let words = (0..60).map(|index| format!("ls{index:02}")).collect();
+        let (rl, _) = engine_with_status_line();
+        // Plain, so each entry reaches the output in one piece.
+        let mut rl = rl
+            .with_ansi_colors(false)
+            .with_completer(Box::new(DefaultCompleter::new(words)))
+            .with_menu(ReedlineMenu::EngineCompleter(Box::new(
+                ColumnarMenu::default().with_name("completion_menu"),
+            )));
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::Menu("completion_menu".to_string()),
+        )
+        .expect("menu opens");
+
+        let output = repaint_output_on(&mut rl, 10);
+
+        assert!(output.contains(STATUS_TEXT));
+        assert!(output.contains("ls27"));
+        assert!(!output.contains("ls28"));
+    }
+
+    /// An open menu hides the hint, so a hint wrapping over rows must not
+    /// shorten the menu cut below the status line.
+    #[test]
+    fn columnar_menu_below_the_status_line_ignores_the_hidden_hint() {
+        let words = (0..60).map(|index| format!("ls{index:02}")).collect();
+        let hint: &'static str = "x".repeat(200).leak();
+        let (rl, _) = engine_with_status_line();
+        let mut rl = rl
+            .with_ansi_colors(false)
+            .with_hinter(Box::new(FixedHinter(hint)))
+            .with_completer(Box::new(DefaultCompleter::new(words)))
+            .with_menu(ReedlineMenu::EngineCompleter(Box::new(
+                ColumnarMenu::default().with_name("completion_menu"),
+            )));
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::Menu("completion_menu".to_string()),
+        )
+        .expect("menu opens");
+
+        let output = repaint_output_on(&mut rl, 10);
+
+        assert!(output.contains(STATUS_TEXT));
+        assert!(!output.contains(hint));
+        assert!(output.contains("ls27"));
+        assert!(!output.contains("ls28"));
     }
 }
