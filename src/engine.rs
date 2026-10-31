@@ -1,4 +1,10 @@
-use std::{collections::HashMap, ffi::OsStr, mem, ops::ControlFlow, path::PathBuf};
+use std::{
+    collections::HashMap,
+    ffi::{OsStr, OsString},
+    mem,
+    ops::ControlFlow,
+    path::{Path, PathBuf},
+};
 
 use nu_ansi_term::{Color, Style};
 
@@ -277,90 +283,122 @@ pub struct Reedline {
     idle_callback: Option<Box<dyn FnMut() + Send>>,
 }
 
-struct BufferEditor {
-    command: Command,
-    temp_file: PathBuf,
-    is_template: bool,
-}
+/// A command to spawn a buffer editor. The arguments may contain template
+/// placeholders for the file path and cursor position.
+pub struct EditorCommand(Command);
 
-impl BufferEditor {
+impl EditorCommand {
     const FILE: &str = "{file}";
     const LINE: &str = "{line}";
     const COL: &str = "{col}";
 
-    fn new(mut command: Command, temp_file: PathBuf) -> BufferEditor {
+    /// Creates an editor command.
+    pub fn new(command: Command) -> EditorCommand {
+        EditorCommand(command)
+    }
+    fn is_template(&self) -> bool {
+        self.0.get_args().any(EditorCommand::is_template_arg)
+    }
+
+    fn is_template_arg(arg: &OsStr) -> bool {
+        let arg = arg.to_string_lossy();
+        arg.contains(Self::FILE) || arg.contains(Self::LINE) || arg.contains(Self::COL)
+    }
+
+    /// Returns the editor arguments with `{file}`, `{line}`, and `{col}`
+    /// placeholders replaced by the supplied values. If no argument contains
+    /// the `{file}` placeholder, or exactly matches the path of the passed
+    /// file, the file path is appended.
+    ///
+    /// Line and column numbers are one-based; zero is treated as one.
+    /// Columns are counted as graphemes from the start of the line.
+    ///
+    /// The returned arguments exclude the executable name. Rendering leaves
+    /// the stored command unchanged. Only an argument holding a placeholder
+    /// is converted to Unicode, lossily; the others and an appended file path
+    /// keep their native encoding.
+    pub fn render(&self, file: impl AsRef<Path>, line: usize, col: usize) -> Vec<OsString> {
+        let mut rendered = Vec::new();
+
+        let file_os_str = file.as_ref().as_os_str();
+        let file_str = file.as_ref().to_string_lossy();
         let mut has_file_arg = false;
-        let mut is_template = false;
 
-        for arg in command.get_args() {
-            has_file_arg |= arg == temp_file.as_os_str();
+        // right now, the API is 1-based, so we silently clamp to 1.
+        let line = line.max(1).to_string();
+        let col = col.max(1).to_string();
 
-            if let Some(arg) = arg.to_str() {
-                has_file_arg |= arg.contains(BufferEditor::FILE);
-
-                is_template |= arg.contains(BufferEditor::FILE)
-                    || arg.contains(BufferEditor::LINE)
-                    || arg.contains(BufferEditor::COL);
+        for arg in self.0.get_args() {
+            has_file_arg |= arg == file_os_str;
+            if !Self::is_template_arg(arg) {
+                rendered.push(arg.to_owned());
+                continue;
             }
+            let arg = arg.to_string_lossy();
+            has_file_arg |= arg.contains(Self::FILE);
+
+            let arg = arg
+                .replace(Self::FILE, &file_str)
+                .replace(Self::LINE, &line)
+                .replace(Self::COL, &col);
+
+            rendered.push(arg.into());
         }
 
         if !has_file_arg {
-            command.arg(&temp_file);
+            rendered.push(file_os_str.to_owned());
         }
 
-        BufferEditor {
-            command,
-            temp_file,
-            is_template,
+        rendered
+    }
+}
+
+impl From<Command> for EditorCommand {
+    fn from(command: Command) -> EditorCommand {
+        EditorCommand::new(command)
+    }
+}
+
+struct BufferEditor {
+    command: EditorCommand,
+    temp_file: PathBuf,
+}
+
+impl BufferEditor {
+    fn new(mut command: EditorCommand, temp_file: PathBuf) -> BufferEditor {
+        if !command
+            .0
+            .get_args()
+            .any(|arg| EditorCommand::is_template_arg(arg) || arg == temp_file.as_os_str())
+        {
+            command.0.arg(&temp_file);
         }
+
+        BufferEditor { command, temp_file }
     }
 
-    /// renders the editor command template,
-    /// substituting template placeholders where present.
-    pub(crate) fn render_command(&self, line_buffer: &LineBuffer) -> Command {
-        let mut rendered = Command::new(self.command.get_program());
+    pub(crate) fn build_command(&self, line_buffer: &LineBuffer) -> Command {
+        let mut rendered = Command::new(self.command.0.get_program());
 
-        for (key, value) in self.command.get_envs() {
+        for (key, value) in self.command.0.get_envs() {
             match value {
                 Some(value) => rendered.env(key, value),
                 None => rendered.env_remove(key),
             };
         }
 
-        if let Some(dir) = self.command.get_current_dir() {
+        if let Some(dir) = self.command.0.get_current_dir() {
             rendered.current_dir(dir);
         }
 
-        let file = self.temp_file.to_string_lossy();
-        let line = (line_buffer.line() + 1).to_string();
-        let col = (line_buffer.col() + 1).to_string();
-
-        for arg in self.command.get_args().map(OsStr::to_string_lossy) {
-            let arg = arg
-                .replace(Self::FILE, &file)
-                .replace(Self::LINE, &line)
-                .replace(Self::COL, &col);
-
-            rendered.arg(arg);
-        }
+        let args = self.command.render(
+            &self.temp_file,
+            line_buffer.line() + 1,
+            line_buffer.col() + 1,
+        );
+        rendered.args(args);
 
         rendered
-    }
-
-    /// writes the buffer to the temp file,
-    /// in preparation for spawning the buffer editor
-    pub(crate) fn write_current_buffer(&self, buffer_contents: &str) -> Result<()> {
-        let mut file = File::create(&self.temp_file)?;
-        write!(file, "{buffer_contents}")
-    }
-
-    /// reads the buffer from the temp file,
-    /// expected to be called after the buffer editor exits
-    pub(crate) fn get_edited_buffer(&self) -> Result<String> {
-        let mut res = std::fs::read_to_string(&self.temp_file)?;
-        let content_len = res.trim_end().len();
-        res.truncate(content_len);
-        Ok(res)
     }
 }
 
@@ -972,8 +1010,12 @@ impl Reedline {
     /// the `Command`, such as stdio redirection or `env_clear`, do not carry over.
     /// A command without placeholders is spawned as given.
     #[must_use]
-    pub fn with_buffer_editor(mut self, editor: Command, temp_file: PathBuf) -> Self {
-        self.buffer_editor = Some(BufferEditor::new(editor, temp_file));
+    pub fn with_buffer_editor(
+        mut self,
+        command: impl Into<EditorCommand>,
+        temp_file: PathBuf,
+    ) -> Self {
+        self.buffer_editor = Some(BufferEditor::new(command.into(), temp_file));
         self
     }
 
@@ -3130,7 +3172,9 @@ impl Reedline {
             return Ok(());
         };
 
-        buffer_editor.write_current_buffer(self.editor.get_buffer())?;
+        let mut file = File::create(&buffer_editor.temp_file)?;
+        write!(file, "{}", self.editor.get_buffer())?;
+        drop(file);
 
         // Capture the prompt's screen range so that an editor
         // that leaves the cursor untouched (e.g. an editor that
@@ -3144,12 +3188,12 @@ impl Reedline {
             // this block, before the position query below.
             let _tty_mode = TtyModeGuard::save();
 
-            let mut child = if buffer_editor.is_template {
+            let mut child = if buffer_editor.command.is_template() {
                 buffer_editor
-                    .render_command(self.editor.line_buffer())
+                    .build_command(self.editor.line_buffer())
                     .spawn()?
             } else {
-                buffer_editor.command.spawn()?
+                buffer_editor.command.0.spawn()?
             };
 
             // The child owns the tty now; invalidate eagerly so
@@ -3170,7 +3214,9 @@ impl Reedline {
             .painter
             .initialize_prompt_position(Some(&suspended_state));
 
-        let res = buffer_editor.get_edited_buffer()?;
+        let mut res = std::fs::read_to_string(&buffer_editor.temp_file)?;
+        let content_len = res.trim_end().len();
+        res.truncate(content_len);
 
         self.editor.set_buffer(res, UndoBehavior::CreateUndoPoint);
 
@@ -9448,14 +9494,14 @@ mod tests {
         assert_eq!(rl.editor.insertion_point(), 3);
     }
 
-    fn command_from_strs(command: &[&str], current_dir: impl AsRef<Path>) -> Command {
+    fn editor_command_from_strs(command: &[&str], current_dir: impl AsRef<Path>) -> EditorCommand {
         let (program, args) = command.split_first().unwrap();
         let mut command = Command::new(program);
         command.args(args);
         command.current_dir(current_dir);
         command.env("REEDLINE_TEST_KEEP", "kept");
         command.env_remove("REEDLINE_TEST_DROP");
-        command
+        EditorCommand::new(command)
     }
 
     fn command_into_string(command: Command) -> String {
@@ -9487,12 +9533,12 @@ mod tests {
         let current_dir = "test-dir";
 
         let line_editor = Reedline::create().with_buffer_editor(
-            command_from_strs(command, current_dir),
+            editor_command_from_strs(command, current_dir),
             PathBuf::from("foo.rs"),
         );
         let buffer_editor = line_editor.buffer_editor.as_ref().unwrap();
 
-        assert_eq!(buffer_editor.is_template, is_template);
+        assert_eq!(buffer_editor.command.is_template(), is_template);
 
         let line_buffer = {
             let mut line_buffer = LineBuffer::new();
@@ -9506,7 +9552,7 @@ mod tests {
             line_buffer
         };
 
-        let actual = buffer_editor.render_command(&line_buffer);
+        let actual = buffer_editor.build_command(&line_buffer);
 
         let current_dir = current_dir.as_ref();
         assert_eq!(actual.get_current_dir(), Some(current_dir));
@@ -9518,6 +9564,22 @@ mod tests {
         assert!(envs.contains(&(OsStr::new("REEDLINE_TEST_DROP"), None)));
 
         assert_eq!(command_into_string(actual), expected);
+    }
+
+    /// Only an argument holding a placeholder goes through a string, so the
+    /// others reach the editor byte for byte.
+    #[cfg(unix)]
+    #[test]
+    fn render_keeps_arguments_without_placeholders_as_given() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let raw = OsStr::from_bytes(b"--dir=\xff");
+        let mut command = Command::new("vim");
+        command.arg(raw).arg("+{line}");
+
+        let rendered = EditorCommand::new(command).render("foo.rs", 2, 1);
+
+        assert_eq!(rendered, [raw, OsStr::new("+2"), OsStr::new("foo.rs")]);
     }
 
     const STATUS_TEXT: &str = "status-from-the-host";

@@ -290,7 +290,7 @@ mod painting;
 pub use painting::{Painter, StyledText};
 
 mod engine;
-pub use engine::{MouseClickMode, Reedline};
+pub use engine::{EditorCommand, MouseClickMode, Reedline};
 
 #[cfg(feature = "system_clipboard")]
 mod paste_interceptor;
