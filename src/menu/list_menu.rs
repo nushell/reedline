@@ -2,7 +2,7 @@ use {
     super::{menu_functions::parse_selection_char, Menu, MenuBuilder, MenuEvent, MenuSettings},
     crate::{
         core_editor::Editor,
-        menu_functions::{replace_in_buffer, resolve_completer_input},
+        menu_functions::{escape_suggestions, replace_in_buffer, resolve_completer_input},
         painting::{estimate_single_line_wraps, Painter},
         Completer, Suggestion, Suggestions,
     },
@@ -184,8 +184,11 @@ impl ListMenu {
 
     fn printable_entries(&self, painter: &Painter) -> usize {
         // The number 2 comes from the prompt line and the banner printed at the bottom
-        // of the menu
-        let available_lines = painter.screen_height().saturating_sub(2);
+        // of the menu. A status line takes its rows between the prompt and the menu.
+        let available_lines = painter
+            .screen_height()
+            .saturating_sub(2)
+            .saturating_sub(painter.reserved_status_rows());
         let (printable_entries, _) =
             self.get_values()
                 .iter()
@@ -405,7 +408,7 @@ impl Menu for ListMenu {
                 .get(self.page)
                 .map_or(self.page_size, |page| page.size);
 
-            self.values = completer.partial_complete(&input, pos, skip, take);
+            self.values = escape_suggestions(completer.partial_complete(&input, pos, skip, take));
         } else {
             self.query_size = None;
 
@@ -413,7 +416,7 @@ impl Menu for ListMenu {
             // completion is still in flight with nothing to show yet), so we keep
             // the current suggestions rather than blanking the menu.
             if let Some(values) = completer.complete(&input, pos).into_shared() {
-                self.values = values;
+                self.values = escape_suggestions(values);
             }
         }
     }
@@ -443,6 +446,44 @@ impl Menu for ListMenu {
             let end = end.min(self.total_values());
             self.values.get(start..end).unwrap_or(&[])
         }
+    }
+
+    fn selection_at(
+        &self,
+        _column: u16,
+        menu_row: u16,
+        terminal_columns: u16,
+        _available_lines: u16,
+    ) -> Option<usize> {
+        if self.get_values().is_empty() {
+            return None;
+        }
+
+        let page = self.pages.get(self.page)?;
+        let entries_before_page: usize = self.pages.iter().take(self.page).map(|i| i.size).sum();
+        let mut entry_row = 0;
+
+        for (index, suggestion) in self.get_values().iter().take(page.size).enumerate() {
+            let prefix_width = count_digits(entries_before_page + index) + 2;
+            let width = terminal_columns.saturating_sub(prefix_width);
+            let height = self.number_of_lines(suggestion.display_value(), width);
+
+            if menu_row >= entry_row && menu_row < entry_row + height {
+                return Some(index);
+            }
+
+            entry_row += height;
+        }
+
+        None
+    }
+
+    fn set_selection(&mut self, index: usize) {
+        if index >= self.get_values().len() {
+            return;
+        }
+
+        self.row_position = index as u16;
     }
 
     /// The buffer gets cleared with the actual value
@@ -659,7 +700,33 @@ fn count_digits(mut n: usize) -> u16 {
 
 #[cfg(test)]
 mod tests {
+    use crate::{painting::W, Span};
+
     use super::*;
+
+    // A status line takes its rows between the prompt and the menu, so the
+    // menu fits fewer entries on the screen.
+    #[test]
+    fn printable_entries_leave_the_status_rows_free() {
+        let menu = ListMenu {
+            query_size: Some(5),
+            values: (0..5)
+                .map(|index| Suggestion {
+                    value: format!("v{index}"),
+                    ..Default::default()
+                })
+                .collect::<Vec<_>>()
+                .into(),
+            ..ListMenu::default()
+        };
+        let mut painter = Painter::new(W::sink());
+        painter.handle_resize(20, 6);
+        let without = menu.printable_entries(&painter);
+
+        painter.reserve_status_rows(1, 1);
+
+        assert_eq!(menu.printable_entries(&painter), without - 1);
+    }
 
     #[test]
     fn number_of_lines_test() {
@@ -745,5 +812,101 @@ mod tests {
             menu.create_string("value", Some("desc"), 0, "", false),
             ">VALUE desc\r\n"
         );
+    }
+
+    struct FakeCompleter {
+        completions: Vec<String>,
+    }
+
+    impl FakeCompleter {
+        fn new(completions: &[&str]) -> Self {
+            Self {
+                completions: completions.iter().map(|c| c.to_string()).collect(),
+            }
+        }
+    }
+
+    impl Completer for FakeCompleter {
+        fn complete(&mut self, _line: &str, pos: usize) -> crate::CompletionResult {
+            crate::CompletionResult::fresh(
+                self.completions
+                    .iter()
+                    .map(|c| Suggestion {
+                        value: c.to_string(),
+                        span: Span { start: 0, end: pos },
+                        ..Default::default()
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        }
+    }
+
+    fn setup_menu(
+        menu: &mut ListMenu,
+        editor: &mut Editor,
+        completer: &mut dyn Completer,
+        terminal_size: (u16, u16),
+    ) -> Painter {
+        let mut painter = Painter::new(W::sink());
+        painter.handle_resize(terminal_size.0, terminal_size.1);
+
+        menu.menu_event(MenuEvent::Activate(false));
+        menu.update_working_details(editor, completer, &painter);
+
+        painter
+    }
+
+    #[test]
+    fn menu_mouse_click_selection() {
+        let mut menu = ListMenu::default().with_name("testmenu");
+        let mut editor = Editor::default();
+        let mut completer = FakeCompleter::new(&["a", "b\nb", "c\nc\nc", "d"]);
+
+        setup_menu(&mut menu, &mut editor, &mut completer, (100, 100));
+
+        assert_eq!(menu.selection_at(0, 0, 100, 100), Some(0));
+        assert_eq!(menu.selection_at(0, 1, 100, 100), Some(1));
+        assert_eq!(menu.selection_at(0, 2, 100, 100), Some(1));
+        assert_eq!(menu.selection_at(0, 3, 100, 100), Some(2));
+        assert_eq!(menu.selection_at(0, 4, 100, 100), Some(2));
+        assert_eq!(menu.selection_at(0, 5, 100, 100), Some(2));
+        assert_eq!(menu.selection_at(0, 6, 100, 100), Some(3));
+        assert_eq!(menu.selection_at(0, 7, 100, 100), None);
+    }
+
+    #[test]
+    fn menu_mouse_click_selection_incomplete_page() {
+        let mut menu = ListMenu::default().with_page_size(2).with_name("testmenu");
+        let mut editor = Editor::default();
+        let mut completer = FakeCompleter::new(&["a", "b\nb", "c\nc\nc", "d"]);
+
+        let painter = setup_menu(&mut menu, &mut editor, &mut completer, (100, 100));
+
+        // Only the first two items are shown
+        let page = menu.pages.get(menu.page).unwrap();
+        assert_eq!(menu.selection_at(0, 0, 100, 100), Some(0));
+        assert_eq!(menu.selection_at(0, 1, 100, 100), Some(1));
+        assert_eq!(menu.selection_at(0, 2, 100, 100), Some(1));
+        assert_eq!(menu.selection_at(0, 3, 100, 100), None);
+        assert_eq!(menu.page, 0);
+        assert_eq!(page.size, 2);
+
+        // Select the last item, reveal the rest of the items
+        for _ in 0..completer.completions.len() - 1 {
+            menu.menu_event(MenuEvent::NextElement);
+            menu.update_working_details(&mut editor, &mut completer, &painter);
+        }
+
+        let page = menu.pages.get(menu.page).unwrap();
+        assert_eq!(menu.selection_at(0, 0, 100, 100), Some(0));
+        assert_eq!(menu.selection_at(0, 1, 100, 100), Some(1));
+        assert_eq!(menu.selection_at(0, 2, 100, 100), Some(1));
+        assert_eq!(menu.selection_at(0, 3, 100, 100), Some(2));
+        assert_eq!(menu.selection_at(0, 4, 100, 100), Some(2));
+        assert_eq!(menu.selection_at(0, 5, 100, 100), Some(2));
+        assert_eq!(menu.selection_at(0, 6, 100, 100), Some(3));
+        assert_eq!(menu.selection_at(0, 7, 100, 100), None);
+        assert_eq!(menu.page, 0);
+        assert_eq!(page.size, 4);
     }
 }

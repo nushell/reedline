@@ -7,7 +7,8 @@ use crate::painting::test_screen::TestScreen;
 
 use {
     super::utils::{
-        advance_grapheme, coerce_crlf, deferred_wrap_row, line_width, resolve_wrap, wrap_position,
+        advance_grapheme, coerce_crlf, deferred_wrap_row, escape_control, line_width,
+        plain_menu_text, resolve_wrap, wrap_position,
     },
     crate::{
         menu::{Menu, ReedlineMenu},
@@ -32,6 +33,18 @@ fn skip_buffer_lines(string: &str, skip: usize, offset: Option<usize>) -> &str {
     let (index, limit) = skip_buffer_lines_range(string, skip, offset);
 
     string[index..limit].trim_end_matches('\n')
+}
+
+// `text` of the buffer as it is drawn: the `\r` of a CRLF is the line break's
+// own and draws nothing, every other control char shows escaped.
+fn escape_as_drawn(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.contains("\r\n") {
+        escape_control(&text.replace("\r\n", "\n"))
+            .into_owned()
+            .into()
+    } else {
+        escape_control(text)
+    }
 }
 
 // The byte range `skip_buffer_lines` slices, for callers that need to map a
@@ -279,6 +292,7 @@ pub struct RenderSnapshot {
     pub first_buffer_col: u16,
     pub menu_active: bool,
     pub menu_start_row: Option<u16>,
+    pub status_start_row: Option<u16>,
     pub large_buffer_extra_rows_after_prompt: Option<usize>,
     pub large_buffer_offset: Option<usize>,
     pub right_prompt: Option<RightPromptBounds>,
@@ -347,6 +361,11 @@ pub(crate) struct PromptLayout {
 
     /// Row where the menu starts.
     menu_start_row: Option<u16>,
+
+    /// Row where the status line starts, `None` when none is drawn. Below
+    /// the buffer and its hint, or, with a menu open, below the cursor's row
+    /// and above the menu.
+    status_start_row: Option<u16>,
 
     /// Buffer start column on first visible line.
     first_buffer_col: u16,
@@ -452,6 +471,13 @@ pub struct Painter {
     /// reset: a resize, a new reported size or a measured growth changes the
     /// height, and with it the answer.
     bottom_confirmed_at: Option<u16>,
+    /// Rows set aside for the status line of the paint being prepared, before
+    /// the menus size themselves so they leave those rows free. That paint
+    /// takes them, so none outlive it. See [`Painter::reserve_status_rows`].
+    status_rows: u16,
+    /// Rows a menu can take below the reserved status line while the whole
+    /// block stays on the screen. Meaningless while `status_rows` is 0.
+    menu_room: u16,
 }
 
 impl Painter {
@@ -472,6 +498,8 @@ impl Painter {
             last_layout: None,
             cursor_hidden: false,
             bottom_confirmed_at: None,
+            status_rows: 0,
+            menu_room: 0,
         }
     }
 
@@ -552,11 +580,44 @@ impl Painter {
         self.terminal_size.1 = self.terminal_size.1.max(row.saturating_add(1));
     }
 
-    /// Returns the empty lines from the prompt down.
+    /// Returns the empty lines from the prompt down, less the rows set aside
+    /// for the status line, which draws between the buffer and a menu.
     pub fn remaining_lines_real(&self) -> u16 {
+        self.remaining_lines().saturating_sub(self.prompt_height)
+    }
+
+    /// Rows a status line can take below a block of `block_rows` while the
+    /// whole block stays on the screen. Past that the paint takes the
+    /// large-buffer path, which draws no status line.
+    pub(crate) fn status_room(&self, block_rows: u16) -> u16 {
         self.screen_height()
-            .saturating_sub(self.prompt_start_row.last_known_row())
-            .saturating_sub(self.prompt_height)
+            .saturating_sub(block_rows)
+            .saturating_sub(1)
+    }
+
+    /// Set aside the `rows` of the next paint's status line when they fit in
+    /// `room`, from [`Painter::status_room`], so a menu sizing itself from
+    /// [`Painter::remaining_lines`] leaves them free. A status line that does
+    /// not fit gives way to the buffer and gets none.
+    pub(crate) fn reserve_status_rows(&mut self, rows: u16, room: u16) {
+        self.status_rows = if rows <= room { rows } else { 0 };
+        self.menu_room = room.saturating_sub(self.status_rows);
+    }
+
+    /// Rows set aside for the status line of the paint being prepared.
+    pub(crate) fn reserved_status_rows(&self) -> u16 {
+        self.status_rows
+    }
+
+    /// Rows a menu can be cut to below the status line set aside for this
+    /// paint, so the whole block stays on the screen, when that still shows
+    /// `min_rows` of it.
+    ///
+    /// `None` without a status line, where a menu taller than the screen takes
+    /// the large-buffer path, and when it would be cut shorter than
+    /// `min_rows`: the menu keeps its height and takes the status rows back.
+    pub(crate) fn menu_room_below_status(&self, min_rows: u16) -> Option<u16> {
+        (self.status_rows > 0 && self.menu_room >= min_rows).then_some(self.menu_room)
     }
 
     /// Returns the empty lines below the prompt once it is scrolled to the top.
@@ -569,17 +630,29 @@ impl Painter {
     }
 
     /// Returns the number of lines that are available or can be made available by
-    /// stripping the prompt.
+    /// stripping the prompt, less the rows set aside for the status line.
     ///
     /// If you want the number of empty lines below the prompt,
     /// use [`Painter::remaining_lines_real`] instead.
     pub fn remaining_lines(&self) -> u16 {
         self.screen_height()
             .saturating_sub(self.prompt_start_row.last_known_row())
+            .saturating_sub(self.status_rows)
     }
 
     /// Computes layout values shared between rendering and snapshot creation.
-    fn compute_layout(&self, lines: &PromptLines, menu: Option<&ReedlineMenu>) -> PromptLayout {
+    ///
+    /// `block_rows` is what [`PromptLines::required_lines`] measured for this
+    /// paint, before the `status_rows` of its status line. It places the
+    /// status line only without a menu, where it is the prompt, the buffer
+    /// and the hint.
+    fn compute_layout(
+        &self,
+        lines: &PromptLines,
+        menu: Option<&ReedlineMenu>,
+        block_rows: u16,
+        status_rows: u16,
+    ) -> PromptLayout {
         let screen_width = self.screen_width();
         let screen_height = self.screen_height();
 
@@ -630,6 +703,18 @@ impl Painter {
             }
         });
 
+        // The status line takes the rows the menu would have started on and
+        // pushes the menu below it. Without a menu it follows the whole buffer
+        // and the hint, as laid out end to end.
+        let status_start_row = (status_rows > 0).then(|| {
+            menu_start_row.unwrap_or_else(|| {
+                self.prompt_start_row
+                    .last_known_row()
+                    .saturating_add(block_rows)
+            })
+        });
+        let menu_start_row = menu_start_row.map(|row| row.saturating_add(status_rows));
+
         // First buffer column
         let first_buffer_col = if self.large_buffer && extra_rows_after_prompt > 0 {
             0
@@ -650,6 +735,7 @@ impl Painter {
             large_buffer_offset,
             right_prompt,
             menu_start_row,
+            status_start_row,
             first_buffer_col,
         }
     }
@@ -836,6 +922,9 @@ impl Painter {
     ///
     /// Note. The `ScrollUp` operation in `crossterm` deletes lines from the top of
     /// the screen.
+    ///
+    /// The status line of `lines` draws on the rows
+    /// [`Painter::reserve_status_rows`] set aside for this paint, none without.
     pub(crate) fn repaint_buffer(
         &mut self,
         prompt: &dyn Prompt,
@@ -845,6 +934,10 @@ impl Painter {
         use_ansi_coloring: bool,
         cursor_config: &Option<CursorConfig>,
     ) -> Result<()> {
+        // Taken first, so a paint that reserves none, as history search's
+        // does, never inherits the rows of the one before.
+        let reserved_status_rows = std::mem::take(&mut self.status_rows);
+
         // Reset any ANSI styling that may have been left by external commands
         // This ensures the prompt is not affected by previous output styling
         // Note: Attribute::Reset (SGR 0) resets all attributes including colors
@@ -875,8 +968,19 @@ impl Painter {
         // the height earlier splits the paint across two screens: `large_buffer`
         // would judge against the old, short one and reset the anchor to row 0.
         let screen_height = self.screen_height();
-        let remaining_lines = self.remaining_lines();
-        let required_lines = lines.required_lines(screen_width, false, menu);
+        // Every row from the anchor down: the status rows are among the
+        // `required_lines` this has to hold.
+        let remaining_lines = screen_height.saturating_sub(self.prompt_start_row.last_known_row());
+        let block_rows = lines.required_lines(screen_width, false, menu);
+        // The rows were set aside before the menu sized itself. One that could
+        // not shrink enough to leave them free takes them back, which keeps
+        // the status line out of the large-buffer path.
+        let status_rows = if reserved_status_rows <= self.status_room(block_rows) {
+            reserved_status_rows
+        } else {
+            0
+        };
+        let required_lines = block_rows + status_rows;
 
         // Cursor queries above must finish before the frame begins. End the frame even if
         // drawing fails, so a recoverable write error cannot leave updates suspended.
@@ -904,7 +1008,7 @@ impl Painter {
             let anchor_row = self.prompt_start_row.last_known_row();
             self.clear_from_anchor(anchor_row)?;
 
-            let layout = self.compute_layout(lines, menu);
+            let layout = self.compute_layout(lines, menu, block_rows, status_rows);
 
             let margin_cursor_row = if self.large_buffer {
                 self.print_large_buffer(prompt, lines, menu, use_ansi_coloring, &layout)?
@@ -992,6 +1096,7 @@ impl Painter {
             first_buffer_col: layout.first_buffer_col,
             menu_active: menu.is_some(),
             menu_start_row: layout.menu_start_row,
+            status_start_row: layout.status_start_row,
             large_buffer_extra_rows_after_prompt,
             large_buffer_offset,
             right_prompt: layout.right_prompt,
@@ -1002,8 +1107,8 @@ impl Painter {
     /// combined editing buffer (`before_cursor + after_cursor`).
     ///
     /// Returns `None` when the click lands outside the editable area: above the
-    /// prompt, inside the right prompt, inside the menu, or past the end of
-    /// visible buffer content.
+    /// prompt, inside the right prompt, on the status line, inside the menu,
+    /// or past the end of visible buffer content.
     ///
     /// The algorithm walks grapheme-by-grapheme through the visible portion of
     /// the buffer, tracking the current (row, col) on screen. Wide characters
@@ -1027,6 +1132,13 @@ impl Painter {
                     return None;
                 }
             }
+        }
+
+        // Nor are clicks on the status line or below it. It starts past the
+        // buffer or, with a menu open, on the rows that erased the text after
+        // the cursor.
+        if snapshot.status_start_row.is_some_and(|start| row >= start) {
+            return None;
         }
 
         // Clicks inside the right prompt area are not in the buffer.
@@ -1087,7 +1199,8 @@ impl Painter {
                     [
                         snapshot.prompt_str_left.as_str(),
                         snapshot.prompt_indicator.as_str(),
-                        snapshot.before_cursor.as_str(),
+                        // As drawn, with control chars escaped.
+                        &escape_as_drawn(&snapshot.before_cursor),
                     ],
                     screen_width,
                 )
@@ -1115,23 +1228,30 @@ impl Painter {
 
         let mut check_segment = |segment: &str, base_offset: usize| -> Option<usize> {
             for (index, grapheme) in segment.grapheme_indices(true) {
-                // Same rule as the layout walk, so the offset this maps back to
-                // is the grapheme the layout put under the click. A zero-width
-                // grapheme occupies no column and so is never the target; the
-                // base grapheme it combines with already matched.
-                let (at, width) =
-                    advance_grapheme((current_row, current_col), grapheme, screen_width);
-                (current_row, current_col) = at;
+                // The buffer is drawn with its control chars escaped (`^[`,
+                // `M-^[`), so walk what is shown, and a click on any column
+                // of an escape maps back to the char it stands for.
+                let shown = escape_as_drawn(grapheme);
+                for shown in shown.graphemes(true) {
+                    // Same rule as the layout walk, so the offset this maps
+                    // back to is the grapheme the layout put under the click.
+                    // A zero-width grapheme occupies no column and so is never
+                    // the target; the base grapheme it combines with already
+                    // matched.
+                    let (at, width) =
+                        advance_grapheme((current_row, current_col), shown, screen_width);
+                    (current_row, current_col) = at;
 
-                if width > 0
-                    && current_row == target_row
-                    && column >= current_col
-                    && column < current_col.saturating_add(width)
-                {
-                    return Some(base_offset + index);
+                    if width > 0
+                        && current_row == target_row
+                        && column >= current_col
+                        && column < current_col.saturating_add(width)
+                    {
+                        return Some(base_offset + index);
+                    }
+
+                    current_col = current_col.saturating_add(width);
                 }
-
-                current_col = current_col.saturating_add(width);
             }
 
             None
@@ -1233,6 +1353,13 @@ impl Painter {
         let starting_row = layout.menu_start_row.unwrap_or(0);
         let remaining_lines = self.screen_height().saturating_sub(starting_row);
         let menu_string = menu.menu_string(remaining_lines, use_ansi_coloring);
+        // Plain menus uppercase and truncate kept SGR as if it were text, so
+        // whatever is left of it goes here, once for every menu.
+        let menu_string = if use_ansi_coloring {
+            menu_string
+        } else {
+            plain_menu_text(&menu_string).into_owned()
+        };
         self.clear_from_anchor(starting_row)?;
         self.stdout
             .queue(Print(menu_string.trim_end_matches('\n')))?;
@@ -1324,12 +1451,37 @@ impl Painter {
         ]);
 
         if let Some(menu) = menu {
+            self.print_status(lines, use_ansi_coloring, layout)?;
             self.print_menu(menu, use_ansi_coloring, layout)?;
         } else {
             self.stdout.queue(Print(&lines.hint))?;
+            self.print_status(lines, use_ansi_coloring, layout)?;
         }
 
         Ok(cursor_row)
+    }
+
+    /// Draw the status line on the rows [`Painter::compute_layout`] gave it.
+    ///
+    /// The rows are erased first: with a menu open, text after the cursor
+    /// can reach them, the same rows the menu would otherwise draw over.
+    fn print_status(
+        &mut self,
+        lines: &PromptLines,
+        use_ansi_coloring: bool,
+        layout: &PromptLayout,
+    ) -> Result<()> {
+        let Some(row) = layout.status_start_row else {
+            return Ok(());
+        };
+        self.clear_from_anchor(row)?;
+        self.stdout.queue(Print(&lines.status))?;
+        if use_ansi_coloring {
+            self.stdout
+                .queue(SetAttribute(Attribute::Reset))?
+                .queue(ResetColor)?;
+        }
+        Ok(())
     }
 
     fn print_large_buffer(
@@ -2716,6 +2868,7 @@ mod tests {
             first_buffer_col: 2,
             menu_active: false,
             menu_start_row: None,
+            status_start_row: None,
             large_buffer_extra_rows_after_prompt: None,
             large_buffer_offset: None,
             right_prompt: None,
@@ -2772,6 +2925,60 @@ mod tests {
         assert_eq!(painter.screen_to_buffer_offset(&snapshot, 0, 0), Some(6));
     }
 
+    /// The buffer shows a control char escaped, so a click is measured on
+    /// what is shown and any column of the escape maps back to the char.
+    #[rstest]
+    // `> ab^[cd`: `^[` spans columns 4 and 5.
+    #[case::esc("ab\x1bcd", &[(4, 2), (5, 2), (6, 3), (7, 4), (8, 5)])]
+    // `> a^Mbc`: a lone `\r` no longer returns to the left edge.
+    #[case::carriage_return("a\rbc", &[(3, 1), (4, 1), (5, 2), (6, 3)])]
+    // `> M-^[x`: a C1 char is two bytes and four columns.
+    #[case::c1("\u{9b}x", &[(2, 0), (5, 0), (6, 2)])]
+    fn click_maps_through_shown_control_chars(
+        #[case] buffer: &str,
+        #[case] clicks: &[(u16, usize)],
+    ) {
+        let mut snapshot = base_snapshot();
+        snapshot.before_cursor = buffer.to_string();
+
+        let painter = Painter::new(W::sink());
+        for &(column, offset) in clicks {
+            assert_eq!(
+                painter.screen_to_buffer_offset(&snapshot, column, 0),
+                Some(offset),
+                "column {column}"
+            );
+        }
+    }
+
+    /// The `\r` of a `\r\n` is the line break's own and draws nothing, so a
+    /// CRLF buffer maps clicks like the LF one, one byte further on past the
+    /// break. A phantom `^M` would wrap the line that exactly fits the row.
+    #[rstest]
+    #[case::short("a", "b")]
+    #[case::fills_the_row(&"a".repeat(17), "bcd")]
+    fn click_after_crlf_maps_like_lf(#[case] first: &str, #[case] second: &str) {
+        let painter = Painter::new(W::sink());
+        let offsets = |before_cursor: String| {
+            let mut snapshot = base_snapshot();
+            snapshot.before_cursor = before_cursor;
+            (0..2)
+                .flat_map(|row| (0..20).map(move |column| (column, row)))
+                .map(|(column, row)| painter.screen_to_buffer_offset(&snapshot, column, row))
+                .collect::<Vec<_>>()
+        };
+
+        let lf = offsets(format!("{first}\n{second}"));
+        let crlf = offsets(format!("{first}\r\n{second}"));
+
+        let break_at = first.len();
+        let shifted: Vec<_> = lf
+            .iter()
+            .map(|offset| offset.map(|o| if o > break_at { o + 1 } else { o }))
+            .collect();
+        assert_eq!(crlf, shifted);
+    }
+
     #[test]
     fn test_click_in_right_prompt_ignored() {
         let mut snapshot = base_snapshot();
@@ -2794,6 +3001,23 @@ mod tests {
 
         let painter = Painter::new(W::sink());
         assert_eq!(painter.screen_to_buffer_offset(&snapshot, 0, 2), None);
+    }
+
+    /// With a menu open the status line takes the row below the cursor, where
+    /// the text after the cursor would continue. That text is erased, so a
+    /// click there must not land in it.
+    #[test]
+    fn test_click_in_status_ignored() {
+        let mut snapshot = base_snapshot();
+        snapshot.before_cursor = "a".to_string();
+        snapshot.after_cursor = "\nb".to_string();
+        snapshot.menu_active = true;
+        snapshot.status_start_row = Some(1);
+        snapshot.menu_start_row = Some(2);
+
+        let painter = Painter::new(W::sink());
+        assert_eq!(painter.screen_to_buffer_offset(&snapshot, 0, 1), None);
+        assert_eq!(painter.screen_to_buffer_offset(&snapshot, 2, 0), Some(0));
     }
 
     fn make_painter(width: u16, height: u16, large_buffer: bool) -> Painter {
@@ -2822,6 +3046,7 @@ mod tests {
             hint: Cow::Borrowed(""),
             right_prompt_on_last_line: false,
             exit_after_cursor: None,
+            status: Cow::Borrowed(""),
         }
     }
 
@@ -3408,13 +3633,13 @@ mod tests {
     /// `menu_required_lines` books them, and both derive from the same string so
     /// a test cannot describe a menu that draws more rows than it reserved.
     /// Everything else is unreachable in these tests.
-    struct TestMenu {
+    pub(super) struct TestMenu {
         contents: String,
         settings: MenuSettings,
     }
 
     impl TestMenu {
-        fn new(contents: &str) -> Self {
+        pub(super) fn new(contents: &str) -> Self {
             Self {
                 contents: contents.to_string(),
                 settings: MenuSettings::default(),
@@ -3487,6 +3712,7 @@ mod tests {
             large_buffer_offset: None,
             right_prompt: None,
             menu_start_row,
+            status_start_row: None,
             first_buffer_col: 0,
         };
         p.print_menu(menu, false, &layout)
@@ -3502,6 +3728,7 @@ mod tests {
         p.terminal_size = (20, 10);
         p.prompt_start_row.mark_verified(0);
         p.prompt_height = 1;
+        reserve_status(&mut p, lines);
         p.repaint_buffer(
             &TestPrompt,
             lines,
@@ -3514,6 +3741,30 @@ mod tests {
         p.move_cursor_to_end().expect("move_cursor_to_end failed");
 
         replay(&String::from_utf8_lossy(p.stdout.captured()), 20, false)
+    }
+
+    /// Set aside the rows the status line of `lines` takes, as the engine does
+    /// before each paint.
+    pub(super) fn reserve_status(p: &mut Painter, lines: &PromptLines) {
+        let width = p.screen_width();
+        let room = p.status_room(lines.required_lines(width, false, None));
+        p.reserve_status_rows(lines.status_rows(width), room);
+    }
+
+    /// The status line is commentary, like a hint, so the exit path leaves
+    /// none of it under the command for the host to print over.
+    #[rstest]
+    #[case::without_a_menu(None)]
+    #[case::above_a_menu(Some("item1\nitem2"))]
+    fn exit_erases_the_status_line(#[case] menu_rows: Option<&str>) {
+        let menu =
+            menu_rows.map(|rows| ReedlineMenu::EngineCompleter(Box::new(TestMenu::new(rows))));
+        let lines = make_lines(TEST_PROMPT, "", "", "pwd", "").with_status("status", false);
+
+        let replayed = capture_repaint_then_exit(&lines, menu.as_ref());
+
+        assert_eq!(replayed.screen, "> pwd");
+        assert_eq!(replayed.cursor.0, 1);
     }
 
     /// Regression test for nushell/reedline#1143.
@@ -3588,7 +3839,7 @@ mod tests {
     fn test_layout_small_buffer_defaults() {
         let painter = make_painter(20, 10, false);
         let lines = make_lines(TEST_PROMPT, "", "", "hello", "");
-        let layout = painter.compute_layout(&lines, None);
+        let layout = painter.compute_layout(&lines, None, 0, 0);
 
         assert_eq!(layout.extra_rows, 0);
         assert_eq!(layout.extra_rows_after_prompt, 0);
@@ -3601,7 +3852,7 @@ mod tests {
     fn test_layout_right_prompt_rendered() {
         let painter = make_painter(40, 10, false);
         let lines = make_lines(TEST_PROMPT, "", "RP", "hi", "");
-        let layout = painter.compute_layout(&lines, None);
+        let layout = painter.compute_layout(&lines, None, 0, 0);
 
         let rp = layout
             .right_prompt
@@ -3616,7 +3867,7 @@ mod tests {
         let mut painter = make_painter(40, 10, false);
         painter.term_is_dumb = true;
         let lines = make_lines(TEST_PROMPT, "", "RP", "hi", "");
-        let layout = painter.compute_layout(&lines, None);
+        let layout = painter.compute_layout(&lines, None, 0, 0);
 
         assert!(layout.right_prompt.is_none());
     }
@@ -3627,7 +3878,7 @@ mod tests {
         // Prompt TEST_PROMPT (2) + before "12345678" (8) = 10 which equals start_position (10-2=8)
         // input_width(10) > start_position(8) so right prompt should not render
         let lines = make_lines(TEST_PROMPT, "", "RP", "12345678", "");
-        let layout = painter.compute_layout(&lines, None);
+        let layout = painter.compute_layout(&lines, None, 0, 0);
 
         assert!(layout.right_prompt.is_none());
     }
@@ -3643,7 +3894,7 @@ mod tests {
         // extra_rows_after_prompt = 1 - 0 = 1
         let painter = make_painter(20, 5, true);
         let lines = make_lines(TEST_PROMPT, "", "", "l1\nl2\nl3\nl4\nl5\nl6\nl7", "");
-        let layout = painter.compute_layout(&lines, None);
+        let layout = painter.compute_layout(&lines, None, 0, 0);
 
         assert_eq!(layout.extra_rows, 1);
         assert_eq!(layout.extra_rows_after_prompt, 1);
@@ -3661,7 +3912,7 @@ mod tests {
         // screen height. `make_painter(.., true)` forces the large-buffer path.
         let painter = make_painter(120, 24, true);
         let lines = make_lines(TEST_PROMPT, "", "", "", "");
-        let layout = painter.compute_layout(&lines, None);
+        let layout = painter.compute_layout(&lines, None, 0, 0);
 
         assert_eq!(layout.extra_rows, 0);
         assert_eq!(layout.extra_rows_after_prompt, 0);
@@ -3673,7 +3924,7 @@ mod tests {
         // should not be rendered — this was a bug in the old render_snapshot.
         let painter = make_painter(20, 5, true);
         let lines = make_lines(TEST_PROMPT, "", "RP", "l1\nl2\nl3\nl4\nl5\nl6\nl7", "");
-        let layout = painter.compute_layout(&lines, None);
+        let layout = painter.compute_layout(&lines, None, 0, 0);
 
         assert!(layout.extra_rows > 0);
         assert!(layout.right_prompt.is_none());
@@ -3685,7 +3936,7 @@ mod tests {
         // Right prompt should still render
         let painter = make_painter(20, 10, true);
         let lines = make_lines(TEST_PROMPT, "", "RP", "short", "");
-        let layout = painter.compute_layout(&lines, None);
+        let layout = painter.compute_layout(&lines, None, 0, 0);
 
         assert_eq!(layout.extra_rows, 0);
         assert!(layout.right_prompt.is_some());
@@ -3696,7 +3947,7 @@ mod tests {
         let painter = make_painter(20, 10, false);
         // Multi-line prompt: last line is "$ " (2 chars)
         let lines = make_lines("line1\n$ ", "", "", "hello", "");
-        let layout = painter.compute_layout(&lines, None);
+        let layout = painter.compute_layout(&lines, None, 0, 0);
 
         assert_eq!(layout.first_buffer_col, 2);
     }
@@ -3717,7 +3968,7 @@ mod tests {
 
         let prompt = TestPrompt;
         let lines = PromptLines::new(&prompt, PromptEditMode::Default, None, "", "", "");
-        let layout = painter.compute_layout(&lines, None);
+        let layout = painter.compute_layout(&lines, None, 0, 0);
 
         painter
             .print_small_buffer(&prompt, &lines, None, false, &layout)
