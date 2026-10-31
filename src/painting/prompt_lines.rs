@@ -1,4 +1,7 @@
-use super::utils::{coerce_crlf, estimate_required_lines, line_width, resolve_wrap, wrap_position};
+use super::utils::{
+    coerce_crlf, escape_control, escape_control_keep_sgr, estimate_required_lines, expand_tabs,
+    line_width, resolve_wrap, wrap_position,
+};
 use crate::{
     menu::{Menu, ReedlineMenu},
     prompt::PromptEditMode,
@@ -21,6 +24,9 @@ pub(crate) struct PromptLines<'prompt> {
     /// closers leaves `after_cursor` empty, but the closers are still in the
     /// buffer.
     pub(crate) exit_after_cursor: Option<Cow<'prompt, str>>,
+    /// The [`StatusLine`](crate::StatusLine) text, drawn on its own rows below
+    /// the buffer and above any menu. Empty draws none.
+    pub(crate) status: Cow<'prompt, str>,
 }
 
 impl<'prompt> PromptLines<'prompt> {
@@ -57,7 +63,47 @@ impl<'prompt> PromptLines<'prompt> {
             hint,
             right_prompt_on_last_line,
             exit_after_cursor: None,
+            status: Cow::Borrowed(""),
         }
+    }
+
+    /// Set the status line drawn below the buffer. See [`Self::status`].
+    ///
+    /// Trailing line breaks are dropped: the rows count stops at the last
+    /// line, so printing one would move the terminal a row past them, and
+    /// scroll it when the status line ends on the bottom row.
+    ///
+    /// Each line is drawn as it is counted. Control characters show escaped,
+    /// as in the buffer, so a `\r` inside a line cannot return to its start
+    /// and draw over it. SGR is kept while `use_ansi_coloring` is on, as in a
+    /// hint. Tabs become the spaces to the next stop (see [`expand_tabs`]).
+    pub(crate) fn with_status(mut self, status: &str, use_ansi_coloring: bool) -> Self {
+        let mut drawn = String::with_capacity(status.len());
+        // `lines` splits at `\r\n` as well as `\n`, so the `\r` of a line
+        // break never reaches the escape.
+        for (index, line) in status.trim_end_matches(['\r', '\n']).lines().enumerate() {
+            if index > 0 {
+                drawn.push_str("\r\n");
+            }
+            let line = if use_ansi_coloring {
+                escape_control_keep_sgr(line)
+            } else {
+                escape_control(line)
+            };
+            drawn.push_str(&expand_tabs(&line));
+        }
+        self.status = Cow::Owned(drawn);
+        self
+    }
+
+    /// Rows the status line takes, wrapping included. 0 without one.
+    pub(crate) fn status_rows(&self, terminal_columns: u16) -> u16 {
+        if self.status.is_empty() {
+            return 0;
+        }
+        estimate_required_lines(&self.status, terminal_columns)
+            .try_into()
+            .unwrap_or(u16::MAX)
     }
 
     /// Set what the exit path reprints after the cursor in place of
@@ -325,6 +371,7 @@ mod tests {
             hint: Cow::Borrowed(""),
             right_prompt_on_last_line: false,
             exit_after_cursor: None,
+            status: Cow::Borrowed(""),
         };
 
         let pos = prompt_lines.cursor_pos(terminal_columns);
@@ -361,6 +408,7 @@ mod tests {
             hint: Cow::Borrowed(""),
             right_prompt_on_last_line: false,
             exit_after_cursor: None,
+            status: Cow::Borrowed(""),
         };
 
         assert_eq!(
@@ -405,6 +453,7 @@ mod tests {
             hint: Cow::Borrowed(""),
             right_prompt_on_last_line: false,
             exit_after_cursor: None,
+            status: Cow::Borrowed(""),
         };
 
         assert_eq!(
@@ -432,8 +481,65 @@ mod tests {
             hint: Cow::Borrowed(""),
             right_prompt_on_last_line: false,
             exit_after_cursor: None,
+            status: Cow::Borrowed(""),
         };
 
         assert_eq!(prompt_lines.prompt_height(20), expected);
+    }
+
+    fn lines_with_status(status: &str, use_ansi_coloring: bool) -> PromptLines<'_> {
+        PromptLines {
+            prompt_str_left: Cow::Borrowed(""),
+            prompt_str_right: Cow::Borrowed(""),
+            prompt_indicator: Cow::Borrowed(""),
+            before_cursor: Cow::Borrowed(""),
+            after_cursor: Cow::Borrowed(""),
+            hint: Cow::Borrowed(""),
+            right_prompt_on_last_line: false,
+            exit_after_cursor: None,
+            status: Cow::Borrowed(""),
+        }
+        .with_status(status, use_ansi_coloring)
+    }
+
+    #[rstest]
+    #[case::none("", 0)]
+    #[case::only_a_line_break("\n", 0)]
+    #[case::one_row("status", 1)]
+    // Filling the width wraps onto no other row.
+    #[case::exact_width("0123456789", 1)]
+    #[case::wrapped("0123456789a", 2)]
+    #[case::two_lines("a\nb", 2)]
+    #[case::trailing_newline("error: x\n", 1)]
+    #[case::trailing_crlf("error: x\r\n", 1)]
+    // Escape codes take no columns.
+    #[case::ansi_styled("\x1b[31m0123456789\x1b[0m", 1)]
+    // A tab is counted to its stop, not as no width.
+    #[case::tab_reaches_its_stop("abcdefgh\tx", 2)]
+    // An escaped control takes the columns of its caret notation.
+    #[case::escaped_control("012345678\x1b", 2)]
+    fn test_status_rows(#[case] status: &str, #[case] expected: u16) {
+        assert_eq!(lines_with_status(status, true).status_rows(10), expected);
+    }
+
+    #[rstest]
+    #[case::trailing_line_breaks("a\n\r\n", "a", true)]
+    #[case::inner_newline("a\nb", "a\r\nb", true)]
+    #[case::inner_crlf("a\r\nb", "a\r\nb", true)]
+    #[case::inner_blank_line("a\n\nb", "a\r\n\r\nb", true)]
+    #[case::inner_carriage_return("a\rb", "a^Mb", true)]
+    #[case::control_sequence("\x1b[2Kls", "^[[2Kls", true)]
+    #[case::sgr_kept("\x1b[31mred\x1b[0m", "\x1b[31mred\x1b[0m", true)]
+    #[case::sgr_escaped_without_coloring("\x1b[31mred", "^[[31mred", false)]
+    #[case::tab_expanded("ab\tc", "ab      c", true)]
+    fn test_with_status_text(
+        #[case] status: &str,
+        #[case] expected: &str,
+        #[case] use_ansi_coloring: bool,
+    ) {
+        assert_eq!(
+            lines_with_status(status, use_ansi_coloring).status,
+            expected
+        );
     }
 }

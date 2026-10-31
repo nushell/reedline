@@ -26,6 +26,15 @@ strum = { version = "0.28.0", features = ["derive"] }
 unicode-segmentation = "1.13.3"
 unicode-width = "0.2"
 
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1.4", default-features = false, features = [
+    "std",
+    "termios",
+] }
+
+[target.'cfg(windows)'.dependencies]
+crossterm_winapi = "0.9.1"
+
 [target.'cfg(target_os = "android")'.dependencies]
 # `File::lock` in std is unsupported on Android before Rust 1.98.
 fd-lock = "4.0.4"
@@ -42,6 +51,7 @@ vt100 = "0.16.2"
 [features]
 default = []
 bashisms = []
+# No-op: the printer is always compiled in. Kept so `--features external_printer` still builds.
 external_printer = []
 sqlite = ["rusqlite/bundled", "serde_json", "_sqlite"]
 sqlite-dynlib = ["rusqlite", "serde_json", "_sqlite"]
@@ -53,11 +63,6 @@ libc = ["crossterm/libc"]
 [[example]]
 name = "cwd_aware_hinter"
 required-features = ["sqlite"]
-
-[[example]]
-name = "external_printer"
-required-features = ["external_printer"]
-
 [[example]]
 name = "paste_interceptor"
 required-features = ["system_clipboard"]
@@ -65,4 +70,4 @@ required-features = ["system_clipboard"]
 [package.metadata.docs.rs]
 # Whether to pass `--all-features` to Cargo (default: false)
 all-features = false
-features = ["bashisms", "external_printer", "sqlite"]
+features = ["bashisms", "sqlite"]
