@@ -296,7 +296,6 @@ impl EditorCommand {
     pub fn new(command: Command) -> EditorCommand {
         EditorCommand(command)
     }
-
     fn is_template(&self) -> bool {
         self.0.get_args().any(EditorCommand::is_template_arg)
     }
@@ -351,6 +350,12 @@ impl EditorCommand {
         }
 
         rendered
+    }
+}
+
+impl From<Command> for EditorCommand {
+    fn from(command: Command) -> EditorCommand {
+        EditorCommand::new(command)
     }
 }
 
@@ -975,7 +980,7 @@ impl Reedline {
     /// ```rust,no_run
     /// // Create a reedline object with vim as editor
     ///
-    /// use reedline::{EditorCommand, Reedline};
+    /// use reedline::Reedline;
     /// use std::env::temp_dir;
     /// use std::process::Command;
     ///
@@ -984,7 +989,6 @@ impl Reedline {
     /// // you can provide additional flags:
     /// command.arg("-p"); // open in a new vim tab
     /// // ...and the filename will be appended at the end of the command
-    /// let command = EditorCommand::new(command);
     /// let mut line_editor = Reedline::create().with_buffer_editor(command, temp.clone());
     ///
     /// // optionally, {file}, {line}, and {col} placeholders can be used.
@@ -992,14 +996,12 @@ impl Reedline {
     /// // both 1-based, with {col} counting graphemes from the line start
     /// let mut command = Command::new("hx");
     /// command.arg("{file}:{line}:{col}");
-    /// let command = EditorCommand::new(command);
     /// let mut line_editor = Reedline::create().with_buffer_editor(command, temp.clone());
     ///
     /// // if {file} is omitted, the filename is still appended at the end,
     /// // as in the above example
     /// let mut command = Command::new("emacs");
     /// command.arg("+{line}:{col}");
-    /// let command = EditorCommand::new(command);
     /// let mut line_editor = Reedline::create().with_buffer_editor(command, temp);
     /// ```
     ///
@@ -1008,8 +1010,12 @@ impl Reedline {
     /// the `Command`, such as stdio redirection or `env_clear`, do not carry over.
     /// A command without placeholders is spawned as given.
     #[must_use]
-    pub fn with_buffer_editor(mut self, command: EditorCommand, temp_file: PathBuf) -> Self {
-        self.buffer_editor = Some(BufferEditor::new(command, temp_file));
+    pub fn with_buffer_editor(
+        mut self,
+        command: impl Into<EditorCommand>,
+        temp_file: PathBuf,
+    ) -> Self {
+        self.buffer_editor = Some(BufferEditor::new(command.into(), temp_file));
         self
     }
 

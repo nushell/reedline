@@ -146,7 +146,6 @@ fn main() -> reedline::Result<()> {
     let temp_file = temp_dir().join("temp_file.nu");
     let mut command = Command::new("vi");
     command.arg(&temp_file);
-    let command = reedline::EditorCommand::new(command);
     line_editor = line_editor.with_buffer_editor(command, temp_file);
 
     loop {
