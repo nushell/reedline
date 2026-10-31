@@ -716,6 +716,52 @@ impl Menu for ColumnarMenu {
         self.phase.awaiting_first_answer()
     }
 
+    fn selection_at(
+        &self,
+        column: u16,
+        menu_row: u16,
+        _terminal_columns: u16,
+        available_lines: u16,
+    ) -> Option<usize> {
+        if self.get_values().is_empty() || self.get_width() == 0 {
+            return None;
+        }
+
+        let columns = self.grid_cols().get();
+        let rows = self.grid_rows().get();
+
+        let visible_rows = rows.min(available_lines as usize);
+        let menu_column = column as usize / self.get_width();
+        if menu_column >= columns
+            || menu_row as usize >= visible_rows
+            || self.skip_rows + menu_row as usize >= rows
+        {
+            return None;
+        }
+
+        let index = match self.default_details.traversal_dir {
+            TraversalDirection::Vertical => menu_column * rows + self.skip_rows + menu_row as usize,
+            TraversalDirection::Horizontal => {
+                (self.skip_rows + menu_row as usize) * columns + menu_column
+            }
+        };
+        if index >= self.get_values().len() {
+            return None;
+        }
+
+        Some(index)
+    }
+
+    fn set_selection(&mut self, index: usize) {
+        if index >= self.get_values().len() {
+            return;
+        }
+
+        let (row_pos, col_pos) = self.position_from_index(index);
+        self.row_pos = row_pos;
+        self.col_pos = col_pos;
+    }
+
     fn menu_required_lines(&self, _terminal_columns: u16) -> u16 {
         self.get_rows().min(self.status_cap.unwrap_or(u16::MAX))
     }
@@ -1602,5 +1648,177 @@ mod tests {
             menu.move_down();
             assert!(menu.row_pos == 0 && menu.col_pos == 1);
         }
+    }
+
+    #[test]
+    fn menu_mouse_click_selection_vertical() {
+        let mut menu = ColumnarMenu::default()
+            .with_traversal_direction(TraversalDirection::Vertical)
+            .with_column_width(Some(10))
+            .with_columns(4)
+            .with_name("testmenu");
+        let mut editor = Editor::default();
+        let mut completer = FakeCompleter::new(&["a", "b", "c", "d", "e", "f"]);
+
+        setup_menu(&mut menu, &mut editor, &mut completer, (100, 100));
+
+        assert_eq!(menu.selection_at(0, 0, 100, 100), Some(0));
+        assert_eq!(menu.selection_at(9, 0, 100, 100), Some(0));
+        assert_eq!(menu.selection_at(10, 0, 100, 100), Some(2));
+        assert_eq!(menu.selection_at(19, 0, 100, 100), Some(2));
+        assert_eq!(menu.selection_at(20, 0, 100, 100), Some(4));
+        assert_eq!(menu.selection_at(29, 0, 100, 100), Some(4));
+        assert_eq!(menu.selection_at(30, 0, 100, 100), None);
+
+        assert_eq!(menu.selection_at(0, 1, 100, 100), Some(1));
+        assert_eq!(menu.selection_at(9, 1, 100, 100), Some(1));
+        assert_eq!(menu.selection_at(10, 1, 100, 100), Some(3));
+        assert_eq!(menu.selection_at(19, 1, 100, 100), Some(3));
+        assert_eq!(menu.selection_at(20, 1, 100, 100), Some(5));
+        assert_eq!(menu.selection_at(29, 1, 100, 100), Some(5));
+        assert_eq!(menu.selection_at(30, 1, 100, 100), None);
+
+        assert_eq!(menu.selection_at(0, 2, 100, 100), None);
+        assert_eq!(menu.selection_at(9, 2, 100, 100), None);
+        assert_eq!(menu.selection_at(10, 2, 100, 100), None);
+        assert_eq!(menu.selection_at(19, 2, 100, 100), None);
+        assert_eq!(menu.selection_at(20, 2, 100, 100), None);
+        assert_eq!(menu.selection_at(29, 2, 100, 100), None);
+        assert_eq!(menu.selection_at(30, 2, 100, 100), None);
+    }
+
+    #[test]
+    fn menu_mouse_click_selection_horizontal() {
+        let mut menu = ColumnarMenu::default()
+            .with_traversal_direction(TraversalDirection::Horizontal)
+            .with_column_width(Some(10))
+            .with_columns(4)
+            .with_name("testmenu");
+        let mut editor = Editor::default();
+        let mut completer = FakeCompleter::new(&["a", "b", "c", "d", "e", "f"]);
+
+        setup_menu(&mut menu, &mut editor, &mut completer, (100, 100));
+
+        assert_eq!(menu.selection_at(0, 0, 100, 100), Some(0));
+        assert_eq!(menu.selection_at(9, 0, 100, 100), Some(0));
+        assert_eq!(menu.selection_at(10, 0, 100, 100), Some(1));
+        assert_eq!(menu.selection_at(19, 0, 100, 100), Some(1));
+        assert_eq!(menu.selection_at(20, 0, 100, 100), Some(2));
+        assert_eq!(menu.selection_at(29, 0, 100, 100), Some(2));
+        assert_eq!(menu.selection_at(30, 0, 100, 100), Some(3));
+        assert_eq!(menu.selection_at(39, 0, 100, 100), Some(3));
+        assert_eq!(menu.selection_at(40, 0, 100, 100), None);
+        assert_eq!(menu.selection_at(49, 0, 100, 100), None);
+
+        assert_eq!(menu.selection_at(0, 1, 100, 100), Some(4));
+        assert_eq!(menu.selection_at(9, 1, 100, 100), Some(4));
+        assert_eq!(menu.selection_at(10, 1, 100, 100), Some(5));
+        assert_eq!(menu.selection_at(19, 1, 100, 100), Some(5));
+        assert_eq!(menu.selection_at(20, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(29, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(30, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(39, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(40, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(49, 1, 100, 100), None);
+
+        assert_eq!(menu.selection_at(0, 2, 100, 100), None);
+        assert_eq!(menu.selection_at(9, 2, 100, 100), None);
+        assert_eq!(menu.selection_at(10, 2, 100, 100), None);
+        assert_eq!(menu.selection_at(19, 2, 100, 100), None);
+        assert_eq!(menu.selection_at(20, 2, 100, 100), None);
+        assert_eq!(menu.selection_at(29, 2, 100, 100), None);
+        assert_eq!(menu.selection_at(30, 2, 100, 100), None);
+        assert_eq!(menu.selection_at(39, 2, 100, 100), None);
+        assert_eq!(menu.selection_at(40, 2, 100, 100), None);
+        assert_eq!(menu.selection_at(49, 2, 100, 100), None);
+    }
+
+    #[test]
+    fn menu_mouse_click_selection_skip_vertical() {
+        let mut menu = ColumnarMenu::default()
+            .with_traversal_direction(TraversalDirection::Vertical)
+            .with_column_width(Some(10))
+            .with_columns(4)
+            .with_name("testmenu");
+        let mut editor = Editor::default();
+        let mut completer = FakeCompleter::new(&["a", "b", "c", "d", "e", "f"]);
+
+        setup_menu(&mut menu, &mut editor, &mut completer, (100, 100));
+        menu.skip_rows = 1;
+
+        assert_eq!(menu.selection_at(0, 0, 100, 100), Some(1));
+        assert_eq!(menu.selection_at(9, 0, 100, 100), Some(1));
+        assert_eq!(menu.selection_at(10, 0, 100, 100), Some(3));
+        assert_eq!(menu.selection_at(19, 0, 100, 100), Some(3));
+        assert_eq!(menu.selection_at(20, 0, 100, 100), Some(5));
+        assert_eq!(menu.selection_at(29, 0, 100, 100), Some(5));
+        assert_eq!(menu.selection_at(30, 0, 100, 100), None);
+
+        assert_eq!(menu.selection_at(0, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(9, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(10, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(19, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(20, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(29, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(30, 1, 100, 100), None);
+    }
+
+    #[test]
+    fn menu_mouse_click_selection_skip_horizontal() {
+        let mut menu = ColumnarMenu::default()
+            .with_traversal_direction(TraversalDirection::Horizontal)
+            .with_column_width(Some(10))
+            .with_columns(4)
+            .with_name("testmenu");
+        let mut editor = Editor::default();
+        let mut completer = FakeCompleter::new(&["a", "b", "c", "d", "e", "f"]);
+
+        setup_menu(&mut menu, &mut editor, &mut completer, (100, 100));
+        menu.skip_rows = 1;
+
+        assert_eq!(menu.selection_at(0, 0, 100, 100), Some(4));
+        assert_eq!(menu.selection_at(9, 0, 100, 100), Some(4));
+        assert_eq!(menu.selection_at(10, 0, 100, 100), Some(5));
+        assert_eq!(menu.selection_at(19, 0, 100, 100), Some(5));
+        assert_eq!(menu.selection_at(20, 0, 100, 100), None);
+        assert_eq!(menu.selection_at(29, 0, 100, 100), None);
+        assert_eq!(menu.selection_at(30, 0, 100, 100), None);
+        assert_eq!(menu.selection_at(39, 0, 100, 100), None);
+        assert_eq!(menu.selection_at(40, 0, 100, 100), None);
+        assert_eq!(menu.selection_at(49, 0, 100, 100), None);
+
+        assert_eq!(menu.selection_at(0, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(9, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(10, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(19, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(20, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(29, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(30, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(39, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(40, 1, 100, 100), None);
+        assert_eq!(menu.selection_at(49, 1, 100, 100), None);
+    }
+
+    /// After scrolling, the screen shows rows `skip_rows..skip_rows + window`;
+    /// a click on the last shown row picks that row.
+    #[test]
+    fn menu_mouse_click_selection_after_scroll() {
+        let names: Vec<String> = (0..40).map(|v| v.to_string()).collect();
+        let names: Vec<_> = names.iter().map(|v| v.as_ref()).collect();
+        let mut menu = ColumnarMenu::default()
+            .with_traversal_direction(TraversalDirection::Horizontal)
+            .with_column_width(Some(10))
+            .with_columns(4)
+            .with_name("testmenu");
+        let mut editor = Editor::default();
+        let mut completer = FakeCompleter::new(&names);
+
+        setup_menu(&mut menu, &mut editor, &mut completer, (100, 100));
+        // Row 7 selected in a 5-row window, as `scroll_offset_usize` leaves it.
+        menu.skip_rows = 3;
+
+        assert_eq!(menu.selection_at(0, 0, 100, 5), Some(12));
+        assert_eq!(menu.selection_at(0, 4, 100, 5), Some(28));
+        assert_eq!(menu.selection_at(0, 5, 100, 5), None);
     }
 }
