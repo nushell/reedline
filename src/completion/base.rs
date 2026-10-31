@@ -208,6 +208,7 @@ pub trait Completer {
     /// action that will return a partial section of available completions
     /// this command comes handy when trying to avoid to pull all the data at once
     /// from the completer
+    #[deprecated(note = "no menu calls this anymore, override `paged_completions` instead")]
     fn partial_complete(
         &mut self,
         line: &str,
@@ -225,6 +226,7 @@ pub trait Completer {
     }
 
     /// number of available completions
+    #[deprecated(note = "no menu calls this anymore, override `paged_completions` instead")]
     fn total_completions(&mut self, line: &str, pos: usize) -> usize {
         self.complete(line, pos).suggestions().len()
     }

@@ -36,12 +36,6 @@ impl Completer for HistoryCompleter<'_> {
         };
         CompletionResult::fresh(suggestions)
     }
-
-    // TODO: Implement `fn partial_complete()`
-
-    fn total_completions(&mut self, line: &str, _pos: usize) -> usize {
-        search_unique(self, line).map(|i| i.count()).unwrap_or(0)
-    }
 }
 
 impl<'menu> HistoryCompleter<'menu> {
@@ -113,7 +107,7 @@ mod tests {
 
         let completion = sut.complete(input, input.len());
         let actual = completion.suggestions();
-        let num_completions = sut.total_completions(input, input.len());
+        let (num_completions, _) = sut.paged_completions(input, input.len(), 0, 0);
 
         assert_eq!(actual[0].value, "git status", "it was the last command");
         assert_eq!(
@@ -124,7 +118,7 @@ mod tests {
         assert_eq!(actual.get(3), None);
         assert_eq!(
             3, num_completions,
-            "total_completions is consistent with complete"
+            "paged_completions total is consistent with complete"
         );
 
         assert_eq!(
