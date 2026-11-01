@@ -1919,6 +1919,8 @@ impl Reedline {
             | ReedlineEvent::Left
             | ReedlineEvent::ToStart
             | ReedlineEvent::ToEnd
+            | ReedlineEvent::FirstHistory
+            | ReedlineEvent::LastHistory
             | ReedlineEvent::Multiple(_)
             | ReedlineEvent::None
             | ReedlineEvent::HistoryHintWordComplete
@@ -2287,6 +2289,8 @@ impl Reedline {
                 self.next_history()?;
                 Ok(EventStatus::Handled)
             }
+            ReedlineEvent::FirstHistory => self.first_history(),
+            ReedlineEvent::LastHistory => Ok(self.last_history()),
             ReedlineEvent::Up => self.up_command(),
             ReedlineEvent::Down => self.down_command(),
             ReedlineEvent::Left | ReedlineEvent::Right => {
@@ -2518,6 +2522,46 @@ impl Reedline {
         self.editor
             .update_undo_state(UndoBehavior::HistoryNavigation);
         Ok(())
+    }
+
+    fn first_history(&mut self) -> io::Result<EventStatus> {
+        if self.input_mode != InputMode::HistoryTraversal {
+            self.history_cursor = HistoryCursor::new(
+                self.get_history_navigation_based_on_line_buffer(),
+                self.get_history_session_id(),
+            );
+        }
+        if !self.history_cursor.jump_to_oldest(self.history.as_ref())? {
+            return Ok(EventStatus::Inapplicable);
+        }
+
+        self.input_mode = InputMode::HistoryTraversal;
+        self.history_last_run.set_recalled(false);
+        self.update_buffer_from_history();
+        self.editor.move_to_start(false);
+        self.editor.move_to_line_end(false);
+        // See `previous_history`: settle the out-of-band cursor under the policy.
+        self.editor.commit_cursor();
+        self.editor
+            .update_undo_state(UndoBehavior::HistoryNavigation);
+        Ok(EventStatus::Handled)
+    }
+
+    fn last_history(&mut self) -> EventStatus {
+        if self.input_mode != InputMode::HistoryTraversal {
+            return EventStatus::Inapplicable;
+        }
+
+        self.history_cursor.past_newest();
+        self.history_last_run.set_recalled(false);
+        self.input_mode = InputMode::Regular;
+        self.update_buffer_from_history();
+        self.editor.move_to_end(false);
+        // See `previous_history`: settle the out-of-band cursor under the policy.
+        self.editor.commit_cursor();
+        self.editor
+            .update_undo_state(UndoBehavior::HistoryNavigation);
+        EventStatus::Handled
     }
 
     fn next_history(&mut self) -> io::Result<()> {
@@ -8536,6 +8580,105 @@ mod tests {
                 assert_eq!(reedline.current_buffer_contents(), buffer);
             }
         }
+    }
+
+    fn history_jump_engine() -> Reedline {
+        let mut reedline = Reedline::create();
+        for entry in ["echo hi", "git status", "ls", "git log"] {
+            reedline
+                .history
+                .save(HistoryItem::from_command_line(entry))
+                .unwrap();
+        }
+        reedline
+    }
+
+    #[test]
+    fn first_history_jumps_to_the_oldest_entry() {
+        let mut reedline = history_jump_engine();
+
+        assert!(matches!(
+            send(&mut reedline, ReedlineEvent::FirstHistory),
+            EventStatus::Handled
+        ));
+        assert_eq!(reedline.current_buffer_contents(), "echo hi");
+        assert!(matches!(
+            send(&mut reedline, ReedlineEvent::FirstHistory),
+            EventStatus::Inapplicable
+        ));
+        assert_eq!(reedline.current_buffer_contents(), "echo hi");
+
+        send(&mut reedline, ReedlineEvent::NextHistory);
+        assert_eq!(reedline.current_buffer_contents(), "git status");
+    }
+
+    #[test]
+    fn first_history_honors_the_typed_prefix_and_last_history_restores_it() {
+        let mut reedline = history_jump_engine();
+        reedline.run_edit_commands(&[EditCommand::InsertString("git".into())]);
+
+        send(&mut reedline, ReedlineEvent::FirstHistory);
+        assert_eq!(reedline.current_buffer_contents(), "git status");
+
+        assert!(matches!(
+            send(&mut reedline, ReedlineEvent::LastHistory),
+            EventStatus::Handled
+        ));
+        assert_eq!(reedline.current_buffer_contents(), "git");
+        assert!(matches!(
+            send(&mut reedline, ReedlineEvent::LastHistory),
+            EventStatus::Inapplicable
+        ));
+    }
+
+    #[test]
+    fn last_history_restores_the_draft_after_walking_back() {
+        let mut reedline = history_jump_engine();
+        reedline.run_edit_commands(&[
+            EditCommand::InsertString("draft".into()),
+            EditCommand::MoveToStart { select: false },
+        ]);
+
+        send(&mut reedline, ReedlineEvent::PreviousHistory);
+        send(&mut reedline, ReedlineEvent::PreviousHistory);
+        assert_eq!(reedline.current_buffer_contents(), "ls");
+
+        send(&mut reedline, ReedlineEvent::LastHistory);
+        assert_eq!(reedline.current_buffer_contents(), "draft");
+    }
+
+    #[test]
+    fn page_keys_jump_through_history_without_a_menu() {
+        let keybindings = crate::default_emacs_keybindings();
+        let page_up = keybindings
+            .find_binding(KeyModifiers::NONE, KeyCode::PageUp)
+            .unwrap();
+        let page_down = keybindings
+            .find_binding(KeyModifiers::NONE, KeyCode::PageDown)
+            .unwrap();
+        let mut reedline = history_jump_engine();
+        reedline.run_edit_commands(&[EditCommand::InsertString("git".into())]);
+
+        send(&mut reedline, page_up);
+        assert_eq!(reedline.current_buffer_contents(), "git status");
+        send(&mut reedline, page_down);
+        assert_eq!(reedline.current_buffer_contents(), "git");
+    }
+
+    #[test]
+    fn first_history_without_a_match_leaves_the_line_alone() {
+        let mut reedline = history_jump_engine();
+        reedline.run_edit_commands(&[EditCommand::InsertString("zzz".into())]);
+
+        assert!(matches!(
+            send(&mut reedline, ReedlineEvent::FirstHistory),
+            EventStatus::Inapplicable
+        ));
+        assert_eq!(reedline.current_buffer_contents(), "zzz");
+        assert!(matches!(
+            send(&mut reedline, ReedlineEvent::LastHistory),
+            EventStatus::Inapplicable
+        ));
     }
 
     #[test]

@@ -1171,6 +1171,15 @@ pub enum ReedlineEvent {
     /// Navigate to the next historic buffer
     NextHistory,
 
+    /// Jump to the oldest historic buffer, the oldest one matching the prefix
+    /// when the navigation searches by prefix. Inapplicable when already there
+    /// or when nothing matches.
+    FirstHistory,
+
+    /// Leave the history for the buffer that was being edited before the
+    /// navigation started. Inapplicable when not navigating the history.
+    LastHistory,
+
     /// Search the history for a string
     SearchHistory,
 
