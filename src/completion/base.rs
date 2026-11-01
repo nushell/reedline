@@ -208,6 +208,7 @@ pub trait Completer {
     /// action that will return a partial section of available completions
     /// this command comes handy when trying to avoid to pull all the data at once
     /// from the completer
+    #[deprecated(note = "no menu calls this anymore, override `paged_completions` instead")]
     fn partial_complete(
         &mut self,
         line: &str,
@@ -225,8 +226,36 @@ pub trait Completer {
     }
 
     /// number of available completions
+    #[deprecated(note = "no menu calls this anymore, override `paged_completions` instead")]
     fn total_completions(&mut self, line: &str, pos: usize) -> usize {
         self.complete(line, pos).suggestions().len()
+    }
+
+    /// Total number of completions and a page of them, in one request.
+    ///
+    /// Paging menus need both numbers on every refresh. Asking for them
+    /// separately runs a completer that only implements
+    /// [`Completer::complete`] twice per refresh, which a host feels as a
+    /// doubled menu `source` evaluation or external command. The default
+    /// performs a single `complete` call and slices the requested page out
+    /// of its suggestions; completers with a cheaper total can still
+    /// override this.
+    fn paged_completions(
+        &mut self,
+        line: &str,
+        pos: usize,
+        start: usize,
+        offset: usize,
+    ) -> (usize, Suggestions) {
+        let suggestions = self.complete(line, pos).into_shared().unwrap_or_default();
+        let total = suggestions.len();
+        let page = suggestions
+            .iter()
+            .skip(start)
+            .take(offset)
+            .cloned()
+            .collect();
+        (total, page)
     }
 
     /// Poll the completer's background work.
