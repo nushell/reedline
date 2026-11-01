@@ -655,8 +655,8 @@ pub enum EditCommand {
     /// Lower case the current word
     LowercaseWord,
 
-    /// Capitalize the current word: upper case its first character and
-    /// leave the rest untouched (GNU readline `capitalize-word`, M-c)
+    /// Capitalize the current word: upper case its first character and lower
+    /// case the rest
     CapitalizeWord,
 
     /// Capitalize the current character

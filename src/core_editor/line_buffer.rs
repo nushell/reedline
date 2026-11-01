@@ -545,16 +545,15 @@ impl LineBuffer {
         self.set_head(self.word_boundary(WordKind::Unicode, WordEdge::End, Direction::Forward));
     }
 
-    /// Capitalizes the current word: the first character is upper cased and
-    /// the rest of the word keeps its case (GNU readline `capitalize-word`,
-    /// bound to M-c in its emacs map). The insertion point moves past the
-    /// word, matching [`Self::uppercase_word`].
+    /// Capitalizes the current word: upper cases its first character and
+    /// lower cases the rest. Like [`Self::uppercase_word`] it acts on the
+    /// whole word under the cursor and moves the insertion point past it.
     pub fn capitalize_word(&mut self) {
         let change_range = self.current_word_range();
         let mut chars = self.get_buffer()[change_range.clone()].chars();
         if let Some(first) = chars.next() {
             let mut capitalized = first.to_uppercase().collect::<String>();
-            capitalized.extend(chars);
+            capitalized.push_str(&chars.as_str().to_lowercase());
             self.replace_range(change_range, &capitalized);
         }
         self.set_head(self.word_boundary(WordKind::Unicode, WordEdge::End, Direction::Forward));
@@ -1292,7 +1291,9 @@ mod test {
     #[case("", 0, "", 0)]
     #[case("this", 0, "This", 4)]
     #[case("this", 4, "This", 4)]
-    #[case("ALREADY", 0, "ALREADY", 7)]
+    #[case("ALREADY", 0, "Already", 7)]
+    #[case("hELLO world", 0, "Hello world", 5)]
+    #[case("ärger", 0, "Ärger", 6)]
     fn capitalize_word_works(
         #[case] input: &str,
         #[case] in_location: usize,
