@@ -1248,9 +1248,20 @@ pub enum ReedlineEvent {
     SwitchMode(PromptEditMode),
 }
 
+/// What handling a [`ReedlineEvent`] came to.
+///
+/// The engine reports it for every event it runs, and an [`EditMode`](crate::EditMode)
+/// answers with it from
+/// [`handle_mode_specific_event`](crate::EditMode::handle_mode_specific_event).
 pub enum EventStatus {
+    /// The event did something. Inside an
+    /// [`UntilFound`](ReedlineEvent::UntilFound) this stops the search.
     Handled,
+    /// The event had nothing to do and changed no state, so an
+    /// [`UntilFound`](ReedlineEvent::UntilFound) moves on to the next event.
     Inapplicable,
+    /// The event ends the current [`read_line`](crate::Reedline::read_line),
+    /// which returns the carried [`Signal`].
     Exits(Signal),
 }
 
