@@ -2081,9 +2081,17 @@ impl Reedline {
             ReedlineEvent::HistoryHintComplete => Ok(self.accept_history_hint(true)),
             ReedlineEvent::HistoryHintWordComplete => Ok(self.accept_history_hint(false)),
             ReedlineEvent::Esc => {
+                // Nothing to cancel is reported as such, so a binding like
+                // `UntilFound([Esc, ExecuteHostCommand(..)])` can fall through.
+                let had_menu = self.active_menu().is_some();
+                let had_selection = self.editor.cursor_is_a_selection();
                 self.deactivate_menus();
                 self.editor.clear_selection();
-                Ok(EventStatus::Handled)
+                Ok(if had_menu || had_selection {
+                    EventStatus::Handled
+                } else {
+                    EventStatus::Inapplicable
+                })
             }
             ReedlineEvent::CtrlD => {
                 if self.editor.is_empty() {
@@ -8838,6 +8846,63 @@ mod tests {
         let mut reedline = engine_with_empty_menu();
         send(&mut reedline, space_binding());
         assert_eq!(reedline.current_buffer_contents(), "th ");
+    }
+
+    #[test]
+    fn esc_closing_a_menu_is_handled() {
+        let mut reedline = engine_with_active_menu(true, false);
+
+        let status = send(&mut reedline, ReedlineEvent::Esc);
+
+        assert!(matches!(status, EventStatus::Handled));
+        assert!(!menu_is_active(&reedline));
+    }
+
+    #[test]
+    fn esc_clearing_a_selection_is_handled() {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[
+            EditCommand::InsertString(String::from("th")),
+            EditCommand::SelectAll,
+        ]);
+
+        let status = send(&mut reedline, ReedlineEvent::Esc);
+
+        assert!(matches!(status, EventStatus::Handled));
+        assert_eq!(reedline.current_selection(), None);
+    }
+
+    #[test]
+    fn esc_with_nothing_to_cancel_is_inapplicable() {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("th"))]);
+
+        let status = send(&mut reedline, ReedlineEvent::Esc);
+
+        assert!(matches!(status, EventStatus::Inapplicable));
+        assert_eq!(reedline.current_buffer_contents(), "th");
+    }
+
+    /// Esc can fall back to a custom action: it closes an open menu, and only
+    /// with nothing to cancel does the chain move on to the next event.
+    #[test]
+    fn esc_under_until_found_yields_to_the_next_event_only_when_inapplicable() {
+        let esc_binding = || {
+            ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::Esc,
+                ReedlineEvent::Edit(vec![EditCommand::Clear]),
+            ])
+        };
+
+        let mut reedline = engine_with_active_menu(true, false);
+        send(&mut reedline, esc_binding());
+        assert!(!menu_is_active(&reedline));
+        assert_eq!(reedline.current_buffer_contents(), "th");
+
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("th"))]);
+        send(&mut reedline, esc_binding());
+        assert_eq!(reedline.current_buffer_contents(), "");
     }
 
     /// A hinter that always offers a fixed suggestion, so the completion flow can
