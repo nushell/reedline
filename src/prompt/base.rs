@@ -303,10 +303,12 @@ pub trait Prompt: Send {
 
     /// Lines painted below the input, separated by `\n`
     ///
-    /// Lines wrap at the screen width like the rest of the prompt. The footer
-    /// is dropped on a dumb terminal, and whenever it does not fit below the
-    /// buffer and menu with a row to spare, including while the buffer fills
-    /// the screen.
+    /// The footer takes the rows below the [`StatusLine`](crate::StatusLine),
+    /// above any menu, and is drawn the same way: lines wrap at the screen
+    /// width, control characters show escaped, SGR is kept while coloring is
+    /// on. When the screen cannot fit both the footer gives way first, and
+    /// like the status line it is hidden with the hint once the line is
+    /// submitted.
     fn render_prompt_footer(&self) -> Cow<'_, str> {
         Cow::Borrowed("")
     }
