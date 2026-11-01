@@ -133,7 +133,7 @@ Reedline's default when no edit mode is configured. All four
 | `Ctrl-g` | Redo |
 | `Alt-u` | Uppercase the whole word under the cursor |
 | `Alt-l` | Lowercase the whole word under the cursor |
-| `Alt-c` | Capitalize the grapheme under the cursor |
+| `Alt-c` | Capitalize the whole word under the cursor |
 
 ## Vi mode
 

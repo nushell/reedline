@@ -313,6 +313,7 @@ impl Editor {
             }
             EditCommand::UppercaseWord => self.line_buffer.uppercase_word(),
             EditCommand::LowercaseWord => self.line_buffer.lowercase_word(),
+            EditCommand::CapitalizeWord => self.line_buffer.capitalize_word(),
             EditCommand::SwitchcaseChar => self.line_buffer.switchcase_char(),
             EditCommand::CapitalizeChar => self.line_buffer.capitalize_char(),
             EditCommand::SwapWords => self.line_buffer.swap_words(),
