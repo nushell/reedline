@@ -1,6 +1,7 @@
 use super::HistoryItemId;
-use crate::{core_editor::LineBuffer, HistoryItem, HistorySessionId, Result};
-use chrono::Utc;
+use crate::{
+    core_editor::LineBuffer, history::HistoryTimestamp, HistoryItem, HistorySessionId, Result,
+};
 
 /// Browsing modes for a [`History`]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -131,9 +132,9 @@ pub struct SearchQuery {
     /// Direction to search in
     pub direction: SearchDirection,
     /// if given, only get results after/before this time (depending on direction)
-    pub start_time: Option<chrono::DateTime<Utc>>,
+    pub start_time: Option<HistoryTimestamp>,
     /// if given, only get results after/before this time (depending on direction)
-    pub end_time: Option<chrono::DateTime<Utc>>,
+    pub end_time: Option<HistoryTimestamp>,
     /// if given, only get results after/before this id (depending on direction)
     pub start_id: Option<HistoryItemId>,
     /// if given, only get results after/before this id (depending on direction)

@@ -1,10 +1,14 @@
+use crate::painting::utils::estimate_required_lines;
 use crate::terminal_extensions::semantic_prompt::{PromptKind, SemanticPromptMarkers};
 use crate::{CursorConfig, PromptEditMode};
 
+#[cfg(test)]
+use crate::painting::test_screen::TestScreen;
+
 use {
     super::utils::{
-        advance_grapheme, coerce_crlf, deferred_wrap_row, estimate_required_lines,
-        estimate_single_line_wraps, line_width, resolve_wrap, wrap_position,
+        advance_grapheme, coerce_crlf, deferred_wrap_row, escape_control, line_width,
+        plain_menu_text, resolve_wrap, wrap_position,
     },
     crate::{
         menu::{Menu, ReedlineMenu},
@@ -15,16 +19,13 @@ use {
     crossterm::{
         cursor::{self, MoveTo, RestorePosition, SavePosition},
         style::{Attribute, Print, ResetColor, SetAttribute},
-        terminal::{self, Clear, ClearType},
+        terminal::{self, BeginSynchronizedUpdate, Clear, ClearType, EndSynchronizedUpdate},
         QueueableCommand,
     },
-    std::borrow::Cow,
     std::io::{Result, Write},
     std::ops::RangeInclusive,
     unicode_segmentation::UnicodeSegmentation,
 };
-#[cfg(feature = "external_printer")]
-use {crate::LineBuffer, crossterm::cursor::MoveUp};
 
 // Returns a string that skips N number of lines with the next offset of lines
 // An offset of 0 would return only one line after skipping the required lines
@@ -32,6 +33,18 @@ fn skip_buffer_lines(string: &str, skip: usize, offset: Option<usize>) -> &str {
     let (index, limit) = skip_buffer_lines_range(string, skip, offset);
 
     string[index..limit].trim_end_matches('\n')
+}
+
+// `text` of the buffer as it is drawn: the `\r` of a CRLF is the line break's
+// own and draws nothing, every other control char shows escaped.
+fn escape_as_drawn(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.contains("\r\n") {
+        escape_control(&text.replace("\r\n", "\n"))
+            .into_owned()
+            .into()
+    } else {
+        escape_control(text)
+    }
 }
 
 // The byte range `skip_buffer_lines` slices, for callers that need to map a
@@ -82,6 +95,14 @@ pub enum W {
     /// output-level invariant).
     #[cfg(test)]
     Capture(Vec<u8>),
+    /// Fails once after the given number of bytes, then captures later writes.
+    #[cfg(test)]
+    FailOnce(Vec<u8>, usize, bool),
+    /// Captures like [`W::Capture`], and answers a cursor query from a
+    /// [`TestScreen`] fed on each flush, so the answer reflects what a
+    /// terminal behind a buffered writer has actually received.
+    #[cfg(test)]
+    Screen(Vec<u8>, Box<TestScreen>),
 }
 
 impl W {
@@ -113,11 +134,29 @@ impl W {
         W::Capture(Vec::new())
     }
 
-    /// Bytes captured so far. Panics unless this is a [`W::capture`] writer.
+    /// Like [`W::capture`], but answering cursor queries from a
+    /// `width` by `height` screen; see [`W::Screen`].
+    #[cfg(test)]
+    pub(crate) fn screen(width: u16, height: u16) -> Self {
+        W::Screen(Vec::new(), Box::new(TestScreen::new(width, height)))
+    }
+
+    /// The screen a [`W::screen`] writer answers from, to feed it output that
+    /// did not come from the painter. Panics on any other writer.
+    #[cfg(test)]
+    pub(crate) fn terminal_screen(&mut self) -> &mut TestScreen {
+        match self {
+            W::Screen(_, screen) => screen,
+            _ => panic!("terminal_screen() called on a writer without a screen"),
+        }
+    }
+
+    /// Bytes captured so far. Panics unless this is a [`W::capture`] or
+    /// [`W::screen`] writer.
     #[cfg(test)]
     pub(crate) fn captured(&self) -> &[u8] {
         match self {
-            W::Capture(buf) => buf,
+            W::Capture(buf) | W::Screen(buf, _) => buf,
             _ => panic!("captured() called on a non-capturing writer"),
         }
     }
@@ -131,6 +170,21 @@ impl Write for W {
             W::Sink(w, _) => w.write(buf),
             #[cfg(test)]
             W::Capture(w) => w.write(buf),
+            #[cfg(test)]
+            W::FailOnce(w, remaining, failed) => {
+                if *failed {
+                    return w.write(buf);
+                }
+                if *remaining == 0 {
+                    *failed = true;
+                    return Err(std::io::Error::other("injected paint failure"));
+                }
+                let written = w.write(&buf[..buf.len().min(*remaining)])?;
+                *remaining -= written;
+                Ok(written)
+            }
+            #[cfg(test)]
+            W::Screen(w, _) => w.write(buf),
         }
     }
 
@@ -141,6 +195,13 @@ impl Write for W {
             W::Sink(w, _) => w.flush(),
             #[cfg(test)]
             W::Capture(w) => w.flush(),
+            #[cfg(test)]
+            W::FailOnce(w, ..) => w.flush(),
+            #[cfg(test)]
+            W::Screen(w, screen) => {
+                screen.sync(w);
+                Ok(())
+            }
         }
     }
 }
@@ -148,8 +209,9 @@ impl Write for W {
 impl W {
     /// Where the terminal's cursor is, as `(column, row)`.
     ///
-    /// Only the real terminal can answer. A test writer answers with whatever
-    /// [`W::sink_with_cursor_at`] gave it, and otherwise returns an error so
+    /// The real terminal answers for real, and [`W::screen`] from its emulated
+    /// screen. Other test writers answer with whatever
+    /// [`W::sink_with_cursor_at`] gave them, and otherwise return an error so
     /// paint paths take their "no answer" branch instead of waiting on a tty
     /// that will never reply.
     pub(crate) fn cursor_position(&self) -> Result<(u16, u16)> {
@@ -161,6 +223,18 @@ impl W {
             }
             #[cfg(test)]
             W::Capture(_) => Err(std::io::Error::other("no terminal attached")),
+            #[cfg(test)]
+            W::FailOnce(..) => Err(std::io::Error::other("no terminal attached")),
+            #[cfg(test)]
+            W::Screen(_, screen) => {
+                // A real terminal would answer this only at its timeout, a
+                // stall rather than a wrong answer, so fail the test outright.
+                assert!(
+                    !screen.frame_open(),
+                    "cursor query sent inside a synchronized update"
+                );
+                Ok(screen.reported_cursor())
+            }
         }
     }
 }
@@ -218,6 +292,7 @@ pub struct RenderSnapshot {
     pub first_buffer_col: u16,
     pub menu_active: bool,
     pub menu_start_row: Option<u16>,
+    pub status_start_row: Option<u16>,
     pub large_buffer_extra_rows_after_prompt: Option<usize>,
     pub large_buffer_offset: Option<usize>,
     pub right_prompt: Option<RightPromptBounds>,
@@ -240,6 +315,17 @@ fn cursor_position_for_term(stdout: &W, is_term_dumb: bool) -> Result<Option<(u1
     } else {
         stdout.cursor_position().map(Some)
     }
+}
+
+/// The lines an external message prints as. A newline ends a line rather
+/// than starting an empty one, so `"a\n"` is one line and `""` still takes a
+/// row. A `\r` before a newline goes with it.
+fn message_lines(message: &str) -> impl Iterator<Item = &str> {
+    message
+        .strip_suffix('\n')
+        .unwrap_or(message)
+        .split('\n')
+        .map(|line| line.strip_suffix('\r').unwrap_or(line))
 }
 
 // Selects the row where the next prompt should start on, taking into account whether it should
@@ -275,6 +361,11 @@ pub(crate) struct PromptLayout {
 
     /// Row where the menu starts.
     menu_start_row: Option<u16>,
+
+    /// Row where the status line starts, `None` when none is drawn. Below
+    /// the buffer and its hint, or, with a menu open, below the cursor's row
+    /// and above the menu.
+    status_start_row: Option<u16>,
 
     /// Buffer start column on first visible line.
     first_buffer_col: u16,
@@ -367,17 +458,26 @@ pub struct Painter {
     /// right, and `move_cursor_to_end` has no `prompt` to re-derive the color
     /// from, so both have to be captured during the paint.
     exit_right_prompt: Option<(String, RightPromptBounds)>,
-    /// The rows the footer took in the last paint. 0 when no footer is on
-    /// screen, so `clear_footer` knows whether there is anything to erase.
-    footer_rows: u16,
-    /// The screen row of the first footer line in the last paint.
-    footer_row: u16,
     /// Optional semantic prompt markers for terminal integration (OSC 133/633)
     semantic_markers: Option<Box<dyn SemanticPromptMarkers>>,
     /// Layout computed during the last paint cycle.
     pub(crate) last_layout: Option<PromptLayout>,
     /// Set by `hide_cursor`, cleared by every Show. See [`Painter::show_cursor`].
     cursor_hidden: bool,
+    /// The screen height whose last row an external-message commit measured
+    /// as the real bottom. Until then a commit that scrolls past the last row
+    /// asks where it ended, since a short reported height would put the real
+    /// cursor below the counted one (#1206). Keyed on the height rather than
+    /// reset: a resize, a new reported size or a measured growth changes the
+    /// height, and with it the answer.
+    bottom_confirmed_at: Option<u16>,
+    /// Rows set aside for the status line of the paint being prepared, before
+    /// the menus size themselves so they leave those rows free. That paint
+    /// takes them, so none outlive it. See [`Painter::reserve_status_rows`].
+    status_rows: u16,
+    /// Rows a menu can take below the reserved status line while the whole
+    /// block stays on the screen. Meaningless while `status_rows` is 0.
+    menu_room: u16,
 }
 
 impl Painter {
@@ -394,11 +494,12 @@ impl Painter {
             large_buffer: false,
             after_cursor_lines: None,
             exit_right_prompt: None,
-            footer_rows: 0,
-            footer_row: 0,
             semantic_markers: None,
             last_layout: None,
             cursor_hidden: false,
+            bottom_confirmed_at: None,
+            status_rows: 0,
+            menu_room: 0,
         }
     }
 
@@ -449,30 +550,109 @@ impl Painter {
         Ok(position)
     }
 
+    /// Reconcile a stale anchor: something yielded the tty since the last paint
+    /// (a resize, an external completer, `$EDITOR`, an idle callback) and may
+    /// have scrolled our content. Both paths that draw from the anchor run
+    /// this first, so they agree on where the block starts. It queries the
+    /// cursor, so it has to run before a synchronized frame opens.
+    fn reconcile_stale_anchor(&mut self) {
+        if let PromptStartRow::Stale(row) = self.prompt_start_row {
+            // Cursor above the cached row => content scrolled up while the tty
+            // was yielded. Re-anchor to the cursor (ground truth) rather than
+            // homing to row 0, which would yank the prompt to the top. The `+1`
+            // allows for output that left the cursor on the prompt row.
+            // See nushell/reedline#1130.
+            let anchor = match self.measure_cursor_position() {
+                Ok(Some((_, cursor_row))) if cursor_row + 1 < row => cursor_row,
+                _ => row,
+            };
+            // The measure above grew the height to fit the row it read, but the
+            // anchor kept here can be further down than that. Grow to fit the
+            // one actually committed to, or `remaining_lines` reads 0 and the
+            // paint scrolls for no reason -- the bug this all exists to remove.
+            self.grow_screen_height_to_fit_row(anchor);
+            self.prompt_start_row.mark_verified(anchor);
+        }
+    }
+
     /// Raises the believed screen height so that `row` is on screen.
     fn grow_screen_height_to_fit_row(&mut self, row: u16) {
         self.terminal_size.1 = self.terminal_size.1.max(row.saturating_add(1));
     }
 
-    /// Returns the empty lines from the prompt down.
+    /// Returns the empty lines from the prompt down, less the rows set aside
+    /// for the status line, which draws between the buffer and a menu.
     pub fn remaining_lines_real(&self) -> u16 {
+        self.remaining_lines().saturating_sub(self.prompt_height)
+    }
+
+    /// Rows a status line can take below a block of `block_rows` while the
+    /// whole block stays on the screen. Past that the paint takes the
+    /// large-buffer path, which draws no status line.
+    pub(crate) fn status_room(&self, block_rows: u16) -> u16 {
         self.screen_height()
-            .saturating_sub(self.prompt_start_row.last_known_row())
-            .saturating_sub(self.prompt_height)
+            .saturating_sub(block_rows)
+            .saturating_sub(1)
+    }
+
+    /// Set aside the `rows` of the next paint's status line when they fit in
+    /// `room`, from [`Painter::status_room`], so a menu sizing itself from
+    /// [`Painter::remaining_lines`] leaves them free. A status line that does
+    /// not fit gives way to the buffer and gets none.
+    pub(crate) fn reserve_status_rows(&mut self, rows: u16, room: u16) {
+        self.status_rows = if rows <= room { rows } else { 0 };
+        self.menu_room = room.saturating_sub(self.status_rows);
+    }
+
+    /// Rows set aside for the status line of the paint being prepared.
+    pub(crate) fn reserved_status_rows(&self) -> u16 {
+        self.status_rows
+    }
+
+    /// Rows a menu can be cut to below the status line set aside for this
+    /// paint, so the whole block stays on the screen, when that still shows
+    /// `min_rows` of it.
+    ///
+    /// `None` without a status line, where a menu taller than the screen takes
+    /// the large-buffer path, and when it would be cut shorter than
+    /// `min_rows`: the menu keeps its height and takes the status rows back.
+    pub(crate) fn menu_room_below_status(&self, min_rows: u16) -> Option<u16> {
+        (self.status_rows > 0 && self.menu_room >= min_rows).then_some(self.menu_room)
+    }
+
+    /// Returns the empty lines below the prompt once it is scrolled to the top.
+    ///
+    /// A paint scrolls the prompt up to fit the menu below it, so this is the
+    /// room a menu laid out now gets when drawn, even when
+    /// [`Painter::remaining_lines_real`] still reads the space before the scroll.
+    pub(crate) fn remaining_lines_after_scroll(&self) -> u16 {
+        self.screen_height().saturating_sub(self.prompt_height)
     }
 
     /// Returns the number of lines that are available or can be made available by
-    /// stripping the prompt.
+    /// stripping the prompt, less the rows set aside for the status line.
     ///
     /// If you want the number of empty lines below the prompt,
     /// use [`Painter::remaining_lines_real`] instead.
     pub fn remaining_lines(&self) -> u16 {
         self.screen_height()
             .saturating_sub(self.prompt_start_row.last_known_row())
+            .saturating_sub(self.status_rows)
     }
 
     /// Computes layout values shared between rendering and snapshot creation.
-    fn compute_layout(&self, lines: &PromptLines, menu: Option<&ReedlineMenu>) -> PromptLayout {
+    ///
+    /// `block_rows` is what [`PromptLines::required_lines`] measured for this
+    /// paint, before the `status_rows` of its status line. It places the
+    /// status line only without a menu, where it is the prompt, the buffer
+    /// and the hint.
+    fn compute_layout(
+        &self,
+        lines: &PromptLines,
+        menu: Option<&ReedlineMenu>,
+        block_rows: u16,
+        status_rows: u16,
+    ) -> PromptLayout {
         let screen_width = self.screen_width();
         let screen_height = self.screen_height();
 
@@ -523,6 +703,18 @@ impl Painter {
             }
         });
 
+        // The status line takes the rows the menu would have started on and
+        // pushes the menu below it. Without a menu it follows the whole buffer
+        // and the hint, as laid out end to end.
+        let status_start_row = (status_rows > 0).then(|| {
+            menu_start_row.unwrap_or_else(|| {
+                self.prompt_start_row
+                    .last_known_row()
+                    .saturating_add(block_rows)
+            })
+        });
+        let menu_start_row = menu_start_row.map(|row| row.saturating_add(status_rows));
+
         // First buffer column
         let first_buffer_col = if self.large_buffer && extra_rows_after_prompt > 0 {
             0
@@ -543,6 +735,7 @@ impl Painter {
             large_buffer_offset,
             right_prompt,
             menu_start_row,
+            status_start_row,
             first_buffer_col,
         }
     }
@@ -729,6 +922,9 @@ impl Painter {
     ///
     /// Note. The `ScrollUp` operation in `crossterm` deletes lines from the top of
     /// the screen.
+    ///
+    /// The status line of `lines` draws on the rows
+    /// [`Painter::reserve_status_rows`] set aside for this paint, none without.
     pub(crate) fn repaint_buffer(
         &mut self,
         prompt: &dyn Prompt,
@@ -738,6 +934,10 @@ impl Painter {
         use_ansi_coloring: bool,
         cursor_config: &Option<CursorConfig>,
     ) -> Result<()> {
+        // Taken first, so a paint that reserves none, as history search's
+        // does, never inherits the rows of the one before.
+        let reserved_status_rows = std::mem::take(&mut self.status_rows);
+
         // Reset any ANSI styling that may have been left by external commands
         // This ensures the prompt is not affected by previous output styling
         // Note: Attribute::Reset (SGR 0) resets all attributes including colors
@@ -753,26 +953,7 @@ impl Painter {
         // Calibrate prompt start position for multi-line prompt/content before cursor. Check issue #841/#848/#930
         self.prompt_start_row.resolve_resize(lines_before_cursor);
 
-        // Reconcile a stale anchor: something yielded the tty since the last paint
-        // (a resize, an external completer, `$EDITOR`) and may have scrolled our
-        // content.
-        if let PromptStartRow::Stale(row) = self.prompt_start_row {
-            // Cursor above the cached row => content scrolled up while the tty
-            // was yielded. Re-anchor to the cursor (ground truth) rather than
-            // homing to row 0, which would yank the prompt to the top. The `+1`
-            // allows for output that left the cursor on the prompt row.
-            // See nushell/reedline#1130.
-            let anchor = match self.measure_cursor_position() {
-                Ok(Some((_, cursor_row))) if cursor_row + 1 < row => cursor_row,
-                _ => row,
-            };
-            // The measure above grew the height to fit the row it read, but the
-            // anchor kept here can be further down than that. Grow to fit the
-            // one actually committed to, or `remaining_lines` reads 0 and this
-            // paint scrolls for no reason -- the bug this all exists to remove.
-            self.grow_screen_height_to_fit_row(anchor);
-            self.prompt_start_row.mark_verified(anchor);
-        }
+        self.reconcile_stale_anchor();
 
         // Unreachable in normal flow (initialize_prompt_position runs first);
         // in release, home to row 0 rather than draw over the content there.
@@ -787,91 +968,100 @@ impl Painter {
         // the height earlier splits the paint across two screens: `large_buffer`
         // would judge against the old, short one and reset the anchor to row 0.
         let screen_height = self.screen_height();
-        let remaining_lines = self.remaining_lines();
-        let base_required_lines = lines.required_lines(screen_width, false, menu);
-        let footer = self.footer(prompt, base_required_lines);
-        let footer_rows = footer.as_ref().map_or(0, |(_, rows)| *rows);
-        let required_lines = base_required_lines.saturating_add(footer_rows);
+        // Every row from the anchor down: the status rows are among the
+        // `required_lines` this has to hold.
+        let remaining_lines = screen_height.saturating_sub(self.prompt_start_row.last_known_row());
+        let block_rows = lines.required_lines(screen_width, false, menu);
+        // The rows were set aside before the menu sized itself. One that could
+        // not shrink enough to leave them free takes them back, which keeps
+        // the status line out of the large-buffer path.
+        let status_rows = if reserved_status_rows <= self.status_room(block_rows) {
+            reserved_status_rows
+        } else {
+            0
+        };
+        let required_lines = block_rows + status_rows;
 
-        // Marking the painter state as larger buffer to avoid animations
-        self.large_buffer = required_lines >= screen_height;
+        // Cursor queries above must finish before the frame begins. End the frame even if
+        // drawing fails, so a recoverable write error cannot leave updates suspended.
+        self.begin_frame()?;
+        let painted = (|| -> Result<()> {
+            // Marking the painter state as larger buffer to avoid animations
+            self.large_buffer = required_lines >= screen_height;
 
-        // Moving the start position of the cursor based on the size of the required lines
-        if self.large_buffer || anchor_uninitialized {
-            for _ in 0..screen_height.saturating_sub(lines_before_cursor) {
-                self.stdout.queue(Print(&coerce_crlf("\n")))?;
+            // Moving the start position of the cursor based on the size of the required lines
+            if self.large_buffer || anchor_uninitialized {
+                for _ in 0..screen_height.saturating_sub(lines_before_cursor) {
+                    self.stdout.queue(Print(&coerce_crlf("\n")))?;
+                }
+                // The reset puts the prompt at row 0; cache is back in sync.
+                self.prompt_start_row.mark_verified(0);
+            } else if required_lines >= remaining_lines {
+                let extra = required_lines.saturating_sub(remaining_lines);
+                self.queue_universal_scroll(extra)?;
+                let scrolled_row = self.prompt_start_row.last_known_row().saturating_sub(extra);
+                self.prompt_start_row.mark_verified(scrolled_row);
             }
-            // The reset puts the prompt at row 0; cache is back in sync.
-            self.prompt_start_row.mark_verified(0);
-        } else if required_lines >= remaining_lines {
-            let extra = required_lines.saturating_sub(remaining_lines);
-            self.queue_universal_scroll(extra)?;
-            let scrolled_row = self.prompt_start_row.last_known_row().saturating_sub(extra);
-            self.prompt_start_row.mark_verified(scrolled_row);
-        }
 
-        // Moving the cursor to the start of the prompt
-        // from this position everything will be printed
-        let anchor_row = self.prompt_start_row.last_known_row();
-        self.clear_from_anchor(anchor_row)?;
+            // Moving the cursor to the start of the prompt
+            // from this position everything will be printed
+            let anchor_row = self.prompt_start_row.last_known_row();
+            self.clear_from_anchor(anchor_row)?;
 
-        let layout = self.compute_layout(lines, menu);
+            let layout = self.compute_layout(lines, menu, block_rows, status_rows);
 
-        let margin_cursor_row = if self.large_buffer {
-            self.print_large_buffer(prompt, lines, menu, use_ansi_coloring, &layout)?
-        } else {
-            self.print_small_buffer(prompt, lines, menu, use_ansi_coloring, &layout)?
-        };
-
-        self.footer_row = anchor_row.saturating_add(base_required_lines);
-        if let Some((text, _)) = &footer {
-            self.print_footer(text)?;
-        }
-        self.footer_rows = footer_rows;
-
-        self.exit_right_prompt = layout.right_prompt.map(|rp| {
-            let text = coerce_crlf(&lines.prompt_str_right);
-            let text = if use_ansi_coloring {
-                format!("{}{}", prompt.get_prompt_right_color().prefix(), text)
+            let margin_cursor_row = if self.large_buffer {
+                self.print_large_buffer(prompt, lines, menu, use_ansi_coloring, &layout)?
             } else {
-                text.into_owned()
+                self.print_small_buffer(prompt, lines, menu, use_ansi_coloring, &layout)?
             };
-            (text, rp)
-        });
 
-        self.last_layout = Some(layout);
+            self.exit_right_prompt = layout.right_prompt.map(|rp| {
+                let text = coerce_crlf(&lines.prompt_str_right);
+                let text = if use_ansi_coloring {
+                    format!("{}{}", prompt.get_prompt_right_color().prefix(), text)
+                } else {
+                    text.into_owned()
+                };
+                (text, rp)
+            });
 
-        // The last_required_lines is used to calculate safe range of the current prompt.
-        self.last_required_lines = required_lines;
+            self.last_layout = Some(layout);
 
-        let after_cursor = lines
-            .exit_after_cursor
-            .as_ref()
-            .unwrap_or(&lines.after_cursor);
-        self.after_cursor_lines = if !after_cursor.is_empty() {
-            Some(after_cursor.to_string())
-        } else {
-            None
-        };
+            // The last_required_lines is used to calculate safe range of the current prompt.
+            self.last_required_lines = required_lines;
 
-        // It has to happen *here*, after every print: the position
-        // `SavePosition` recorded is also the print head for the text after the
-        // cursor, so disambiguating it earlier either writes a glyph onto an
-        // unreserved row or overwrites the cell the next row's first grapheme
-        // belongs in. Nothing is drawn at this point, so a bare move disturbs
-        // neither.
-        self.queue_cursor_placement(margin_cursor_row)?;
+            let after_cursor = lines
+                .exit_after_cursor
+                .as_ref()
+                .unwrap_or(&lines.after_cursor);
+            self.after_cursor_lines = if !after_cursor.is_empty() {
+                Some(after_cursor.to_string())
+            } else {
+                None
+            };
 
-        let shape = cursor_config
-            .as_ref()
-            .and_then(|shapes| shapes.shape_for(&prompt_mode));
-        if let Some(shape) = shape {
-            self.stdout.queue(shape)?;
-        }
-        self.stdout.queue(cursor::Show)?;
-        self.cursor_hidden = false;
+            // It has to happen *here*, after every print: the position
+            // `SavePosition` recorded is also the print head for the text after the
+            // cursor, so disambiguating it earlier either writes a glyph onto an
+            // unreserved row or overwrites the cell the next row's first grapheme
+            // belongs in. Nothing is drawn at this point, so a bare move disturbs
+            // neither.
+            self.queue_cursor_placement(margin_cursor_row)?;
 
-        self.stdout.flush()
+            let shape = cursor_config
+                .as_ref()
+                .and_then(|shapes| shapes.shape_for(&prompt_mode));
+            if let Some(shape) = shape {
+                self.stdout.queue(shape)?;
+            }
+            self.stdout.queue(cursor::Show)?;
+            self.cursor_hidden = false;
+
+            Ok(())
+        })();
+        let ended = self.end_frame().and_then(|()| self.stdout.flush());
+        painted.and(ended)
     }
 
     /// Captures the current screen layout into a [`RenderSnapshot`] that records
@@ -906,6 +1096,7 @@ impl Painter {
             first_buffer_col: layout.first_buffer_col,
             menu_active: menu.is_some(),
             menu_start_row: layout.menu_start_row,
+            status_start_row: layout.status_start_row,
             large_buffer_extra_rows_after_prompt,
             large_buffer_offset,
             right_prompt: layout.right_prompt,
@@ -916,8 +1107,8 @@ impl Painter {
     /// combined editing buffer (`before_cursor + after_cursor`).
     ///
     /// Returns `None` when the click lands outside the editable area: above the
-    /// prompt, inside the right prompt, inside the menu, or past the end of
-    /// visible buffer content.
+    /// prompt, inside the right prompt, on the status line, inside the menu,
+    /// or past the end of visible buffer content.
     ///
     /// The algorithm walks grapheme-by-grapheme through the visible portion of
     /// the buffer, tracking the current (row, col) on screen. Wide characters
@@ -941,6 +1132,13 @@ impl Painter {
                     return None;
                 }
             }
+        }
+
+        // Nor are clicks on the status line or below it. It starts past the
+        // buffer or, with a menu open, on the rows that erased the text after
+        // the cursor.
+        if snapshot.status_start_row.is_some_and(|start| row >= start) {
+            return None;
         }
 
         // Clicks inside the right prompt area are not in the buffer.
@@ -1001,7 +1199,8 @@ impl Painter {
                     [
                         snapshot.prompt_str_left.as_str(),
                         snapshot.prompt_indicator.as_str(),
-                        snapshot.before_cursor.as_str(),
+                        // As drawn, with control chars escaped.
+                        &escape_as_drawn(&snapshot.before_cursor),
                     ],
                     screen_width,
                 )
@@ -1029,23 +1228,30 @@ impl Painter {
 
         let mut check_segment = |segment: &str, base_offset: usize| -> Option<usize> {
             for (index, grapheme) in segment.grapheme_indices(true) {
-                // Same rule as the layout walk, so the offset this maps back to
-                // is the grapheme the layout put under the click. A zero-width
-                // grapheme occupies no column and so is never the target; the
-                // base grapheme it combines with already matched.
-                let (at, width) =
-                    advance_grapheme((current_row, current_col), grapheme, screen_width);
-                (current_row, current_col) = at;
+                // The buffer is drawn with its control chars escaped (`^[`,
+                // `M-^[`), so walk what is shown, and a click on any column
+                // of an escape maps back to the char it stands for.
+                let shown = escape_as_drawn(grapheme);
+                for shown in shown.graphemes(true) {
+                    // Same rule as the layout walk, so the offset this maps
+                    // back to is the grapheme the layout put under the click.
+                    // A zero-width grapheme occupies no column and so is never
+                    // the target; the base grapheme it combines with already
+                    // matched.
+                    let (at, width) =
+                        advance_grapheme((current_row, current_col), shown, screen_width);
+                    (current_row, current_col) = at;
 
-                if width > 0
-                    && current_row == target_row
-                    && column >= current_col
-                    && column < current_col.saturating_add(width)
-                {
-                    return Some(base_offset + index);
+                    if width > 0
+                        && current_row == target_row
+                        && column >= current_col
+                        && column < current_col.saturating_add(width)
+                    {
+                        return Some(base_offset + index);
+                    }
+
+                    current_col = current_col.saturating_add(width);
                 }
-
-                current_col = current_col.saturating_add(width);
             }
 
             None
@@ -1138,61 +1344,6 @@ impl Painter {
         Ok(())
     }
 
-    /// The footer of `prompt` and the rows it takes once wrapped to the
-    /// screen width.
-    ///
-    /// `None` on a dumb terminal, or when the footer and the `required_lines`
-    /// above it would not leave the last row free: the buffer and the menu
-    /// have priority over the footer.
-    fn footer<'p>(
-        &self,
-        prompt: &'p dyn Prompt,
-        required_lines: u16,
-    ) -> Option<(Cow<'p, str>, u16)> {
-        let text = prompt.render_prompt_footer();
-        if self.term_is_dumb || text.is_empty() {
-            return None;
-        }
-        let rows = estimate_required_lines(&text, self.screen_width());
-        let fits = usize::from(required_lines) + rows < usize::from(self.screen_height());
-        fits.then(|| (text, u16::try_from(rows).unwrap_or(u16::MAX)))
-    }
-
-    /// Prints each line of `footer` on its own row from `footer_row` down,
-    /// resetting the style after each one so a footer cannot leak its colors
-    /// into the next paint.
-    fn print_footer(&mut self, footer: &str) -> Result<()> {
-        let screen_width = self.screen_width();
-        let mut row = self.footer_row;
-        for line in footer.lines() {
-            self.stdout
-                .queue(cursor::MoveTo(0, row))?
-                .queue(Print(line))?
-                .queue(SetAttribute(Attribute::Reset))?;
-            let wraps = estimate_single_line_wraps(line, screen_width);
-            row = row
-                .saturating_add(1)
-                .saturating_add(u16::try_from(wraps).unwrap_or(u16::MAX));
-        }
-        Ok(())
-    }
-
-    /// Erases the footer painted last, before the painter yields the terminal,
-    /// and puts the cursor back where the paint left it.
-    ///
-    /// A no-op when no footer is on screen.
-    pub(crate) fn clear_footer(&mut self) -> Result<()> {
-        if self.footer_rows == 0 {
-            return Ok(());
-        }
-        self.footer_rows = 0;
-        self.stdout
-            .queue(cursor::MoveTo(0, self.footer_row))?
-            .queue(Clear(ClearType::FromCursorDown))?
-            .queue(RestorePosition)?;
-        self.stdout.flush()
-    }
-
     fn print_menu(
         &mut self,
         menu: &dyn Menu,
@@ -1202,6 +1353,13 @@ impl Painter {
         let starting_row = layout.menu_start_row.unwrap_or(0);
         let remaining_lines = self.screen_height().saturating_sub(starting_row);
         let menu_string = menu.menu_string(remaining_lines, use_ansi_coloring);
+        // Plain menus uppercase and truncate kept SGR as if it were text, so
+        // whatever is left of it goes here, once for every menu.
+        let menu_string = if use_ansi_coloring {
+            menu_string
+        } else {
+            plain_menu_text(&menu_string).into_owned()
+        };
         self.clear_from_anchor(starting_row)?;
         self.stdout
             .queue(Print(menu_string.trim_end_matches('\n')))?;
@@ -1293,12 +1451,37 @@ impl Painter {
         ]);
 
         if let Some(menu) = menu {
+            self.print_status(lines, use_ansi_coloring, layout)?;
             self.print_menu(menu, use_ansi_coloring, layout)?;
         } else {
             self.stdout.queue(Print(&lines.hint))?;
+            self.print_status(lines, use_ansi_coloring, layout)?;
         }
 
         Ok(cursor_row)
+    }
+
+    /// Draw the status line on the rows [`Painter::compute_layout`] gave it.
+    ///
+    /// The rows are erased first: with a menu open, text after the cursor
+    /// can reach them, the same rows the menu would otherwise draw over.
+    fn print_status(
+        &mut self,
+        lines: &PromptLines,
+        use_ansi_coloring: bool,
+        layout: &PromptLayout,
+    ) -> Result<()> {
+        let Some(row) = layout.status_start_row else {
+            return Ok(());
+        };
+        self.clear_from_anchor(row)?;
+        self.stdout.queue(Print(&lines.status))?;
+        if use_ansi_coloring {
+            self.stdout
+                .queue(SetAttribute(Attribute::Reset))?
+                .queue(ResetColor)?;
+        }
+        Ok(())
     }
 
     fn print_large_buffer(
@@ -1417,7 +1600,6 @@ impl Painter {
         self.term_is_dumb = term_is_dumb(term.as_deref());
 
         self.invalidate_prompt_start_row();
-        self.footer_rows = 0;
 
         // `cursor::position()` is blocking and can time out, but a
         // resize happens infrequently enough that we accept the cost.
@@ -1453,6 +1635,35 @@ impl Painter {
         self.stdout.queue(cursor::Hide)?;
         self.cursor_hidden = true;
         Ok(())
+    }
+
+    /// Queue the start of a synchronized update: the terminal keeps applying
+    /// what follows but draws none of it until [`Painter::end_frame`], so an
+    /// erase and the redraw after it show as one frame. A terminal that does
+    /// not know the mode ignores it; `TERM=dumb` would print it, so skip it.
+    fn begin_frame(&mut self) -> Result<()> {
+        if !self.term_is_dumb {
+            self.stdout.queue(BeginSynchronizedUpdate)?;
+        }
+        Ok(())
+    }
+
+    /// Queue the end of the frame [`Painter::begin_frame`] opened. Queue it
+    /// before the flush that sends the frame and before any cursor query: an
+    /// end left in the buffer holds the screen until the terminal times out.
+    fn end_frame(&mut self) -> Result<()> {
+        if !self.term_is_dumb {
+            self.stdout.queue(EndSynchronizedUpdate)?;
+        }
+        Ok(())
+    }
+
+    /// End a frame and send it, for a caller that has nothing to paint after
+    /// [`Painter::print_external_message`] left one open. With no frame open
+    /// the end resets a mode that is already off, which no terminal shows.
+    pub(crate) fn finish_frame(&mut self) -> Result<()> {
+        self.end_frame()?;
+        self.stdout.flush()
     }
 
     /// Show the cursor if the painter hid it, for the paths that end without
@@ -1508,7 +1719,6 @@ impl Painter {
     /// cursor survives, leaving a rejected command on screen as the record of
     /// what was aborted (#1143).
     pub(crate) fn move_cursor_to_end(&mut self) -> Result<()> {
-        self.footer_rows = 0;
         self.stdout.queue(Clear(ClearType::FromCursorDown))?;
         if let Some(after_cursor) = &self.after_cursor_lines {
             self.stdout.queue(Print(after_cursor))?;
@@ -1525,80 +1735,133 @@ impl Painter {
         self.print_crlf()
     }
 
-    /// Prints an external message
+    /// Commits `messages` to the screen above the prompt block, one row per
+    /// line, so they scroll into history like output printed at a quiet
+    /// prompt.
     ///
-    /// This function doesn't flush the buffer. So buffer should be flushed
-    /// afterwards perhaps by repainting the prompt via `repaint_buffer()`.
-    #[cfg(feature = "external_printer")]
-    pub(crate) fn print_external_message(
-        &mut self,
-        messages: Vec<String>,
-        line_buffer: &LineBuffer,
-        prompt: &dyn Prompt,
-    ) -> Result<()> {
-        // adding 3 seems to be right for first line-wrap
-        let prompt_len = prompt.render_prompt_right().len() + 3;
-        let mut buffer_num_lines = 0_u16;
-        for (i, line) in line_buffer.get_buffer().lines().enumerate() {
-            let screen_lines = match i {
-                0 => {
-                    // the first line has to deal with the prompt
-                    let first_line_len = line.len() + prompt_len;
-                    // at least, it is one line
-                    // max(1): a mid-resize terminal can report width 0 (#842)
-                    ((first_line_len as u16) / self.screen_width().max(1)) + 1
-                }
-                _ => {
-                    // the n-th line, no prompt, at least, it is one line
-                    ((line.len() as u16) / self.screen_width().max(1)) + 1
-                }
-            };
-            // count up screen-lines
-            buffer_num_lines = buffer_num_lines.saturating_add(screen_lines);
-        }
-        // move upward to start print if the line-buffer is more than one screen-line
-        if buffer_num_lines > 1 {
-            self.stdout.queue(MoveUp(buffer_num_lines - 1))?;
-        }
-        let erase_line = format!("\r{}\r", " ".repeat(self.screen_width().into()));
-        let max_row = self.screen_height().saturating_sub(1);
-        let starting_row = self.prompt_start_row.last_known_row();
-        // Invalidate up front: a `?` early-return below can leave
-        // bytes in the buffer with the cache still claiming `Verified`.
+    /// The block itself, prompt, buffer and anything under
+    /// them, is erased from the anchor down and the messages take its place.
+    /// `prompt_start_row` names the first free row below them, counted rather
+    /// than asked for, and the caller repaints the block there.
+    ///
+    /// Nothing is flushed, and the synchronized frame opened here is left
+    /// open: the caller's repaint closes it and sends the commit and the
+    /// redrawn block as one frame. Ending it here, or asking the terminal for
+    /// the cursor in between, splits them into two, and the screen shows the
+    /// messages without a prompt under them for a frame. A cursor query
+    /// cannot go inside the frame either: Alacritty and Rio hold back all
+    /// input during one, so the answer only comes at their 150 ms timeout.
+    /// Should the repaint never come, that same timeout ends the frame.
+    ///
+    /// That holds only from a verified anchor: a count is only as good as
+    /// the row it starts from. A `Stale` one, as an idle callback leaves it,
+    /// is reconciled first, the same way the repaint would. From any other
+    /// (a resize is unresolved, the first query went unanswered) the commit
+    /// ends its frame, flushes and asks instead, and pays the second frame.
+    /// So does a commit that scrolls past the last row of a height not yet
+    /// confirmed as the real one: past the reported bottom the count only
+    /// holds if the report is right (#1206).
+    ///
+    /// Starting at the anchor rather than at the cursor is the point. The
+    /// anchor is the one row the painter trusts, and every part of the block
+    /// sits below it, so there is no height to guess and nothing to leave
+    /// behind. The old path counted the block's rows from the buffer's bytes,
+    /// disagreed with the painter whenever the left prompt wrapped a line,
+    /// and left a copy of the prompt row on screen per batch.
+    ///
+    /// Each message is split at its newlines here, since every line needs
+    /// its own `\r\n` and row count, whatever the source handed over.
+    pub(crate) fn print_external_message(&mut self, messages: Vec<String>) -> Result<()> {
+        // An idle callback leaves the anchor `Stale` on every poll. Check it
+        // the way the repaint after this will, so the messages start where
+        // that repaint draws the block, and before the frame opens.
+        self.reconcile_stale_anchor();
+        let start = self.prompt_start_row.last_known_row();
+        let start_verified = matches!(self.prompt_start_row, PromptStartRow::Verified(_));
+        // Invalidate before the first queued byte: a `?` early-return below
+        // must not leave bytes in the buffer with the cache still claiming
+        // `Verified`.
         self.invalidate_prompt_start_row();
-        let mut row = starting_row;
-        for line in messages {
-            self.stdout.queue(Print(&erase_line))?;
-            // Note: we don't use `print_line` here because we don't want to
-            // flush right now. The subsequent repaint of the prompt will cause
-            // immediate flush anyways. And if we flush here, every external
-            // print causes visible flicker.
-            self.stdout.queue(Print(line))?.queue(Print("\r\n"))?;
-            row = row.saturating_add(1).min(max_row);
+
+        // Hide first, so the cursor is not seen jumping to the anchor. The
+        // repaint that follows shows it again; `hide_cursor` records the hide
+        // so a path that ends without that repaint can still undo it.
+        self.hide_cursor()?;
+
+        self.begin_frame()?;
+        let committed = (|| -> Result<()> {
+            self.clear_from_anchor(start)?;
+
+            // Count where the cursor lands. A line wider than the screen takes
+            // more than one row; an empty one still takes its `\r\n`. Once the
+            // cursor is on the last row a newline scrolls instead of moving,
+            // hence the cap.
+            let height = self.screen_height();
+            let max_row = height.saturating_sub(1);
+            let mut row = start;
+            // Whether the count ran past the last row, so the terminal scrolled.
+            // Landing exactly on it takes no scroll and holds at any real height.
+            let mut scrolled = false;
+
+            for line in messages.iter().flat_map(|message| message_lines(message)) {
+                // max(1) on the width: a mid-resize terminal can report 0 (#842).
+                let rows = estimate_required_lines(line, self.screen_width().max(1)).max(1);
+                let rows = u16::try_from(rows).unwrap_or(u16::MAX);
+                self.stdout.queue(Print(line))?.queue(Print("\r\n"))?;
+                // Saturating: a height grown to fit a measured row can sit near
+                // `u16::MAX` (#1236).
+                let next = row.saturating_add(rows);
+                scrolled |= next > max_row;
+                row = next.min(max_row);
+            }
+
+            let bottom_trusted = !scrolled || self.bottom_confirmed_at == Some(height);
+            if !start_verified || !bottom_trusted {
+                // Counted from a row nobody checked, or capped at a bottom
+                // nobody checked, so ask. Flushed first, so the answer is the
+                // cursor after the messages, not before them.
+                self.end_frame()?;
+                self.stdout.flush()?;
+                self.prompt_start_row = match self.measure_cursor_position() {
+                    Ok(Some((_, actual))) => {
+                        // A scroll that ends on the counted last row means it is
+                        // the real one; later commits can trust the cap. Lower
+                        // down, the measure has already grown the height.
+                        if scrolled && actual == max_row {
+                            self.bottom_confirmed_at = Some(height);
+                        }
+                        PromptStartRow::Verified(actual)
+                    }
+                    // No answer: the count is all there is. `Stale` keeps the
+                    // next paint checking it, which is safe now that the bytes
+                    // have gone out.
+                    Ok(None) | Err(_) => PromptStartRow::Stale(row),
+                };
+                return Ok(());
+            }
+
+            // The count is the anchor, with no query to check it (see above for
+            // why there can be none). It measures the text with the same widths
+            // the painter uses for the prompt and buffer, escape sequences
+            // stripped, so it is as good as every other row the painter draws.
+            // A tab or a message's own cursor movement still fools it: the
+            // terminal moves where the count sees zero width.
+            //
+            // `Verified`, not `Stale`: the lines above are only queued, so the
+            // terminal's cursor has not moved yet. A `Stale` row would make the
+            // next paint check it against that still-earlier cursor, read it as
+            // the prompt having scrolled off the top, and re-anchor by printing a
+            // whole screen of newlines, wiping the display (#1005).
+            self.prompt_start_row = PromptStartRow::Verified(row);
+            Ok(())
+        })();
+        if committed.is_err() {
+            // A write failed with the frame open, and no repaint follows to
+            // close it: end it here, or the screen stays held until the
+            // terminal's timeout. The first error is the one to report.
+            let _ = self.end_frame().and_then(|()| self.stdout.flush());
         }
-        // The lines above are only *queued*, so the terminal's cursor has not
-        // moved yet: a row counted forward from `starting_row` names a position
-        // the terminal has not reached. Recorded as `Stale`, the next paint
-        // re-verifies it against the real, still-earlier cursor, reads that as
-        // the prompt having scrolled off the top, and re-anchors by printing a
-        // whole screen of newlines -- wiping the display (#1005).
-        //
-        // Counting was also only as good as its assumption that a message
-        // occupies exactly one row, which fails as soon as one wraps or carries
-        // its own control sequences. Flush and ask instead: one round-trip per
-        // batch of messages, not per message, so the flicker the comment above
-        // guards against is unaffected.
-        self.stdout.flush()?;
-        self.prompt_start_row = match self.measure_cursor_position() {
-            // Measured, so later paints can skip the drift check.
-            Ok(Some((_, actual))) => PromptStartRow::Verified(actual),
-            // No answer, so all that is left is the count this function stopped
-            // trusting. `Stale` at least keeps the next paint checking it;
-            // `Verified` would skip the check and paint against a row the
-            // terminal may never have reached.
-            Ok(None) | Err(_) => PromptStartRow::Stale(row),
-        };
-        Ok(())
+        committed
     }
 
     /// Queue scroll of `num` lines to `self.stdout`.
@@ -1645,7 +1908,17 @@ impl Painter {
     pub(crate) fn exit_after_cursor_for_test(&self) -> Option<&str> {
         self.after_cursor_lines.as_deref()
     }
+
+    /// Bytes written so far. Panics unless the painter was built on a
+    /// [`W::capture`] writer.
+    #[cfg(test)]
+    pub(crate) fn captured_for_test(&self) -> &[u8] {
+        self.stdout.captured()
+    }
 }
+
+#[cfg(test)]
+mod screen_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1960,6 +2233,19 @@ mod tests {
         assert_eq!(painter.stdout.captured(), b"\x1b[?25l\r\n");
     }
 
+    /// A prompt near the bottom has little room below it, but the paint
+    /// scrolls it up to fit a menu, so menus lay out for the scrolled space.
+    #[test]
+    fn remaining_lines_after_scroll_ignores_prompt_row() {
+        let mut painter = Painter::new(W::sink());
+        painter.terminal_size = (20, 10);
+        painter.prompt_height = 1;
+        painter.prompt_start_row.mark_verified(8);
+
+        assert_eq!(painter.remaining_lines_real(), 1);
+        assert_eq!(painter.remaining_lines_after_scroll(), 9);
+    }
+
     #[test]
     fn test_anchor_prompt_without_answer_and_no_row_assumes_bottom() {
         let mut painter = Painter::new(W::capture());
@@ -2019,7 +2305,7 @@ mod tests {
         let out = String::from_utf8_lossy(p.stdout.captured()).into_owned();
         let (exit, next) = out.split_at(exit_end);
         assert!(
-            exit.ends_with("\x1b[?25h\x1b[J\r\n"),
+            exit.ends_with("\x1b[?25h\x1b[?2026l\x1b[J\r\n"),
             "exit path changed what it leaves the cursor as: {exit:?}"
         );
         assert!(
@@ -2027,9 +2313,81 @@ mod tests {
             "anchor did not hide the cursor before anything else: {next:?}"
         );
         assert!(
-            next.matches("\x1b[?25h").count() == 1 && next.ends_with("\x1b[?25h"),
+            next.matches("\x1b[?25h").count() == 1 && next.ends_with("\x1b[?25h\x1b[?2026l"),
             "cursor shown between the exit newline and the end of the next paint: {next:?}"
         );
+    }
+
+    #[test]
+    fn large_repaint_is_bracketed_as_one_synchronized_frame() {
+        let mut painter = make_painter(1000, 20, false);
+        painter.stdout = W::capture();
+        let content = "x".repeat(9000); // Larger than the terminal writer's 8 KiB buffer.
+        let lines = make_lines(">", " ", "", &content, "");
+        painter
+            .repaint_buffer(
+                &TestPrompt,
+                &lines,
+                PromptEditMode::Default,
+                None,
+                false,
+                &None,
+            )
+            .expect("large repaint");
+
+        let output = painter.stdout.captured();
+        let start = b"\x1b[?2026h";
+        let end = b"\x1b[?2026l";
+        let starts = output
+            .windows(start.len())
+            .filter(|bytes| *bytes == start)
+            .count();
+        let ends = output
+            .windows(end.len())
+            .filter(|bytes| *bytes == end)
+            .count();
+        let first_content = output
+            .iter()
+            .position(|byte| *byte == b'x')
+            .expect("painted text");
+        let last_content = output
+            .iter()
+            .rposition(|byte| *byte == b'x')
+            .expect("painted text");
+        let frame_start = output
+            .windows(start.len())
+            .position(|bytes| bytes == start)
+            .expect("frame start");
+        let frame_end = output
+            .windows(end.len())
+            .position(|bytes| bytes == end)
+            .expect("frame end");
+        assert_eq!((starts, ends), (1, 1));
+        assert!(frame_start < first_content && last_content < frame_end);
+    }
+
+    #[test]
+    fn failed_repaint_ends_the_synchronized_frame() {
+        let mut painter = make_painter(80, 10, false);
+        painter.stdout = W::FailOnce(Vec::new(), 25, false);
+        let lines = make_lines(">", " ", "", "prompt", "");
+        assert!(painter
+            .repaint_buffer(
+                &TestPrompt,
+                &lines,
+                PromptEditMode::Default,
+                None,
+                false,
+                &None,
+            )
+            .is_err());
+
+        let W::FailOnce(output, _, failed) = &painter.stdout else {
+            panic!("test writer changed");
+        };
+        assert!(*failed);
+        assert!(output.windows(8).any(|bytes| bytes == b"\x1b[?2026h"));
+        assert!(output.ends_with(b"\x1b[?2026l"));
     }
 
     #[test]
@@ -2276,20 +2634,200 @@ mod tests {
         assert_eq!(painter.prompt_start_row, PromptStartRow::Verified(60000));
     }
 
-    // Covers the `print_external_message` call site: messages printed mid-line
-    // leave the cursor below a short screen just as the prompt does.
-    #[cfg(feature = "external_printer")]
+    /// The commit never asks the terminal where the cursor is: a query would
+    /// split it from the repaint into two frames. A terminal that would
+    /// answer row 40 is ignored, and the anchor is the counted row.
     #[test]
-    fn test_print_external_message_grows_to_fit_the_cursor() {
+    fn external_messages_trust_the_count_over_the_cursor() {
         let mut painter = Painter::new(W::sink_with_cursor_at((0, 40)));
         painter.terminal_size = (80, 10);
+        painter.prompt_start_row.mark_verified(2);
 
         painter
-            .print_external_message(vec!["msg".to_string()], &LineBuffer::new(), &TestPrompt)
+            .print_external_message(vec!["msg".to_string()])
+            .expect("print_external_message failed");
+
+        assert_eq!(painter.screen_height(), 10);
+        assert_eq!(painter.prompt_start_row, PromptStartRow::Verified(3));
+    }
+
+    /// From an anchor nobody checked, such as an unresolved resize, the
+    /// count would inherit its error, so the commit asks. The answer wins,
+    /// and it can also raise a height the terminal under-reported.
+    #[test]
+    fn external_messages_from_an_unchecked_anchor_ask_for_the_row() {
+        let mut painter = Painter::new(W::sink_with_cursor_at((0, 40)));
+        painter.terminal_size = (80, 10);
+        painter.term_is_dumb = false;
+        painter.prompt_start_row = PromptStartRow::Resized { cursor_row: 2 };
+
+        painter
+            .print_external_message(vec!["msg".to_string()])
             .expect("print_external_message failed");
 
         assert_eq!(painter.screen_height(), 41);
         assert_eq!(painter.prompt_start_row, PromptStartRow::Verified(40));
+    }
+
+    /// The fallback closes its own frame, since the query after it has to
+    /// get through, and with no answer keeps the count but leaves it `Stale`
+    /// for the next paint to check. An unresolved resize is the anchor the
+    /// reconcile up front cannot settle.
+    #[test]
+    fn external_messages_from_an_unresolved_anchor_close_their_frame() {
+        let mut p = capturing_painter_anchored_at(5);
+        p.prompt_start_row = PromptStartRow::Resized { cursor_row: 5 };
+        p.print_external_message(vec!["one".into()])
+            .expect("print_external_message failed");
+        let out = String::from_utf8_lossy(p.stdout.captured()).into_owned();
+
+        assert!(out.ends_with("\x1b[?2026l"), "{out:?}");
+        assert_eq!(p.prompt_start_row, PromptStartRow::Stale(6));
+    }
+
+    /// A write that fails mid-commit leaves no repaint to close the frame, so
+    /// the commit closes it itself rather than hold the screen.
+    #[test]
+    fn a_failed_external_message_commit_ends_its_frame() {
+        let mut p = capturing_painter_anchored_at(5);
+        // Room for the cursor hide and the frame's start, not the erase.
+        p.stdout = W::FailOnce(Vec::new(), 16, false);
+
+        assert!(p.print_external_message(vec!["one".into()]).is_err());
+
+        let W::FailOnce(output, _, failed) = &p.stdout else {
+            panic!("test writer changed");
+        };
+        assert!(*failed);
+        assert!(output.windows(8).any(|bytes| bytes == b"\x1b[?2026h"));
+        assert!(output.ends_with(b"\x1b[?2026l"), "{output:?}");
+    }
+
+    /// A painter anchored at `row` whose bytes a test can read back.
+    fn capturing_painter_anchored_at(row: u16) -> Painter {
+        let mut p = Painter::new(W::capture());
+        p.terminal_size = (20, 10);
+        p.term_is_dumb = false;
+        p.prompt_start_row.mark_verified(row);
+        p.prompt_height = 1;
+        p
+    }
+
+    /// The commit opens a frame before its erase and leaves it open; the
+    /// repaint after it closes it, so the two reach the screen as one frame
+    /// with no end marker between them for the terminal to draw at.
+    #[test]
+    fn external_messages_and_the_repaint_share_one_frame() {
+        let mut p = capturing_painter_anchored_at(5);
+        p.print_external_message(vec!["one".into()])
+            .expect("print_external_message failed");
+        let commit = String::from_utf8_lossy(p.stdout.captured()).into_owned();
+
+        let begin = commit.find("\x1b[?2026h").expect("no begin marker");
+        let erase = commit.find("\x1b[J").expect("no erase");
+        assert!(begin < erase, "frame opened after the erase: {commit:?}");
+        assert!(
+            !commit.contains("\x1b[?2026l"),
+            "commit closed its frame: {commit:?}"
+        );
+
+        let lines = make_lines(TEST_PROMPT, "", "", "abc", "");
+        p.repaint_buffer(
+            &TestPrompt,
+            &lines,
+            PromptEditMode::Default,
+            None,
+            false,
+            &None,
+        )
+        .expect("repaint_buffer failed");
+        let out = String::from_utf8_lossy(p.stdout.captured()).into_owned();
+
+        assert_eq!(out.matches("\x1b[?2026l").count(), 1, "{out:?}");
+        assert!(out.ends_with("\x1b[?2026l"), "{out:?}");
+    }
+
+    #[test]
+    fn term_dumb_external_messages_emit_no_synchronized_update() {
+        let mut p = capturing_painter_anchored_at(5);
+        p.term_is_dumb = true;
+        p.print_external_message(vec!["one".into()])
+            .expect("print_external_message failed");
+        let out = String::from_utf8_lossy(p.stdout.captured()).into_owned();
+
+        assert!(!out.contains("\x1b[?2026"), "{out:?}");
+    }
+
+    /// An empty message is still a row: the terminal spends one on its line
+    /// break even though the text has no lines to count.
+    #[test]
+    fn an_empty_external_message_still_takes_a_row() {
+        let mut p = capturing_painter_anchored_at(2);
+        p.print_external_message(vec![String::new(), "after".into()])
+            .expect("print_external_message failed");
+
+        assert_eq!(p.prompt_start_row, PromptStartRow::Verified(4));
+    }
+
+    /// Once the cursor is on the last row a line break scrolls instead of
+    /// moving, so the counted anchor stops there whatever the batch size.
+    /// The bottom is confirmed here, so the cap is trusted without a query.
+    #[test]
+    fn external_messages_at_the_bottom_cap_the_anchor_at_the_last_row() {
+        let mut p = capturing_painter_anchored_at(9);
+        p.bottom_confirmed_at = Some(10);
+        p.print_external_message(vec!["a".into(), "b".into(), "c".into()])
+            .expect("print_external_message failed");
+
+        assert_eq!(p.prompt_start_row, PromptStartRow::Verified(9));
+        let out = String::from_utf8_lossy(p.stdout.captured()).into_owned();
+        assert!(
+            !out.contains("\x1b[?2026l"),
+            "commit closed its frame: {out:?}"
+        );
+    }
+
+    /// Regression test for nushell/reedline#1206, at the commit.
+    ///
+    /// A reported height of 10 on a taller window: the batch scrolls past the
+    /// believed bottom, but the real cursor is further down. The cap would
+    /// anchor the prompt over the messages, so the commit asks, takes the
+    /// answer, and grows the height to fit it.
+    #[test]
+    fn external_messages_past_a_short_reported_bottom_grow_to_fit_the_cursor() {
+        let mut p = Painter::new(W::sink_with_cursor_at((0, 40)));
+        p.terminal_size = (80, 10);
+        p.term_is_dumb = false;
+        p.prompt_start_row.mark_verified(9);
+
+        p.print_external_message(vec!["a".into(), "b".into()])
+            .expect("print_external_message failed");
+
+        assert_eq!(p.screen_height(), 41);
+        assert_eq!(p.prompt_start_row, PromptStartRow::Verified(40));
+        assert_eq!(p.bottom_confirmed_at, None);
+    }
+
+    /// The first scroll past the bottom asks once; an answer on the last row
+    /// confirms the height, and the next batch trusts the cap. The writer is
+    /// then swapped for one that would answer row 40, to show no one asks.
+    #[test]
+    fn external_messages_ask_once_per_height_whether_the_bottom_is_real() {
+        let mut p = Painter::new(W::sink_with_cursor_at((0, 9)));
+        p.terminal_size = (80, 10);
+        p.term_is_dumb = false;
+        p.prompt_start_row.mark_verified(9);
+
+        p.print_external_message(vec!["a".into()])
+            .expect("print_external_message failed");
+        assert_eq!(p.prompt_start_row, PromptStartRow::Verified(9));
+        assert_eq!(p.bottom_confirmed_at, Some(10));
+
+        p.stdout = W::sink_with_cursor_at((0, 40));
+        p.print_external_message(vec!["b".into()])
+            .expect("print_external_message failed");
+        assert_eq!(p.prompt_start_row, PromptStartRow::Verified(9));
+        assert_eq!(p.screen_height(), 10);
     }
 
     // Output printed while the tty was yielded can leave the cursor well below
@@ -2330,6 +2868,7 @@ mod tests {
             first_buffer_col: 2,
             menu_active: false,
             menu_start_row: None,
+            status_start_row: None,
             large_buffer_extra_rows_after_prompt: None,
             large_buffer_offset: None,
             right_prompt: None,
@@ -2386,6 +2925,60 @@ mod tests {
         assert_eq!(painter.screen_to_buffer_offset(&snapshot, 0, 0), Some(6));
     }
 
+    /// The buffer shows a control char escaped, so a click is measured on
+    /// what is shown and any column of the escape maps back to the char.
+    #[rstest]
+    // `> ab^[cd`: `^[` spans columns 4 and 5.
+    #[case::esc("ab\x1bcd", &[(4, 2), (5, 2), (6, 3), (7, 4), (8, 5)])]
+    // `> a^Mbc`: a lone `\r` no longer returns to the left edge.
+    #[case::carriage_return("a\rbc", &[(3, 1), (4, 1), (5, 2), (6, 3)])]
+    // `> M-^[x`: a C1 char is two bytes and four columns.
+    #[case::c1("\u{9b}x", &[(2, 0), (5, 0), (6, 2)])]
+    fn click_maps_through_shown_control_chars(
+        #[case] buffer: &str,
+        #[case] clicks: &[(u16, usize)],
+    ) {
+        let mut snapshot = base_snapshot();
+        snapshot.before_cursor = buffer.to_string();
+
+        let painter = Painter::new(W::sink());
+        for &(column, offset) in clicks {
+            assert_eq!(
+                painter.screen_to_buffer_offset(&snapshot, column, 0),
+                Some(offset),
+                "column {column}"
+            );
+        }
+    }
+
+    /// The `\r` of a `\r\n` is the line break's own and draws nothing, so a
+    /// CRLF buffer maps clicks like the LF one, one byte further on past the
+    /// break. A phantom `^M` would wrap the line that exactly fits the row.
+    #[rstest]
+    #[case::short("a", "b")]
+    #[case::fills_the_row(&"a".repeat(17), "bcd")]
+    fn click_after_crlf_maps_like_lf(#[case] first: &str, #[case] second: &str) {
+        let painter = Painter::new(W::sink());
+        let offsets = |before_cursor: String| {
+            let mut snapshot = base_snapshot();
+            snapshot.before_cursor = before_cursor;
+            (0..2)
+                .flat_map(|row| (0..20).map(move |column| (column, row)))
+                .map(|(column, row)| painter.screen_to_buffer_offset(&snapshot, column, row))
+                .collect::<Vec<_>>()
+        };
+
+        let lf = offsets(format!("{first}\n{second}"));
+        let crlf = offsets(format!("{first}\r\n{second}"));
+
+        let break_at = first.len();
+        let shifted: Vec<_> = lf
+            .iter()
+            .map(|offset| offset.map(|o| if o > break_at { o + 1 } else { o }))
+            .collect();
+        assert_eq!(crlf, shifted);
+    }
+
     #[test]
     fn test_click_in_right_prompt_ignored() {
         let mut snapshot = base_snapshot();
@@ -2408,6 +3001,23 @@ mod tests {
 
         let painter = Painter::new(W::sink());
         assert_eq!(painter.screen_to_buffer_offset(&snapshot, 0, 2), None);
+    }
+
+    /// With a menu open the status line takes the row below the cursor, where
+    /// the text after the cursor would continue. That text is erased, so a
+    /// click there must not land in it.
+    #[test]
+    fn test_click_in_status_ignored() {
+        let mut snapshot = base_snapshot();
+        snapshot.before_cursor = "a".to_string();
+        snapshot.after_cursor = "\nb".to_string();
+        snapshot.menu_active = true;
+        snapshot.status_start_row = Some(1);
+        snapshot.menu_start_row = Some(2);
+
+        let painter = Painter::new(W::sink());
+        assert_eq!(painter.screen_to_buffer_offset(&snapshot, 0, 1), None);
+        assert_eq!(painter.screen_to_buffer_offset(&snapshot, 2, 0), Some(0));
     }
 
     fn make_painter(width: u16, height: u16, large_buffer: bool) -> Painter {
@@ -2436,6 +3046,7 @@ mod tests {
             hint: Cow::Borrowed(""),
             right_prompt_on_last_line: false,
             exit_after_cursor: None,
+            status: Cow::Borrowed(""),
         }
     }
 
@@ -2577,6 +3188,53 @@ mod tests {
             )
             .expect("repaint_buffer failed");
         assert!(painter.exit_right_prompt.is_none());
+    }
+
+    /// A paint is one synchronized frame: the terminal holds the erase and
+    /// the redraw and shows them together. The markers wrap everything that
+    /// draws, on the small- and the large-buffer path alike. The capture
+    /// writer ignores flushes, so where the end sits relative to the final
+    /// flush is not checked here.
+    #[rstest]
+    #[case::small_buffer("abc", false)]
+    #[case::large_buffer("l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10", true)]
+    fn a_paint_is_one_synchronized_frame(#[case] before: &str, #[case] expect_large: bool) {
+        let lines = make_lines("> ", "", "", before, "");
+        let (out, _, large) = capture_repaint(&lines, 0);
+
+        assert_eq!(large, expect_large);
+        // Only the style reset and the cursor hide, which draw nothing, may
+        // come before the frame; the erase must not.
+        let begin = out.find("\x1b[?2026h").expect("no begin marker");
+        let erase = out.find("\x1b[J").expect("no erase");
+        assert!(begin < erase, "{out:?}");
+        assert!(out.ends_with("\x1b[?2026l"), "{out:?}");
+        assert_eq!(out.matches("\x1b[?2026").count(), 2, "{out:?}");
+    }
+
+    /// `TERM=dumb` would print the markers as text.
+    #[test]
+    fn term_dumb_paint_emits_no_synchronized_update() {
+        let mut painter = Painter::new(W::capture());
+        painter.terminal_size = (20, 10);
+        painter.term_is_dumb = true;
+        painter.prompt_start_row.mark_verified(0);
+        painter.prompt_height = 1;
+
+        let lines = make_lines(TEST_PROMPT, "", "", "abc", "");
+        painter
+            .repaint_buffer(
+                &TestPrompt,
+                &lines,
+                PromptEditMode::Default,
+                None,
+                false,
+                &None,
+            )
+            .unwrap();
+
+        let out = String::from_utf8_lossy(painter.stdout.captured());
+        assert!(!out.contains("\x1b[?2026"), "{out:?}");
     }
 
     /// What a terminal ends up in after a byte stream.
@@ -2975,13 +3633,13 @@ mod tests {
     /// `menu_required_lines` books them, and both derive from the same string so
     /// a test cannot describe a menu that draws more rows than it reserved.
     /// Everything else is unreachable in these tests.
-    struct TestMenu {
+    pub(super) struct TestMenu {
         contents: String,
         settings: MenuSettings,
     }
 
     impl TestMenu {
-        fn new(contents: &str) -> Self {
+        pub(super) fn new(contents: &str) -> Self {
             Self {
                 contents: contents.to_string(),
                 settings: MenuSettings::default(),
@@ -3054,6 +3712,7 @@ mod tests {
             large_buffer_offset: None,
             right_prompt: None,
             menu_start_row,
+            status_start_row: None,
             first_buffer_col: 0,
         };
         p.print_menu(menu, false, &layout)
@@ -3069,6 +3728,7 @@ mod tests {
         p.terminal_size = (20, 10);
         p.prompt_start_row.mark_verified(0);
         p.prompt_height = 1;
+        reserve_status(&mut p, lines);
         p.repaint_buffer(
             &TestPrompt,
             lines,
@@ -3081,6 +3741,30 @@ mod tests {
         p.move_cursor_to_end().expect("move_cursor_to_end failed");
 
         replay(&String::from_utf8_lossy(p.stdout.captured()), 20, false)
+    }
+
+    /// Set aside the rows the status line of `lines` takes, as the engine does
+    /// before each paint.
+    pub(super) fn reserve_status(p: &mut Painter, lines: &PromptLines) {
+        let width = p.screen_width();
+        let room = p.status_room(lines.required_lines(width, false, None));
+        p.reserve_status_rows(lines.status_rows(width), room);
+    }
+
+    /// The status line is commentary, like a hint, so the exit path leaves
+    /// none of it under the command for the host to print over.
+    #[rstest]
+    #[case::without_a_menu(None)]
+    #[case::above_a_menu(Some("item1\nitem2"))]
+    fn exit_erases_the_status_line(#[case] menu_rows: Option<&str>) {
+        let menu =
+            menu_rows.map(|rows| ReedlineMenu::EngineCompleter(Box::new(TestMenu::new(rows))));
+        let lines = make_lines(TEST_PROMPT, "", "", "pwd", "").with_status("status", false);
+
+        let replayed = capture_repaint_then_exit(&lines, menu.as_ref());
+
+        assert_eq!(replayed.screen, "> pwd");
+        assert_eq!(replayed.cursor.0, 1);
     }
 
     /// Regression test for nushell/reedline#1143.
@@ -3155,7 +3839,7 @@ mod tests {
     fn test_layout_small_buffer_defaults() {
         let painter = make_painter(20, 10, false);
         let lines = make_lines(TEST_PROMPT, "", "", "hello", "");
-        let layout = painter.compute_layout(&lines, None);
+        let layout = painter.compute_layout(&lines, None, 0, 0);
 
         assert_eq!(layout.extra_rows, 0);
         assert_eq!(layout.extra_rows_after_prompt, 0);
@@ -3168,7 +3852,7 @@ mod tests {
     fn test_layout_right_prompt_rendered() {
         let painter = make_painter(40, 10, false);
         let lines = make_lines(TEST_PROMPT, "", "RP", "hi", "");
-        let layout = painter.compute_layout(&lines, None);
+        let layout = painter.compute_layout(&lines, None, 0, 0);
 
         let rp = layout
             .right_prompt
@@ -3183,7 +3867,7 @@ mod tests {
         let mut painter = make_painter(40, 10, false);
         painter.term_is_dumb = true;
         let lines = make_lines(TEST_PROMPT, "", "RP", "hi", "");
-        let layout = painter.compute_layout(&lines, None);
+        let layout = painter.compute_layout(&lines, None, 0, 0);
 
         assert!(layout.right_prompt.is_none());
     }
@@ -3194,7 +3878,7 @@ mod tests {
         // Prompt TEST_PROMPT (2) + before "12345678" (8) = 10 which equals start_position (10-2=8)
         // input_width(10) > start_position(8) so right prompt should not render
         let lines = make_lines(TEST_PROMPT, "", "RP", "12345678", "");
-        let layout = painter.compute_layout(&lines, None);
+        let layout = painter.compute_layout(&lines, None, 0, 0);
 
         assert!(layout.right_prompt.is_none());
     }
@@ -3210,7 +3894,7 @@ mod tests {
         // extra_rows_after_prompt = 1 - 0 = 1
         let painter = make_painter(20, 5, true);
         let lines = make_lines(TEST_PROMPT, "", "", "l1\nl2\nl3\nl4\nl5\nl6\nl7", "");
-        let layout = painter.compute_layout(&lines, None);
+        let layout = painter.compute_layout(&lines, None, 0, 0);
 
         assert_eq!(layout.extra_rows, 1);
         assert_eq!(layout.extra_rows_after_prompt, 1);
@@ -3228,7 +3912,7 @@ mod tests {
         // screen height. `make_painter(.., true)` forces the large-buffer path.
         let painter = make_painter(120, 24, true);
         let lines = make_lines(TEST_PROMPT, "", "", "", "");
-        let layout = painter.compute_layout(&lines, None);
+        let layout = painter.compute_layout(&lines, None, 0, 0);
 
         assert_eq!(layout.extra_rows, 0);
         assert_eq!(layout.extra_rows_after_prompt, 0);
@@ -3240,7 +3924,7 @@ mod tests {
         // should not be rendered — this was a bug in the old render_snapshot.
         let painter = make_painter(20, 5, true);
         let lines = make_lines(TEST_PROMPT, "", "RP", "l1\nl2\nl3\nl4\nl5\nl6\nl7", "");
-        let layout = painter.compute_layout(&lines, None);
+        let layout = painter.compute_layout(&lines, None, 0, 0);
 
         assert!(layout.extra_rows > 0);
         assert!(layout.right_prompt.is_none());
@@ -3252,7 +3936,7 @@ mod tests {
         // Right prompt should still render
         let painter = make_painter(20, 10, true);
         let lines = make_lines(TEST_PROMPT, "", "RP", "short", "");
-        let layout = painter.compute_layout(&lines, None);
+        let layout = painter.compute_layout(&lines, None, 0, 0);
 
         assert_eq!(layout.extra_rows, 0);
         assert!(layout.right_prompt.is_some());
@@ -3263,7 +3947,7 @@ mod tests {
         let painter = make_painter(20, 10, false);
         // Multi-line prompt: last line is "$ " (2 chars)
         let lines = make_lines("line1\n$ ", "", "", "hello", "");
-        let layout = painter.compute_layout(&lines, None);
+        let layout = painter.compute_layout(&lines, None, 0, 0);
 
         assert_eq!(layout.first_buffer_col, 2);
     }
@@ -3284,7 +3968,7 @@ mod tests {
 
         let prompt = TestPrompt;
         let lines = PromptLines::new(&prompt, PromptEditMode::Default, None, "", "", "");
-        let layout = painter.compute_layout(&lines, None);
+        let layout = painter.compute_layout(&lines, None, 0, 0);
 
         painter
             .print_small_buffer(&prompt, &lines, None, false, &layout)
@@ -3501,166 +4185,6 @@ mod tests {
                 !out.contains(sgr),
                 "emitted {sgr:?} with coloring disabled: {out:?}"
             );
-        }
-    }
-
-    /// [`TestPrompt`] with a footer.
-    struct FooterPrompt<'a>(&'a str);
-
-    impl Prompt for FooterPrompt<'_> {
-        fn render_prompt_left(&self) -> Cow<'_, str> {
-            TestPrompt.render_prompt_left()
-        }
-        fn render_prompt_right(&self) -> Cow<'_, str> {
-            TestPrompt.render_prompt_right()
-        }
-        fn render_prompt_indicator(&self, mode: PromptEditMode) -> Cow<'_, str> {
-            TestPrompt.render_prompt_indicator(mode)
-        }
-        fn render_prompt_multiline_indicator(&self) -> Cow<'_, str> {
-            TestPrompt.render_prompt_multiline_indicator()
-        }
-        fn render_prompt_history_search_indicator(
-            &self,
-            search: PromptHistorySearch,
-        ) -> Cow<'_, str> {
-            TestPrompt.render_prompt_history_search_indicator(search)
-        }
-
-        fn render_prompt_footer(&self) -> Cow<'_, str> {
-            self.0.into()
-        }
-    }
-
-    fn footer_painter(prompt: &FooterPrompt, height: u16) -> Painter {
-        let mut painter = Painter::new(W::capture());
-        painter.terminal_size = (10, height);
-        painter.term_is_dumb = false;
-        painter.prompt_start_row.mark_verified(0);
-        painter.prompt_height = 1;
-        let lines = make_lines("> ", "", "", "hi", "");
-        painter
-            .repaint_buffer(prompt, &lines, PromptEditMode::Default, None, false, &None)
-            .expect("repaint_buffer failed");
-        painter
-    }
-
-    #[test]
-    fn test_footer_is_painted_below_the_buffer_and_counted() {
-        let painter = footer_painter(&FooterPrompt("one\r\ntwo\n"), 10);
-
-        let out = String::from_utf8_lossy(painter.stdout.captured()).into_owned();
-        let buffer_at = out.find("hi").unwrap();
-        assert!(out.find("\x1b[2;1Hone\x1b[0m").unwrap() > buffer_at);
-        assert!(out.contains("\x1b[3;1Htwo\x1b[0m"));
-        assert!(!out.contains("\x1b[4;1H"));
-        assert_eq!(painter.footer_rows, 2);
-        assert_eq!(painter.last_required_lines, 3);
-        assert!(out.ends_with("\x1b8\x1b[?25h"));
-    }
-
-    #[test]
-    fn test_footer_lines_wrap_and_keep_their_escapes_whole() {
-        let link = "\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\";
-        let footer = format!("0123456789abc\n{link}");
-        let painter = footer_painter(&FooterPrompt(&footer), 10);
-
-        let out = String::from_utf8_lossy(painter.stdout.captured()).into_owned();
-        assert!(out.contains("\x1b[2;1H0123456789abc\x1b[0m"));
-        assert!(out.contains(&format!("\x1b[4;1H{link}\x1b[0m")));
-        assert_eq!(painter.footer_rows, 3);
-        assert_eq!(painter.last_required_lines, 4);
-    }
-
-    #[test]
-    fn test_resize_forgets_the_footer() {
-        let mut painter = footer_painter(&FooterPrompt("one"), 10);
-
-        painter.handle_resize(20, 10);
-
-        assert_eq!(painter.footer_rows, 0);
-    }
-
-    #[test]
-    fn test_footer_is_dropped_when_the_screen_is_too_short() {
-        let painter = footer_painter(&FooterPrompt("one\ntwo"), 3);
-
-        let out = String::from_utf8_lossy(painter.stdout.captured()).into_owned();
-        assert!(!out.contains("one"));
-        assert_eq!(painter.footer_rows, 0);
-        assert_eq!(painter.last_required_lines, 1);
-    }
-
-    #[test]
-    fn test_footer_is_erased_on_the_final_paint() {
-        let mut painter = footer_painter(&FooterPrompt("one"), 10);
-        painter.stdout = W::capture();
-
-        painter.move_cursor_to_end().unwrap();
-
-        let out = String::from_utf8_lossy(painter.stdout.captured()).into_owned();
-        assert!(out.starts_with("\x1b[J"));
-        assert!(!out.contains("one"));
-        assert_eq!(painter.footer_rows, 0);
-    }
-
-    #[test]
-    fn test_clear_footer_erases_from_the_footer_row_and_restores_the_cursor() {
-        let mut painter = footer_painter(&FooterPrompt("one"), 10);
-        painter.stdout = W::capture();
-
-        painter.clear_footer().unwrap();
-
-        assert_eq!(painter.stdout.captured(), b"\x1b[2;1H\x1b[J\x1b8");
-    }
-
-    /// The footer is counted after the menu rows, so it lands below the
-    /// menu, and a menu that reaches the last row leaves it no room.
-    #[rstest]
-    #[case::short_menu(3, Some(4))]
-    #[case::menu_one_row_above_the_last(7, Some(8))]
-    #[case::menu_reaching_the_last_row(8, None)]
-    fn test_footer_is_painted_below_a_menu(
-        #[case] menu_rows: usize,
-        #[case] footer_row: Option<u16>,
-    ) {
-        let items: Vec<String> = (0..menu_rows).map(|i| format!("item{i}")).collect();
-        let menu = ReedlineMenu::EngineCompleter(Box::new(TestMenu::new(&items.join("\n"))));
-        let mut painter = Painter::new(W::capture());
-        painter.terminal_size = (10, 10);
-        painter.term_is_dumb = false;
-        painter.prompt_start_row.mark_verified(0);
-        painter.prompt_height = 1;
-        let lines = make_lines("> ", "", "", "hi", "");
-
-        painter
-            .repaint_buffer(
-                &FooterPrompt("one"),
-                &lines,
-                PromptEditMode::Default,
-                Some(&menu),
-                false,
-                &None,
-            )
-            .unwrap();
-
-        let replayed = replay(
-            &String::from_utf8_lossy(painter.stdout.captured()),
-            10,
-            true,
-        );
-        match footer_row {
-            Some(row) => {
-                assert_eq!(painter.footer_row, row);
-                assert_eq!(replayed.max_written, row);
-                assert!(replayed
-                    .screen
-                    .ends_with(&format!("item{}one", menu_rows - 1)));
-            }
-            None => {
-                assert_eq!(painter.footer_rows, 0);
-                assert!(!replayed.screen.contains("one"));
-            }
         }
     }
 }
