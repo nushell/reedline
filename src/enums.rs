@@ -28,7 +28,7 @@ impl From<crossterm::event::MouseButton> for MouseButton {
 
 /// Valid ways how `Reedline::read_line()` can return
 #[non_exhaustive]
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Signal {
     /// Entry succeeded with the provided content
     Success(String),
@@ -1253,6 +1253,7 @@ pub enum ReedlineEvent {
 /// The engine reports it for every event it runs, and an [`EditMode`](crate::EditMode)
 /// answers with it from
 /// [`handle_mode_specific_event`](crate::EditMode::handle_mode_specific_event).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EventStatus {
     /// The event did something. Inside an
     /// [`UntilFound`](ReedlineEvent::UntilFound) this stops the search.
