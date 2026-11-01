@@ -129,8 +129,22 @@ pub fn add_common_navigation_bindings(kb: &mut Keybindings) {
         KC::Left,
         ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuLeft, ReedlineEvent::Left]),
     );
-    kb.add_binding(KM::NONE, KC::PageUp, ReedlineEvent::MenuPagePrevious);
-    kb.add_binding(KM::NONE, KC::PageDown, ReedlineEvent::MenuPageNext);
+    kb.add_binding(
+        KM::NONE,
+        KC::PageUp,
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::MenuPagePrevious,
+            ReedlineEvent::FirstHistory,
+        ]),
+    );
+    kb.add_binding(
+        KM::NONE,
+        KC::PageDown,
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::MenuPageNext,
+            ReedlineEvent::LastHistory,
+        ]),
+    );
     kb.add_binding(
         KM::NONE,
         KC::Right,

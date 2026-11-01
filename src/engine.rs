@@ -8648,6 +8648,24 @@ mod tests {
     }
 
     #[test]
+    fn page_keys_jump_through_history_without_a_menu() {
+        let keybindings = crate::default_emacs_keybindings();
+        let page_up = keybindings
+            .find_binding(KeyModifiers::NONE, KeyCode::PageUp)
+            .unwrap();
+        let page_down = keybindings
+            .find_binding(KeyModifiers::NONE, KeyCode::PageDown)
+            .unwrap();
+        let mut reedline = history_jump_engine();
+        reedline.run_edit_commands(&[EditCommand::InsertString("git".into())]);
+
+        send(&mut reedline, page_up);
+        assert_eq!(reedline.current_buffer_contents(), "git status");
+        send(&mut reedline, page_down);
+        assert_eq!(reedline.current_buffer_contents(), "git");
+    }
+
+    #[test]
     fn first_history_without_a_match_leaves_the_line_alone() {
         let mut reedline = history_jump_engine();
         reedline.run_edit_commands(&[EditCommand::InsertString("zzz".into())]);
