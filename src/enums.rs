@@ -1253,6 +1253,7 @@ pub enum ReedlineEvent {
 /// The engine reports it for every event it runs, and an [`EditMode`](crate::EditMode)
 /// answers with it from
 /// [`handle_mode_specific_event`](crate::EditMode::handle_mode_specific_event).
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EventStatus {
     /// The event did something. Inside an
