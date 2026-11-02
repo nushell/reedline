@@ -1507,32 +1507,19 @@ impl Editor {
     }
 
     fn move_word_right_end(&mut self, select: bool) {
-        // vi-`e` lands *on* the word's last grapheme regardless of the active
-        // caret, so it resolves the word-end with `inclusive = true` (block
-        // reading) rather than the mode's geometry — distinct from emacs `M-f`,
-        // which rests on the trailing boundary. (Unbound.)
-        self.move_head_to(self.word_end_on_grapheme(WordKind::Unicode), select);
+        // The same target as `move_word_right`: the resolver lands on the last
+        // grapheme under a block caret and behind it under a bar (#766).
+        self.apply_move(
+            word_target(WordKind::Unicode, WordEdge::End, Direction::Forward),
+            select,
+        );
     }
 
     fn move_big_word_right_end(&mut self, select: bool) {
-        // vi-`E` on-char — see `move_word_right_end`.
-        self.move_head_to(self.word_end_on_grapheme(WordKind::LongWord), select);
-    }
-
-    /// Forward word-end resolved with block (on-grapheme) geometry, whatever the
-    /// active caret. Backs the vi-`e`/`E`-style `*RightEnd` commands, whose
-    /// landing is the word's last grapheme rather than its trailing boundary —
-    /// so it asks the motion resolver for the block reading (`block = true`)
-    /// directly instead of the mode's geometry.
-    fn word_end_on_grapheme(&self, kind: WordKind) -> usize {
-        let target = word_target(kind, WordEdge::End, Direction::Forward);
-        resolve_motion(
-            self.get_buffer(),
-            self.insertion_point(),
-            target,
-            CaretGeometry::Block,
-        )
-        .head
+        self.apply_move(
+            word_target(WordKind::LongWord, WordEdge::End, Direction::Forward),
+            select,
+        );
     }
 
     fn insert_pair(&mut self, open: char, close: char) {
@@ -3107,6 +3094,27 @@ mod test {
     fn selected_text(editor: &Editor) -> String {
         let c = editor.line_buffer().cursor();
         editor.get_buffer()[c.start()..c.end()].to_string()
+    }
+
+    /// #766: a word-end move follows the caret, landing behind the word under
+    /// a bar and on its last grapheme under a block.
+    #[rstest]
+    #[case::insert_word(PromptViMode::Insert, EditCommand::MoveWordRightEnd { select: false }, 12)]
+    #[case::insert_big_word(PromptViMode::Insert, EditCommand::MoveBigWordRightEnd { select: false }, 16)]
+    #[case::normal_word(PromptViMode::Normal, EditCommand::MoveWordRightEnd { select: false }, 11)]
+    #[case::normal_big_word(PromptViMode::Normal, EditCommand::MoveBigWordRightEnd { select: false }, 15)]
+    fn word_right_end_follows_the_caret(
+        #[case] mode: PromptViMode,
+        #[case] command: EditCommand,
+        #[case] expected: usize,
+    ) {
+        let mut editor = vi_editor("this is some/cmd", mode);
+        editor.run_edit_command(&EditCommand::MoveToPosition {
+            position: 8, // on 's' of "some"
+            select: false,
+        });
+        editor.run_edit_command(&command);
+        assert_eq!(editor.insertion_point(), expected);
     }
 
     #[test]
@@ -5839,57 +5847,39 @@ mod test {
                 // compare the resulting (buffer, register). `wb` resolves a word
                 // boundary the same way the commands' plumbing does, so this pins
                 // that the dispatch/operate wiring stays faithful to `locate_word`.
-                fn wb(
-                    lb: &LineBuffer,
-                    kind: WordKind,
-                    edge: WordEdge,
-                    fwd: bool,
-                    block: bool,
-                ) -> usize {
-                    let buf = lb.get_buffer();
-                    let origin = lb.insertion_point();
-                    // Mirror resolve_motion's block word-end identity independently
-                    // (the bar boundary one cell over, rendered one cell back).
-                    use crate::core_editor::graphemes::{
-                        next_grapheme_boundary, prev_grapheme_boundary,
-                    };
+                fn wb(lb: &LineBuffer, kind: WordKind, edge: WordEdge, fwd: bool) -> usize {
                     use crate::core_editor::word;
                     let dir = if fwd {
                         Direction::Forward
                     } else {
                         Direction::Backward
                     };
-                    if block && fwd && edge == WordEdge::End {
-                        let probe = next_grapheme_boundary(buf, origin);
-                        prev_grapheme_boundary(buf, word::locate_word(buf, probe, kind, edge, dir))
-                    } else {
-                        word::locate_word(buf, origin, kind, edge, dir)
-                    }
+                    word::locate_word(lb.get_buffer(), lb.insertion_point(), kind, edge, dir)
                 }
                 #[allow(clippy::type_complexity)]
                 let moves: &[(EditCommand, fn(&LineBuffer) -> usize)] = &[
                     (EditCommand::MoveWordLeft { select: false }, |lb| {
-                        wb(lb, WordKind::Unicode, WordEdge::Start, false, false)
+                        wb(lb, WordKind::Unicode, WordEdge::Start, false)
                     }),
                     (EditCommand::MoveBigWordLeft { select: false }, |lb| {
-                        wb(lb, WordKind::LongWord, WordEdge::Start, false, false)
+                        wb(lb, WordKind::LongWord, WordEdge::Start, false)
                     }),
                     // bar caret: forward word-end rests on the trailing boundary
                     (EditCommand::MoveWordRight { select: false }, |lb| {
-                        wb(lb, WordKind::Unicode, WordEdge::End, true, false)
+                        wb(lb, WordKind::Unicode, WordEdge::End, true)
                     }),
                     (EditCommand::MoveWordRightStart { select: false }, |lb| {
-                        wb(lb, WordKind::Unicode, WordEdge::Start, true, false)
+                        wb(lb, WordKind::Unicode, WordEdge::Start, true)
                     }),
                     (EditCommand::MoveBigWordRightStart { select: false }, |lb| {
-                        wb(lb, WordKind::LongWord, WordEdge::Start, true, false)
+                        wb(lb, WordKind::LongWord, WordEdge::Start, true)
                     }),
-                    // vi-`e` on-char reading, forced block geometry
+                    // the same target as MoveWordRight, see #766
                     (EditCommand::MoveWordRightEnd { select: false }, |lb| {
-                        wb(lb, WordKind::Unicode, WordEdge::End, true, true)
+                        wb(lb, WordKind::Unicode, WordEdge::End, true)
                     }),
                     (EditCommand::MoveBigWordRightEnd { select: false }, |lb| {
-                        wb(lb, WordKind::LongWord, WordEdge::End, true, true)
+                        wb(lb, WordKind::LongWord, WordEdge::End, true)
                     }),
                 ];
                 for (cmd, legacy) in moves {
@@ -5918,37 +5908,32 @@ mod test {
                     (
                         EditCommand::CutWordLeft,
                         EditCommand::CopyWordLeft,
-                        |lb, ip| (wb(lb, WordKind::Unicode, WordEdge::Start, false, false), ip),
+                        |lb, ip| (wb(lb, WordKind::Unicode, WordEdge::Start, false), ip),
                     ),
                     (
                         EditCommand::CutBigWordLeft,
                         EditCommand::CopyBigWordLeft,
-                        |lb, ip| {
-                            (
-                                wb(lb, WordKind::LongWord, WordEdge::Start, false, false),
-                                ip,
-                            )
-                        },
+                        |lb, ip| (wb(lb, WordKind::LongWord, WordEdge::Start, false), ip),
                     ),
                     (
                         EditCommand::CutWordRight,
                         EditCommand::CopyWordRight,
-                        |lb, ip| (ip, wb(lb, WordKind::Unicode, WordEdge::End, true, false)),
+                        |lb, ip| (ip, wb(lb, WordKind::Unicode, WordEdge::End, true)),
                     ),
                     (
                         EditCommand::CutBigWordRight,
                         EditCommand::CopyBigWordRight,
-                        |lb, ip| (ip, wb(lb, WordKind::LongWord, WordEdge::End, true, false)),
+                        |lb, ip| (ip, wb(lb, WordKind::LongWord, WordEdge::End, true)),
                     ),
                     (
                         EditCommand::CutWordRightToNext,
                         EditCommand::CopyWordRightToNext,
-                        |lb, ip| (ip, wb(lb, WordKind::Unicode, WordEdge::Start, true, false)),
+                        |lb, ip| (ip, wb(lb, WordKind::Unicode, WordEdge::Start, true)),
                     ),
                     (
                         EditCommand::CutBigWordRightToNext,
                         EditCommand::CopyBigWordRightToNext,
-                        |lb, ip| (ip, wb(lb, WordKind::LongWord, WordEdge::Start, true, false)),
+                        |lb, ip| (ip, wb(lb, WordKind::LongWord, WordEdge::Start, true)),
                     ),
                 ];
                 for (cut_cmd, copy_cmd, legacy) in ops {
