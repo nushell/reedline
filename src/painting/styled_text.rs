@@ -159,6 +159,54 @@ fn shows_on_a_blank_cell(style: &Style) -> bool {
     style.background.is_some() || style.is_reverse || style.is_underline || style.is_strikethrough
 }
 
+/// What follows each newline of the buffer: the multiline indicator, wrapped in
+/// secondary prompt markers when the terminal gets them
+/// (`\n` + `A;k=s` + indicator + `B`).
+fn format_continuation(
+    multiline_prompt: &str,
+    semantic_markers: Option<&dyn SemanticPromptMarkers>,
+) -> String {
+    match semantic_markers {
+        Some(markers) => format!(
+            "\n{}{}{}",
+            markers.prompt_start(PromptKind::Secondary),
+            multiline_prompt,
+            markers.command_input_start()
+        ),
+        None => format!("\n{multiline_prompt}"),
+    }
+}
+
+/// Gives each line a hint continues onto the multiline indicator the buffer's
+/// lines get (#530), so a multi-line hint lines up with the text it completes.
+///
+/// The indicator goes in unstyled, inside whatever style the hinter has open
+/// at the newline, so it is drawn like the hint and marks those rows as not
+/// typed yet, rather than in the prompt's multiline color.
+pub(crate) fn continue_hint_lines(
+    hint: &str,
+    prompt: &dyn Prompt,
+    use_ansi_coloring: bool,
+    semantic_markers: Option<&dyn SemanticPromptMarkers>,
+) -> String {
+    if !hint.contains('\n') {
+        return hint.to_owned();
+    }
+
+    let continuation = format_continuation(
+        &prompt.render_prompt_multiline_indicator(),
+        semantic_markers,
+    );
+    // Without coloring the buffer drops its markers too, see
+    // `render_around_insertion_point`.
+    let continuation = if use_ansi_coloring {
+        continuation
+    } else {
+        strip_ansi(&continuation)
+    };
+    hint.replace('\n', &continuation)
+}
+
 fn render_as_string(
     renderable: &(Style, String),
     prompt_style: &Style,
@@ -166,20 +214,7 @@ fn render_as_string(
     semantic_markers: Option<&dyn SemanticPromptMarkers>,
 ) -> String {
     let mut rendered = String::new();
-
-    // Build the formatted multiline prompt with optional semantic markers
-    let formatted_multiline_prompt = if let Some(markers) = semantic_markers {
-        // Wrap multiline indicator with secondary prompt markers:
-        // \n + A;k=s + multiline_prompt + B
-        format!(
-            "\n{}{}{}",
-            markers.prompt_start(PromptKind::Secondary),
-            multiline_prompt,
-            markers.command_input_start()
-        )
-    } else {
-        format!("\n{multiline_prompt}")
-    };
+    let formatted_multiline_prompt = format_continuation(multiline_prompt, semantic_markers);
 
     // `split` consumes the `\n`, so a terminator has no glyph left to carry the
     // style and a selection covering it paints nothing. Every piece but the last
@@ -616,5 +651,39 @@ mod test {
             .map(|p| super::render_as_string(p, &Style::new(), "> ", None))
             .collect();
         assert_eq!(strip_ansi(&rendered), "ab \n> cd");
+    }
+
+    mod continue_hint_lines {
+        use pretty_assertions::assert_eq;
+
+        use crate::painting::continue_hint_lines;
+        use crate::DefaultPrompt;
+
+        #[test]
+        fn each_hint_line_gets_the_indicator() {
+            let hint =
+                continue_hint_lines("\n  foo: S,\n}", &DefaultPrompt::default(), false, None);
+            assert_eq!(hint, "\n:::   foo: S,\n::: }");
+        }
+
+        #[test]
+        fn a_single_line_hint_is_left_alone() {
+            let hint = "\x1b[2mfoo\x1b[0m";
+            assert_eq!(
+                continue_hint_lines(hint, &DefaultPrompt::default(), true, None),
+                hint
+            );
+        }
+
+        #[test]
+        fn the_indicator_takes_the_hint_style() {
+            let hint = continue_hint_lines(
+                "\x1b[2;37mab\ncd\x1b[0m",
+                &DefaultPrompt::default(),
+                true,
+                None,
+            );
+            assert_eq!(hint, "\x1b[2;37mab\n::: cd\x1b[0m");
+        }
     }
 }

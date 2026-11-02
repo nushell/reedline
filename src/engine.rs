@@ -27,8 +27,8 @@ use {
             HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchQuery,
         },
         painting::{
-            escape_control, escape_control_keep_sgr, Painter, PainterSuspendedState, PromptLines,
-            RenderSnapshot, W,
+            continue_hint_lines, escape_control, escape_control_keep_sgr, Painter,
+            PainterSuspendedState, PromptLines, RenderSnapshot, W,
         },
         prompt::{PromptEditMode, PromptHistorySearchStatus},
         result::{ReedlineError, ReedlineErrorVariants},
@@ -3378,6 +3378,12 @@ impl Reedline {
         } else {
             String::new()
         };
+        let hint = continue_hint_lines(
+            &hint,
+            prompt,
+            use_ansi_coloring,
+            self.painter.semantic_markers(),
+        );
 
         // Needs to add return carriage to newlines because when not in raw mode
         // some OS don't fully return the carriage
@@ -8895,6 +8901,26 @@ mod tests {
             "hint not shown: {painted:?}"
         );
         assert!(!painted.contains("\x1b[8m"), "sent a conceal: {painted:?}");
+    }
+
+    /// Each line a hint continues onto starts with the multiline indicator, as
+    /// the buffer's own lines do (#530), and accepting it inserts the hint raw.
+    #[test]
+    fn a_multi_line_hint_paints_the_multiline_indicator() {
+        let mut rl = Reedline::create()
+            .with_ansi_colors(false)
+            .with_hinter(Box::new(FixedHinter("a\nb")));
+        rl.painter = Painter::new(W::capture());
+        // Sized, or the painter takes every buffer for one too tall to show.
+        rl.painter.handle_resize(40, 10);
+        rl.painter.force_prompt_anchored_for_test(0);
+        rl.run_edit_commands(&[EditCommand::InsertString("echo ".into())]);
+        rl.repaint(&DefaultPrompt::default()).unwrap();
+        let painted = String::from_utf8_lossy(rl.painter.captured_for_test()).into_owned();
+        assert!(painted.contains("a\r\n::: b"), "no indicator: {painted:?}");
+
+        send(&mut rl, ReedlineEvent::HistoryHintComplete);
+        assert_eq!(rl.current_buffer_contents(), "echo a\nb");
     }
 
     fn vi_with_hint(hint: &'static str) -> Reedline {
