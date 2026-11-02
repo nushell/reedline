@@ -16,6 +16,7 @@ struct FixedPrompt {
     indicator: &'static str,
     right: &'static str,
     right_on_last_line: bool,
+    multiline: &'static str,
 }
 
 impl FixedPrompt {
@@ -25,6 +26,11 @@ impl FixedPrompt {
             indicator,
             ..Self::default()
         }
+    }
+
+    fn with_multiline(mut self, indicator: &'static str) -> Self {
+        self.multiline = indicator;
+        self
     }
 
     fn with_right(mut self, right: &'static str, on_last_line: bool) -> Self {
@@ -48,7 +54,7 @@ impl Prompt for FixedPrompt {
     }
 
     fn render_prompt_multiline_indicator(&self) -> Cow<'_, str> {
-        "".into()
+        self.multiline.into()
     }
 
     fn render_prompt_history_search_indicator(
@@ -439,6 +445,27 @@ fn status_line_follows_the_hint_and_a_wrapped_buffer() {
         ["> abcdefgh", "ij", "status", ""]
     );
     assert_eq!(session.screen.cursor(), (0, 1));
+}
+
+// A hint running onto more lines gets the multiline indicator on each, as the
+// buffer's own lines do, and leaves the cursor where the buffer ends (#530).
+#[test]
+fn a_multi_line_hint_gets_the_multiline_indicator() {
+    let prompt = FixedPrompt::new("> ", "").with_multiline("::: ");
+    let hint = nu_ansi_term::Style::new()
+        .dimmed()
+        .paint("\n  foo: S,\n}")
+        .to_string();
+    let hint = crate::painting::continue_hint_lines(hint, &prompt, true, None);
+    let mut session = Session::new(20, 6, 0);
+
+    session.paint_with(&prompt, "struct E {", &hint, "", None);
+
+    assert_eq!(
+        session.screen.rows()[..4],
+        ["> struct E {", ":::   foo: S,", "::: }", ""]
+    );
+    assert_eq!(session.screen.cursor(), (12, 0));
 }
 
 // The rows are reserved like any others, so a prompt on the last row scrolls
