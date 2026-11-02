@@ -770,9 +770,9 @@ mod tests {
         #[case] in_location: usize,
         #[case] expected: usize,
     ) {
-        // vi-`e` on-char word-end (the old `move_word_right_end`), now resolved
-        // through `resolve_motion` with block geometry — exercising multibyte,
-        // multiline, and emoji boundaries.
+        // vi-`e` word-end under a block caret, on the word's last grapheme,
+        // resolved through `resolve_motion` across multibyte, multiline and
+        // emoji boundaries.
         let head = resolve_motion(
             input,
             in_location,

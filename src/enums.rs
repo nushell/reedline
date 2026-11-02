@@ -1,3 +1,8 @@
+// The derives on `EditCommand` (strum's `From` impls in particular) are sibling
+// items, so only a module-level allow reaches them while the deprecated
+// `MoveWordRightEnd` is still defined here.
+#![allow(deprecated)]
+
 use crate::core_editor::EditCommandStatus;
 use crate::PromptEditMode;
 use crossterm::event::{Event, KeyEvent, KeyEventKind};
@@ -422,6 +427,13 @@ pub enum EditCommand {
     },
 
     /// Move one word to the right, stop at end of word
+    ///
+    /// The same move as [`EditCommand::MoveWordRight`], which lands where the
+    /// active caret shows a word's end.
+    #[deprecated(
+        since = "0.53.0",
+        note = "use `EditCommand::MoveWordRight`, the same move"
+    )]
     MoveWordRightEnd {
         /// Select the text between the current cursor position and destination
         select: bool,
