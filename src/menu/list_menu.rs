@@ -394,8 +394,6 @@ impl Menu for ListMenu {
         }
 
         if parsed.remainder.is_empty() {
-            self.query_size = Some(completer.total_completions(parsed.remainder, pos));
-
             let skip = self
                 .pages
                 .iter()
@@ -408,7 +406,9 @@ impl Menu for ListMenu {
                 .get(self.page)
                 .map_or(self.page_size, |page| page.size);
 
-            self.values = escape_suggestions(completer.partial_complete(&input, pos, skip, take));
+            let (total, page) = completer.paged_completions(&input, pos, skip, take);
+            self.query_size = Some(total);
+            self.values = escape_suggestions(page);
         } else {
             self.query_size = None;
 
@@ -700,7 +700,7 @@ fn count_digits(mut n: usize) -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use crate::{painting::W, Span};
+    use crate::{painting::W, CompletionResult, Span};
 
     use super::*;
 
@@ -814,6 +814,37 @@ mod tests {
         );
     }
 
+    /// Counts `complete` calls, which a menu `source` closure or an external
+    /// completer feels as one evaluation each.
+    #[derive(Default)]
+    struct CountingCompleter {
+        complete_calls: usize,
+    }
+
+    impl Completer for CountingCompleter {
+        fn complete(&mut self, _line: &str, _pos: usize) -> CompletionResult {
+            self.complete_calls += 1;
+            CompletionResult::fresh(Vec::new())
+        }
+    }
+
+    /// An empty query asks the completer once per refresh, on activation and
+    /// on an edit alike (nushell/nushell#19134 ran it twice).
+    #[test]
+    fn empty_query_completes_once_per_refresh() {
+        let mut menu = ListMenu::default();
+        let mut editor = Editor::default();
+        let mut completer = CountingCompleter::default();
+
+        menu.menu_event(MenuEvent::Activate(false));
+        menu.update_values(&mut editor, &mut completer);
+        assert_eq!(completer.complete_calls, 1);
+
+        menu.menu_event(MenuEvent::Edit(false));
+        menu.update_values(&mut editor, &mut completer);
+        assert_eq!(completer.complete_calls, 2);
+    }
+
     struct FakeCompleter {
         completions: Vec<String>,
     }
@@ -839,6 +870,23 @@ mod tests {
                     .collect::<Vec<_>>(),
             )
         }
+    }
+
+    /// The deprecated defaults answer from `paged_completions`, so a completer
+    /// overriding only that still serves callers on the old methods.
+    #[test]
+    #[allow(deprecated)]
+    fn deprecated_paging_defaults_follow_paged_completions() {
+        let mut completer = FakeCompleter {
+            completions: vec!["a".into(), "b".into(), "c".into()],
+        };
+
+        assert_eq!(completer.total_completions("", 0), 3);
+        let page = completer.partial_complete("", 0, 1, 1);
+        assert_eq!(
+            page.iter().map(|s| s.value.as_str()).collect::<Vec<_>>(),
+            ["b"]
+        );
     }
 
     fn setup_menu(
