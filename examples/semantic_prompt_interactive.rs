@@ -42,7 +42,7 @@ fn main() -> io::Result<()> {
                 }
                 println!("You entered: {buffer}");
             }
-            Signal::CtrlD | Signal::CtrlC => {
+            Signal::CtrlD | Signal::CtrlC(_) => {
                 println!("\nAborted!");
                 break Ok(());
             }

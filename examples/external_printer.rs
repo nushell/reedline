@@ -47,7 +47,7 @@ fn main() {
                 Signal::Success(buffer) => {
                     println!("We processed: {buffer}");
                 }
-                Signal::CtrlD | Signal::CtrlC => {
+                Signal::CtrlD | Signal::CtrlC(_) => {
                     println!("\nAborted!");
                     break;
                 }
