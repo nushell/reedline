@@ -24,7 +24,7 @@
 //!         Ok(Signal::Success(buffer)) => {
 //!             println!("We processed: {}", buffer);
 //!         }
-//!         Ok(Signal::CtrlD) | Ok(Signal::CtrlC) => {
+//!         Ok(Signal::CtrlD) | Ok(Signal::CtrlC(_)) => {
 //!             println!("\nAborted!");
 //!             break;
 //!         }

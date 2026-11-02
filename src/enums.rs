@@ -32,8 +32,10 @@ impl From<crossterm::event::MouseButton> for MouseButton {
 pub enum Signal {
     /// Entry succeeded with the provided content
     Success(String),
-    /// Entry was aborted with `Ctrl+C`
-    CtrlC, // Interrupt current editing
+    /// Entry was aborted with `Ctrl+C`.
+    /// Contains the buffer as it was, so the host can keep or show what was
+    /// typed. Reedline itself starts the next read with an empty buffer.
+    CtrlC(String),
     /// Abort with `Ctrl+D` signalling `EOF` or abort of a whole interactive session
     CtrlD, // End terminal session
 
