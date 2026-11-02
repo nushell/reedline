@@ -218,16 +218,12 @@ impl History for FileBackedHistory {
             let mut opts = OpenOptions::new();
             opts.create(true).write(true).read(true).truncate(false);
 
-            let mut file = opts.open(fname)?;
-            // The lock only keeps concurrent sessions from interleaving. A
-            // filesystem that cannot lock, like NFS without a lock daemon,
-            // cannot give that guarantee anyway, so the history is written
-            // unlocked there instead of failing to load at all (#502).
+            let file = opts.open(fname)?;
+            // Any lock error falls through to an unlocked write (#502): a
+            // filesystem that cannot lock cannot keep sessions apart anyway.
             cfg_select! {
                 target_os = "android" => {
-                    // fd-lock's guard owns the file it locks, so lock a clone.
-                    // Both share one open file description, which `flock` locks.
-                    let mut f_lock = fd_lock::RwLock::new(file.try_clone()?);
+                    let mut f_lock = fd_lock::RwLock::new(&file);
                     let _guard = f_lock.write().ok();
                 },
                 _ => {
@@ -274,7 +270,7 @@ impl History for FileBackedHistory {
                 writer.flush()?;
             }
             if truncate {
-                let file_len = file.stream_position()?;
+                let file_len = (&file).stream_position()?;
                 file.set_len(file_len)?;
             }
 
