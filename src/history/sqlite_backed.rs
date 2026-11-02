@@ -591,11 +591,13 @@ impl SqliteBackedHistory {
     /// Search history items with typed `more_info`.
     ///
     /// Unlike [`History::search`], this method deserializes `more_info` into the concrete
-    /// type `E`. It also evaluates [`SearchFilter::more_info_json`](crate::SearchFilter::more_info_json) conditions using
+    /// type `E`. It also evaluates [`SearchFilter::more_info_json`] conditions using
     /// SQLite's `json_extract()`.
     ///
     /// Note: this method is specific to [`SqliteBackedHistory`]. The [`History`] trait
-    /// methods use [`IgnoreAllExtraInfo`] and ignore [`SearchFilter::more_info_json`](crate::SearchFilter::more_info_json).
+    /// methods use [`IgnoreAllExtraInfo`] and ignore [`SearchFilter::more_info_json`].
+    ///
+    /// [`SearchFilter::more_info_json`]: crate::SearchFilter::more_info_json
     pub fn search_with_extra<E: HistoryItemExtraInfo>(
         &self,
         query: SearchQuery,
