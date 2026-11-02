@@ -225,7 +225,7 @@ history and menus.
 - `clipboard`: Enable support to use the `SystemClipboard`. Enabling this feature will return a `SystemClipboard` instead of a local clipboard when calling `get_default_clipboard()`.
 - `bashisms`: Enable support for special text sequences that recall components from the history. e.g. `!!` and `!$`. For use in shells like `bash` or [`nushell`](https://nushell.sh).
 - `sqlite`: Provides the `SqliteBackedHistory` to store richer information in the history. Statically links the required sqlite version.
-- `sqlite-dynlib`: Alternative to the feature `sqlite`. Will not statically link. Requires `sqlite >= 3.38` to link dynamically!
+- `sqlite-dynlib`: Alternative to the feature `sqlite`. Will not statically link. Requires `sqlite >= 3.45.3` to link dynamically!
 - `external_printer`: No-op, kept for compatibility. `ExternalPrinter` is always available.
 
 ## Are we prompt yet? (Development status)
