@@ -6,8 +6,6 @@ use crate::{
     HistorySessionId, Result,
 };
 
-#[cfg(target_os = "android")]
-use std::ops::{Deref, DerefMut};
 use std::{
     collections::VecDeque,
     fs::OpenOptions,
@@ -25,6 +23,8 @@ pub const NEWLINE_ESCAPE: &str = "<\\n>";
 /// Similar to bash's behavior without HISTTIMEFORMAT.
 /// (See <https://www.gnu.org/software/bash/manual/html_node/Bash-History-Facilities.html>)
 /// If the history is associated to a file all new changes within a given history capacity will be written to disk when History is dropped.
+/// Each write takes an exclusive lock on the file so concurrent sessions do not interleave.
+/// On a filesystem that cannot lock, such as NFS without a lock daemon, the write goes ahead unlocked.
 #[derive(Debug)]
 pub struct FileBackedHistory {
     capacity: usize,
@@ -218,22 +218,25 @@ impl History for FileBackedHistory {
             let mut opts = OpenOptions::new();
             opts.create(true).write(true).read(true).truncate(false);
 
+            let mut file = opts.open(fname)?;
+            // The lock only keeps concurrent sessions from interleaving. A
+            // filesystem that cannot lock, like NFS without a lock daemon,
+            // cannot give that guarantee anyway, so the history is written
+            // unlocked there instead of failing to load at all (#502).
             cfg_select! {
                 target_os = "android" => {
-                    let mut f_lock = fd_lock::RwLock::new(opts.open(fname)?);
-                    let mut writer_guard = f_lock.write()?;
+                    // fd-lock's guard owns the file it locks, so lock a clone.
+                    // Both share one open file description, which `flock` locks.
+                    let mut f_lock = fd_lock::RwLock::new(file.try_clone()?);
+                    let _guard = f_lock.write().ok();
                 },
                 _ => {
-                    let mut file = opts.open(fname)?;
-                    file.lock()?;
+                    let _ = file.lock();
                 }
             }
 
             let (mut foreign_entries, truncate) = {
-                let reader = cfg_select! {
-                    target_os = "android" => BufReader::new(writer_guard.deref()),
-                    _ => BufReader::new(&file)
-                };
+                let reader = BufReader::new(&file);
 
                 let mut from_file = reader
                     .lines()
@@ -252,10 +255,7 @@ impl History for FileBackedHistory {
             };
 
             {
-                let mut writer = cfg_select! {
-                    target_os = "android" => BufWriter::new(writer_guard.deref_mut()),
-                    _ => BufWriter::new(&file)
-                };
+                let mut writer = BufWriter::new(&file);
 
                 if truncate {
                     writer.rewind()?;
@@ -274,8 +274,6 @@ impl History for FileBackedHistory {
                 writer.flush()?;
             }
             if truncate {
-                #[cfg(target_os = "android")]
-                let file = writer_guard.deref_mut();
                 let file_len = file.stream_position()?;
                 file.set_len(file_len)?;
             }
