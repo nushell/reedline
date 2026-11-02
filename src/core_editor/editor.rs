@@ -130,6 +130,7 @@ impl Editor {
             EditCommand::MoveBigWordRightStart { select } => {
                 self.move_big_word_right_start(*select)
             }
+            #[allow(deprecated)]
             EditCommand::MoveWordRightEnd { select } => self.move_word_right_end(*select),
             EditCommand::MoveBigWordRightEnd { select } => self.move_big_word_right_end(*select),
             EditCommand::Move(t) => {
@@ -3099,15 +3100,21 @@ mod test {
     /// #766: a word-end move follows the caret, landing behind the word under
     /// a bar and on its last grapheme under a block.
     #[rstest]
-    #[case::insert_word(PromptViMode::Insert, EditCommand::MoveWordRightEnd { select: false }, 12)]
-    #[case::insert_big_word(PromptViMode::Insert, EditCommand::MoveBigWordRightEnd { select: false }, 16)]
-    #[case::normal_word(PromptViMode::Normal, EditCommand::MoveWordRightEnd { select: false }, 11)]
-    #[case::normal_big_word(PromptViMode::Normal, EditCommand::MoveBigWordRightEnd { select: false }, 15)]
+    #[case::insert_word(PromptViMode::Insert, false, 12)]
+    #[case::insert_big_word(PromptViMode::Insert, true, 16)]
+    #[case::normal_word(PromptViMode::Normal, false, 11)]
+    #[case::normal_big_word(PromptViMode::Normal, true, 15)]
     fn word_right_end_follows_the_caret(
         #[case] mode: PromptViMode,
-        #[case] command: EditCommand,
+        #[case] big: bool,
         #[case] expected: usize,
     ) {
+        #[allow(deprecated)] // `MoveWordRightEnd` keeps working until it is removed
+        let command = if big {
+            EditCommand::MoveBigWordRightEnd { select: false }
+        } else {
+            EditCommand::MoveWordRightEnd { select: false }
+        };
         let mut editor = vi_editor("this is some/cmd", mode);
         editor.run_edit_command(&EditCommand::MoveToPosition {
             position: 8, // on 's' of "some"
@@ -3118,6 +3125,7 @@ mod test {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn visual_move_word_right_end_select_covers_last_grapheme() {
         // #9: a selecting word-end motion must cover the word's last grapheme
         // (inclusive block geometry), not stop one grapheme short.
@@ -5829,6 +5837,7 @@ mod test {
     /// across a sweep of positions — catching the position-dependent skips that
     /// the hand-picked single-position tests above missed.
     #[test]
+    #[allow(deprecated)] // still pins `MoveWordRightEnd` until it is removed
     fn word_commands_match_legacy_spec_at_every_position() {
         let buffers = [
             "foo bar baz",
