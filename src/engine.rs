@@ -81,6 +81,15 @@ const EVENTS_THRESHOLD: usize = 10;
 /// idle callback).
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
+/// Where history navigation leaves the cursor in the entry it shows.
+#[derive(Debug, Clone, Copy)]
+enum HistoryLanding {
+    /// End of the first line, so the next Up keeps walking history.
+    FirstLineEnd,
+    /// End of the buffer, so the next Down keeps walking history.
+    End,
+}
+
 /// Determines if inputs should be used to extend the regular line buffer,
 /// traverse the history in the standard prompt or edit the search string in the
 /// reverse search
@@ -2513,15 +2522,26 @@ impl Reedline {
             // On `Err` the next press retries on the fresh cursor; no rollback.
             self.history_cursor.back(self.history.as_ref())?;
         }
+        self.show_history_entry(HistoryLanding::FirstLineEnd);
+        Ok(())
+    }
+
+    /// Puts the history cursor's entry (or the draft past the newest one) in
+    /// the buffer, with the cursor where `landing` says.
+    fn show_history_entry(&mut self, landing: HistoryLanding) {
         self.update_buffer_from_history();
-        self.editor.move_to_start(false);
-        self.editor.move_to_line_end(false);
+        match landing {
+            HistoryLanding::FirstLineEnd => {
+                self.editor.move_to_start(false);
+                self.editor.move_to_line_end(false);
+            }
+            HistoryLanding::End => self.editor.move_to_end(false),
+        }
         // History navigation positions the cursor outside the command path, so
         // settle it under the rest policy (vi-normal must not rest past the line).
         self.editor.commit_cursor();
         self.editor
             .update_undo_state(UndoBehavior::HistoryNavigation);
-        Ok(())
     }
 
     fn first_history(&mut self) -> io::Result<EventStatus> {
@@ -2537,13 +2557,7 @@ impl Reedline {
 
         self.input_mode = InputMode::HistoryTraversal;
         self.history_last_run.set_recalled(false);
-        self.update_buffer_from_history();
-        self.editor.move_to_start(false);
-        self.editor.move_to_line_end(false);
-        // See `previous_history`: settle the out-of-band cursor under the policy.
-        self.editor.commit_cursor();
-        self.editor
-            .update_undo_state(UndoBehavior::HistoryNavigation);
+        self.show_history_entry(HistoryLanding::FirstLineEnd);
         Ok(EventStatus::Handled)
     }
 
@@ -2555,12 +2569,7 @@ impl Reedline {
         self.history_cursor.past_newest();
         self.history_last_run.set_recalled(false);
         self.input_mode = InputMode::Regular;
-        self.update_buffer_from_history();
-        self.editor.move_to_end(false);
-        // See `previous_history`: settle the out-of-band cursor under the policy.
-        self.editor.commit_cursor();
-        self.editor
-            .update_undo_state(UndoBehavior::HistoryNavigation);
+        self.show_history_entry(HistoryLanding::End);
         EventStatus::Handled
     }
 
@@ -2591,12 +2600,7 @@ impl Reedline {
         {
             self.input_mode = InputMode::Regular;
         }
-        self.update_buffer_from_history();
-        self.editor.move_to_end(false);
-        // See `previous_history`: settle the out-of-band cursor under the policy.
-        self.editor.commit_cursor();
-        self.editor
-            .update_undo_state(UndoBehavior::HistoryNavigation);
+        self.show_history_entry(HistoryLanding::End);
         Ok(())
     }
 

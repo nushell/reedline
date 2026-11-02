@@ -43,13 +43,8 @@ impl HistoryCursor {
     /// on a history without a match is a no-op.
     pub fn jump_to_oldest(&mut self, history: &dyn History) -> Result<bool> {
         let mut oldest = history.search(SearchQuery {
-            start_id: None,
-            end_id: None,
-            start_time: None,
-            end_time: None,
             direction: SearchDirection::Forward,
-            limit: Some(1),
-            filter: self.get_query_filter(),
+            ..SearchQuery::last_with_search(self.get_query_filter())
         })?;
         let Some(oldest) = oldest.pop() else {
             return Ok(false);
@@ -62,9 +57,8 @@ impl HistoryCursor {
     }
 
     /// Moves the cursor past the newest entry, where the navigation started.
-    /// Returns whether the cursor was on an entry.
-    pub fn past_newest(&mut self) -> bool {
-        self.current.take().is_some()
+    pub fn past_newest(&mut self) {
+        self.current = None;
     }
 
     fn get_query_filter(&self) -> SearchFilter {
@@ -305,9 +299,9 @@ mod tests {
         let (mut hist, mut cursor) = create_history();
         add_text_entries(hist.as_mut(), &["one", "two"]);
 
-        assert!(!cursor.past_newest());
         cursor.back(&*hist)?;
-        assert!(cursor.past_newest());
+        assert_eq!(cursor.string_at_cursor(), Some("two".to_string()));
+        cursor.past_newest();
         assert_eq!(cursor.string_at_cursor(), None);
         Ok(())
     }
