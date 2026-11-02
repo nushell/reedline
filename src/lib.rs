@@ -280,10 +280,10 @@ pub use auto_pairs::{AutoPairAction, AutoPairContext, AutoPairs};
 
 mod enums;
 pub use enums::{
-    Direction, EditCommand, EditCommandDiscriminants, FindStop, Granularity, MotionTarget,
-    MouseButton, ReedlineEvent, ReedlineEventDiscriminants, ReedlineRawEvent, Signal, TextObject,
-    TextObjectBracket, TextObjectQuote, TextObjectScope, TextObjectType, UndoBehavior, WordEdge,
-    WordKind,
+    Direction, EditCommand, EditCommandDiscriminants, EventStatus, FindStop, Granularity,
+    MotionTarget, MouseButton, ReedlineEvent, ReedlineEventDiscriminants, ReedlineRawEvent, Signal,
+    TextObject, TextObjectBracket, TextObjectQuote, TextObjectScope, TextObjectType, UndoBehavior,
+    WordEdge, WordKind,
 };
 
 mod painting;
