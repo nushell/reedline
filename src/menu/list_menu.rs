@@ -406,8 +406,6 @@ impl Menu for ListMenu {
                 .get(self.page)
                 .map_or(self.page_size, |page| page.size);
 
-            // One completer request for both the total and the page; asking
-            // separately evaluated `complete` twice on an empty query.
             let (total, page) = completer.paged_completions(&input, pos, skip, take);
             self.query_size = Some(total);
             self.values = escape_suggestions(page);
@@ -816,8 +814,8 @@ mod tests {
         );
     }
 
-    /// Counts every `Completer` method the menu drives, like a menu `source`
-    /// closure or an external completer would feel it.
+    /// Counts `complete` calls, which a menu `source` closure or an external
+    /// completer feels as one evaluation each.
     #[derive(Default)]
     struct CountingCompleter {
         complete_calls: usize,
@@ -830,35 +828,20 @@ mod tests {
         }
     }
 
-    fn counting_setup() -> (ListMenu, Editor, CountingCompleter) {
-        let menu = ListMenu::default();
-        let editor = Editor::default();
-        (menu, editor, CountingCompleter::default())
-    }
-
-    /// Regression test for the empty-query double `complete()` from
-    /// nushell/nushell#19134: opening the menu ran the completer twice.
+    /// An empty query asks the completer once per refresh, on activation and
+    /// on an edit alike (nushell/nushell#19134 ran it twice).
     #[test]
-    fn empty_query_completes_once_on_activate() {
-        let (mut menu, mut editor, mut completer) = counting_setup();
+    fn empty_query_completes_once_per_refresh() {
+        let mut menu = ListMenu::default();
+        let mut editor = Editor::default();
+        let mut completer = CountingCompleter::default();
 
         menu.menu_event(MenuEvent::Activate(false));
         menu.update_values(&mut editor, &mut completer);
-
         assert_eq!(completer.complete_calls, 1);
-    }
-
-    /// Same contract when the query is cleared back to empty by an edit.
-    #[test]
-    fn empty_query_completes_once_when_cleared() {
-        let (mut menu, mut editor, mut completer) = counting_setup();
-
-        menu.menu_event(MenuEvent::Activate(false));
-        menu.update_values(&mut editor, &mut completer);
 
         menu.menu_event(MenuEvent::Edit(false));
         menu.update_values(&mut editor, &mut completer);
-
         assert_eq!(completer.complete_calls, 2);
     }
 
@@ -887,6 +870,23 @@ mod tests {
                     .collect::<Vec<_>>(),
             )
         }
+    }
+
+    /// The deprecated defaults answer from `paged_completions`, so a completer
+    /// overriding only that still serves callers on the old methods.
+    #[test]
+    #[allow(deprecated)]
+    fn deprecated_paging_defaults_follow_paged_completions() {
+        let mut completer = FakeCompleter {
+            completions: vec!["a".into(), "b".into(), "c".into()],
+        };
+
+        assert_eq!(completer.total_completions("", 0), 3);
+        let page = completer.partial_complete("", 0, 1, 1);
+        assert_eq!(
+            page.iter().map(|s| s.value.as_str()).collect::<Vec<_>>(),
+            ["b"]
+        );
     }
 
     fn setup_menu(

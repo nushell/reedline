@@ -216,19 +216,13 @@ pub trait Completer {
         start: usize,
         offset: usize,
     ) -> Suggestions {
-        self.complete(line, pos)
-            .suggestions()
-            .iter()
-            .skip(start)
-            .take(offset)
-            .cloned()
-            .collect()
+        self.paged_completions(line, pos, start, offset).1
     }
 
     /// number of available completions
     #[deprecated(note = "no menu calls this anymore, override `paged_completions` instead")]
     fn total_completions(&mut self, line: &str, pos: usize) -> usize {
-        self.complete(line, pos).suggestions().len()
+        self.paged_completions(line, pos, 0, 0).0
     }
 
     /// Total number of completions and a page of them, in one request.
@@ -245,17 +239,17 @@ pub trait Completer {
         line: &str,
         pos: usize,
         start: usize,
-        offset: usize,
+        count: usize,
     ) -> (usize, Suggestions) {
-        let suggestions = self.complete(line, pos).into_shared().unwrap_or_default();
-        let total = suggestions.len();
+        let result = self.complete(line, pos);
+        let suggestions = result.suggestions();
         let page = suggestions
             .iter()
             .skip(start)
-            .take(offset)
+            .take(count)
             .cloned()
             .collect();
-        (total, page)
+        (suggestions.len(), page)
     }
 
     /// Poll the completer's background work.
