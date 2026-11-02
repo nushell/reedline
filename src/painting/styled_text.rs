@@ -184,17 +184,19 @@ fn format_continuation(
 /// at the newline, so it is drawn like the hint and marks those rows as not
 /// typed yet, rather than in the prompt's multiline color.
 pub(crate) fn continue_hint_lines(
-    hint: &str,
+    hint: String,
     prompt: &dyn Prompt,
     use_ansi_coloring: bool,
     semantic_markers: Option<&dyn SemanticPromptMarkers>,
 ) -> String {
     if !hint.contains('\n') {
-        return hint.to_owned();
+        return hint;
     }
 
+    // Stripped, since a reset in a styled indicator would end the hint's style
+    // for the rest of the row.
     let continuation = format_continuation(
-        &prompt.render_prompt_multiline_indicator(),
+        &strip_ansi(&prompt.render_prompt_multiline_indicator()),
         semantic_markers,
     );
     // Without coloring the buffer drops its markers too, see
@@ -661,8 +663,12 @@ mod test {
 
         #[test]
         fn each_hint_line_gets_the_indicator() {
-            let hint =
-                continue_hint_lines("\n  foo: S,\n}", &DefaultPrompt::default(), false, None);
+            let hint = continue_hint_lines(
+                "\n  foo: S,\n}".into(),
+                &DefaultPrompt::default(),
+                false,
+                None,
+            );
             assert_eq!(hint, "\n:::   foo: S,\n::: }");
         }
 
@@ -670,7 +676,7 @@ mod test {
         fn a_single_line_hint_is_left_alone() {
             let hint = "\x1b[2mfoo\x1b[0m";
             assert_eq!(
-                continue_hint_lines(hint, &DefaultPrompt::default(), true, None),
+                continue_hint_lines(hint.into(), &DefaultPrompt::default(), true, None),
                 hint
             );
         }
@@ -678,12 +684,47 @@ mod test {
         #[test]
         fn the_indicator_takes_the_hint_style() {
             let hint = continue_hint_lines(
-                "\x1b[2;37mab\ncd\x1b[0m",
+                "\x1b[2;37mab\ncd\x1b[0m".into(),
                 &DefaultPrompt::default(),
                 true,
                 None,
             );
             assert_eq!(hint, "\x1b[2;37mab\n::: cd\x1b[0m");
+        }
+
+        /// A prompt whose multiline indicator carries its own SGR, as a nushell
+        /// user can configure.
+        struct StyledIndicator;
+
+        impl crate::Prompt for StyledIndicator {
+            fn render_prompt_left(&self) -> std::borrow::Cow<'_, str> {
+                "".into()
+            }
+            fn render_prompt_right(&self) -> std::borrow::Cow<'_, str> {
+                "".into()
+            }
+            fn render_prompt_indicator(
+                &self,
+                _: crate::PromptEditMode,
+            ) -> std::borrow::Cow<'_, str> {
+                "".into()
+            }
+            fn render_prompt_multiline_indicator(&self) -> std::borrow::Cow<'_, str> {
+                "\x1b[31m::: \x1b[0m".into()
+            }
+            fn render_prompt_history_search_indicator(
+                &self,
+                _: crate::PromptHistorySearch,
+            ) -> std::borrow::Cow<'_, str> {
+                "".into()
+            }
+        }
+
+        #[test]
+        fn a_styled_indicator_does_not_end_the_hint_style() {
+            let hint =
+                continue_hint_lines("\x1b[2mab\ncd\x1b[0m".into(), &StyledIndicator, true, None);
+            assert_eq!(hint, "\x1b[2mab\n::: cd\x1b[0m");
         }
     }
 }

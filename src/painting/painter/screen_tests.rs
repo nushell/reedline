@@ -456,7 +456,7 @@ fn a_multi_line_hint_gets_the_multiline_indicator() {
         .dimmed()
         .paint("\n  foo: S,\n}")
         .to_string();
-    let hint = crate::painting::continue_hint_lines(&hint, &prompt, true, None);
+    let hint = crate::painting::continue_hint_lines(hint, &prompt, true, None);
     let mut session = Session::new(20, 6, 0);
 
     session.paint_with(&prompt, "struct E {", &hint, "", None);

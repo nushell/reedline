@@ -3354,6 +3354,12 @@ impl Reedline {
                 } else {
                     escape_control(&hint).into_owned()
                 };
+                let hint = continue_hint_lines(
+                    hint,
+                    prompt,
+                    use_ansi_coloring,
+                    self.painter.semantic_markers(),
+                );
                 let Some(closers) = trailing_closers.as_deref() else {
                     return hint;
                 };
@@ -3378,12 +3384,6 @@ impl Reedline {
         } else {
             String::new()
         };
-        let hint = continue_hint_lines(
-            &hint,
-            prompt,
-            use_ansi_coloring,
-            self.painter.semantic_markers(),
-        );
 
         // Needs to add return carriage to newlines because when not in raw mode
         // some OS don't fully return the carriage
