@@ -225,7 +225,7 @@ fn main() -> reedline::Result<()> {
                         .expect("todo: error handling");
                 }
             }
-            Ok(Signal::CtrlC) => {
+            Ok(Signal::CtrlC(_)) => {
                 // Prompt has been cleared and should start on the next line
             }
             Ok(_) => {}

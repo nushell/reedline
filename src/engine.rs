@@ -27,8 +27,8 @@ use {
             HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchQuery,
         },
         painting::{
-            escape_control, escape_control_keep_sgr, Painter, PainterSuspendedState, PromptLines,
-            RenderSnapshot, W,
+            continue_hint_lines, escape_control, escape_control_keep_sgr, Painter,
+            PainterSuspendedState, PromptLines, RenderSnapshot, W,
         },
         prompt::{PromptEditMode, PromptHistorySearchStatus},
         result::{ReedlineError, ReedlineErrorVariants},
@@ -539,7 +539,8 @@ fn is_pasted_newline(event: &Event) -> bool {
 }
 
 impl Reedline {
-    /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file.
+    /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file:
+    /// a [`FileBackedHistory`] without a file, kept in memory only.
     #[must_use]
     pub fn create() -> Self {
         let history = Box::<FileBackedHistory>::default();
@@ -925,6 +926,9 @@ impl Reedline {
     }
 
     /// A builder which configures the history for your instance of the Reedline engine
+    ///
+    /// To keep no history, pass a [`FileBackedHistory`] without a file and with a capacity
+    /// of 0, `FileBackedHistory::new(0)`, which saves nothing.
     /// # Example
     /// ```rust,no_run
     /// // Create a reedline object with history support, including history size limits
@@ -1857,7 +1861,12 @@ impl Reedline {
             }
             ReedlineEvent::CtrlC => {
                 self.input_mode = InputMode::Regular;
-                Ok(EventStatus::Exits(Signal::CtrlC))
+                // The line from before the search, not the search query. It is
+                // abandoned like any other, so the next read starts empty.
+                let buffer = self.editor.get_buffer().to_string();
+                self.run_edit_commands(&[EditCommand::Clear]);
+                self.editor.reset_undo_stack();
+                Ok(EventStatus::Exits(Signal::CtrlC(buffer)))
             }
             ReedlineEvent::ClearScreen => {
                 self.painter.clear_screen()?;
@@ -2092,9 +2101,17 @@ impl Reedline {
             ReedlineEvent::HistoryHintComplete => Ok(self.accept_history_hint(true)),
             ReedlineEvent::HistoryHintWordComplete => Ok(self.accept_history_hint(false)),
             ReedlineEvent::Esc => {
+                // Nothing to cancel is reported as such, so a binding like
+                // `UntilFound([Esc, ExecuteHostCommand(..)])` can fall through.
+                let had_menu = self.active_menu().is_some();
+                let had_selection = self.editor.cursor_is_a_selection();
                 self.deactivate_menus();
                 self.editor.clear_selection();
-                Ok(EventStatus::Handled)
+                Ok(if had_menu || had_selection {
+                    EventStatus::Handled
+                } else {
+                    EventStatus::Inapplicable
+                })
             }
             ReedlineEvent::CtrlD => {
                 if self.editor.is_empty() {
@@ -2107,9 +2124,10 @@ impl Reedline {
             }
             ReedlineEvent::CtrlC => {
                 self.deactivate_menus();
+                let buffer = self.editor.get_buffer().to_string();
                 self.run_edit_commands(&[EditCommand::Clear]);
                 self.editor.reset_undo_stack();
-                Ok(EventStatus::Exits(Signal::CtrlC))
+                Ok(EventStatus::Exits(Signal::CtrlC(buffer)))
             }
             ReedlineEvent::ClearScreen => {
                 self.deactivate_menus();
@@ -3402,6 +3420,12 @@ impl Reedline {
                 } else {
                     escape_control(&hint).into_owned()
                 };
+                let hint = continue_hint_lines(
+                    hint,
+                    prompt,
+                    use_ansi_coloring,
+                    self.painter.semantic_markers(),
+                );
                 let Some(closers) = trailing_closers.as_deref() else {
                     return hint;
                 };
@@ -5674,7 +5698,7 @@ mod tests {
         let signal = drive_until_signal(&mut rl, keys).expect("the read exits");
         let name = match signal {
             Signal::HostCommand(_) => "HostCommand",
-            Signal::CtrlC => "CtrlC",
+            Signal::CtrlC(_) => "CtrlC",
             Signal::Success(ref s) if s.is_empty() => "Success",
             ref other => panic!("unexpected {other:?}"),
         };
@@ -5816,7 +5840,7 @@ mod tests {
     // show the cursor itself. The re-anchor stands in for the clear, whose
     // `terminal::size()` needs a tty.
     #[rstest]
-    #[case::ctrl_c('c', "CtrlC")]
+    #[case::ctrl_c('c', r#"CtrlC("")"#)]
     #[case::ctrl_d('d', "CtrlD")]
     fn exit_before_the_next_paint_shows_the_cursor(#[case] key: char, #[case] expected: &str) {
         let mut rl = Reedline::create();
@@ -8748,7 +8772,7 @@ mod tests {
         if with_selection {
             assert!(matches!(status, EventStatus::Handled));
         } else {
-            assert!(matches!(status, EventStatus::Exits(Signal::CtrlC)));
+            assert!(matches!(status, EventStatus::Exits(Signal::CtrlC(_))));
         }
     }
 
@@ -8829,6 +8853,39 @@ mod tests {
         reedline
             .handle_event(&DefaultPrompt::default(), event)
             .unwrap()
+    }
+
+    #[test]
+    fn ctrl_c_hands_back_the_buffer_and_clears_it() {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[EditCommand::InsertString("half typed".into())]);
+
+        let status = send(&mut reedline, ReedlineEvent::CtrlC);
+
+        let EventStatus::Exits(Signal::CtrlC(buffer)) = status else {
+            panic!("Ctrl+C did not exit with CtrlC");
+        };
+        assert_eq!(buffer, "half typed");
+        assert_eq!(reedline.current_buffer_contents(), "");
+    }
+
+    #[test]
+    fn ctrl_c_in_history_search_hands_back_the_line_not_the_query() {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[EditCommand::InsertString("the line".into())]);
+        send(&mut reedline, ReedlineEvent::SearchHistory);
+        send(
+            &mut reedline,
+            ReedlineEvent::Edit(vec![EditCommand::InsertChar('q')]),
+        );
+
+        let status = send(&mut reedline, ReedlineEvent::CtrlC);
+
+        let EventStatus::Exits(Signal::CtrlC(buffer)) = status else {
+            panic!("Ctrl+C did not exit with CtrlC");
+        };
+        assert_eq!(buffer, "the line");
+        assert_eq!(reedline.current_buffer_contents(), "");
     }
 
     /// Engine with a completion menu opened over "th" by a completer that has no
@@ -8987,6 +9044,63 @@ mod tests {
         assert_eq!(reedline.current_buffer_contents(), "th ");
     }
 
+    #[test]
+    fn esc_closing_a_menu_is_handled() {
+        let mut reedline = engine_with_active_menu(true, false);
+
+        let status = send(&mut reedline, ReedlineEvent::Esc);
+
+        assert!(matches!(status, EventStatus::Handled));
+        assert!(!menu_is_active(&reedline));
+    }
+
+    #[test]
+    fn esc_clearing_a_selection_is_handled() {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[
+            EditCommand::InsertString(String::from("th")),
+            EditCommand::SelectAll,
+        ]);
+
+        let status = send(&mut reedline, ReedlineEvent::Esc);
+
+        assert!(matches!(status, EventStatus::Handled));
+        assert_eq!(reedline.current_selection(), None);
+    }
+
+    #[test]
+    fn esc_with_nothing_to_cancel_is_inapplicable() {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("th"))]);
+
+        let status = send(&mut reedline, ReedlineEvent::Esc);
+
+        assert!(matches!(status, EventStatus::Inapplicable));
+        assert_eq!(reedline.current_buffer_contents(), "th");
+    }
+
+    /// Esc can fall back to a custom action: it closes an open menu, and only
+    /// with nothing to cancel does the chain move on to the next event.
+    #[test]
+    fn esc_under_until_found_yields_to_the_next_event_only_when_inapplicable() {
+        let esc_binding = || {
+            ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::Esc,
+                ReedlineEvent::Edit(vec![EditCommand::Clear]),
+            ])
+        };
+
+        let mut reedline = engine_with_active_menu(true, false);
+        send(&mut reedline, esc_binding());
+        assert!(!menu_is_active(&reedline));
+        assert_eq!(reedline.current_buffer_contents(), "th");
+
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("th"))]);
+        send(&mut reedline, esc_binding());
+        assert_eq!(reedline.current_buffer_contents(), "");
+    }
+
     /// A hinter that always offers a fixed suggestion, so the completion flow can
     /// be driven without the paint cycle that normally refreshes the hint.
     struct FixedHinter(&'static str);
@@ -9042,6 +9156,26 @@ mod tests {
             "hint not shown: {painted:?}"
         );
         assert!(!painted.contains("\x1b[8m"), "sent a conceal: {painted:?}");
+    }
+
+    /// Each line a hint continues onto starts with the multiline indicator, as
+    /// the buffer's own lines do (#530), and accepting it inserts the hint raw.
+    #[test]
+    fn a_multi_line_hint_paints_the_multiline_indicator() {
+        let mut rl = Reedline::create()
+            .with_ansi_colors(false)
+            .with_hinter(Box::new(FixedHinter("a\nb")));
+        rl.painter = Painter::new(W::capture());
+        // Sized, or the painter takes every buffer for one too tall to show.
+        rl.painter.handle_resize(40, 10);
+        rl.painter.force_prompt_anchored_for_test(0);
+        rl.run_edit_commands(&[EditCommand::InsertString("echo ".into())]);
+        rl.repaint(&DefaultPrompt::default()).unwrap();
+        let painted = String::from_utf8_lossy(rl.painter.captured_for_test()).into_owned();
+        assert!(painted.contains("a\r\n::: b"), "no indicator: {painted:?}");
+
+        send(&mut rl, ReedlineEvent::HistoryHintComplete);
+        assert_eq!(rl.current_buffer_contents(), "echo a\nb");
     }
 
     fn vi_with_hint(hint: &'static str) -> Reedline {

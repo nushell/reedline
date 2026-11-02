@@ -130,18 +130,17 @@ mod tests {
 
     use pretty_assertions::assert_eq;
 
+    use rstest::rstest;
+
+    use crate::history::TestBackend;
     use crate::LineBuffer;
 
     use super::super::*;
     use super::*;
 
-    fn create_history() -> (Box<dyn History>, HistoryCursor) {
-        #[cfg(feature = "_sqlite")]
-        let hist = Box::new(SqliteBackedHistory::in_memory().unwrap());
-        #[cfg(not(feature = "_sqlite"))]
-        let hist = Box::<FileBackedHistory>::default();
+    fn create_history(backend: TestBackend) -> (Box<dyn History>, HistoryCursor) {
         (
-            hist,
+            backend.in_memory(),
             HistoryCursor::new(HistoryNavigationQuery::Normal(LineBuffer::default()), None),
         )
     }
@@ -167,32 +166,44 @@ mod tests {
         });
     }
 
-    #[test]
-    fn accessing_empty_history_returns_nothing() -> Result<()> {
-        let (_hist, cursor) = create_history();
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn accessing_empty_history_returns_nothing(#[case] backend: TestBackend) -> Result<()> {
+        let (_hist, cursor) = create_history(backend);
         assert_eq!(cursor.string_at_cursor(), None);
         Ok(())
     }
 
-    #[test]
-    fn going_forward_in_empty_history_does_not_error_out() -> Result<()> {
-        let (hist, mut cursor) = create_history();
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn going_forward_in_empty_history_does_not_error_out(
+        #[case] backend: TestBackend,
+    ) -> Result<()> {
+        let (hist, mut cursor) = create_history(backend);
         cursor.forward(&*hist)?;
         assert_eq!(cursor.string_at_cursor(), None);
         Ok(())
     }
 
-    #[test]
-    fn going_backwards_in_empty_history_does_not_error_out() -> Result<()> {
-        let (hist, mut cursor) = create_history();
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn going_backwards_in_empty_history_does_not_error_out(
+        #[case] backend: TestBackend,
+    ) -> Result<()> {
+        let (hist, mut cursor) = create_history(backend);
         cursor.back(&*hist)?;
         assert_eq!(cursor.string_at_cursor(), None);
         Ok(())
     }
 
-    #[test]
-    fn going_backwards_bottoms_out() -> Result<()> {
-        let (mut hist, mut cursor) = create_history();
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn going_backwards_bottoms_out(#[case] backend: TestBackend) -> Result<()> {
+        let (mut hist, mut cursor) = create_history(backend);
         hist.save(HistoryItem::from_command_line("command1"))?;
         hist.save(HistoryItem::from_command_line("command2"))?;
         cursor.back(&*hist)?;
@@ -204,9 +215,11 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn going_forwards_bottoms_out() -> Result<()> {
-        let (mut hist, mut cursor) = create_history();
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn going_forwards_bottoms_out(#[case] backend: TestBackend) -> Result<()> {
+        let (mut hist, mut cursor) = create_history(backend);
         hist.save(HistoryItem::from_command_line("command1"))?;
         hist.save(HistoryItem::from_command_line("command2"))?;
         cursor.forward(&*hist)?;
@@ -218,10 +231,10 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(feature = "_sqlite"))]
+    /// Only the file-backed history drops consecutive duplicates.
     #[test]
     fn appends_only_unique() -> Result<()> {
-        let (mut hist, _) = create_history();
+        let (mut hist, _) = create_history(TestBackend::File);
         hist.save(HistoryItem::from_command_line("unique_old"))?;
         hist.save(HistoryItem::from_command_line("test"))?;
         hist.save(HistoryItem::from_command_line("test"))?;
@@ -230,9 +243,11 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn prefix_search_works() -> Result<()> {
-        let (mut hist, _) = create_history();
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn prefix_search_works(#[case] backend: TestBackend) -> Result<()> {
+        let (mut hist, _) = create_history(backend);
         hist.save(HistoryItem::from_command_line("find me as well"))?;
         hist.save(HistoryItem::from_command_line("test"))?;
         hist.save(HistoryItem::from_command_line("find me"))?;
@@ -252,9 +267,11 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn to_oldest_jumps_and_then_stays() -> Result<()> {
-        let (mut hist, mut cursor) = create_history();
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn to_oldest_jumps_and_then_stays(#[case] backend: TestBackend) -> Result<()> {
+        let (mut hist, mut cursor) = create_history(backend);
         add_text_entries(hist.as_mut(), &["one", "two", "one"]);
 
         assert!(cursor.jump_to_oldest(&*hist)?);
@@ -266,9 +283,11 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn to_oldest_honors_the_prefix() -> Result<()> {
-        let (mut hist, _) = create_history();
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn to_oldest_honors_the_prefix(#[case] backend: TestBackend) -> Result<()> {
+        let (mut hist, _) = create_history(backend);
         add_text_entries(hist.as_mut(), &["test", "find me first", "find me"]);
 
         let mut cursor = HistoryCursor::new(
@@ -280,9 +299,11 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn to_oldest_without_a_match_stays() -> Result<()> {
-        let (mut hist, _) = create_history();
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn to_oldest_without_a_match_stays(#[case] backend: TestBackend) -> Result<()> {
+        let (mut hist, _) = create_history(backend);
         add_text_entries(hist.as_mut(), &["test"]);
 
         let mut cursor = HistoryCursor::new(
@@ -294,9 +315,11 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn past_newest_leaves_the_entries() -> Result<()> {
-        let (mut hist, mut cursor) = create_history();
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn past_newest_leaves_the_entries(#[case] backend: TestBackend) -> Result<()> {
+        let (mut hist, mut cursor) = create_history(backend);
         add_text_entries(hist.as_mut(), &["one", "two"]);
 
         cursor.back(&*hist)?;
@@ -306,9 +329,11 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn prefix_search_bottoms_out() -> Result<()> {
-        let (mut hist, _) = create_history();
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn prefix_search_bottoms_out(#[case] backend: TestBackend) -> Result<()> {
+        let (mut hist, _) = create_history(backend);
         hist.save(HistoryItem::from_command_line("find me as well"))?;
         hist.save(HistoryItem::from_command_line("test"))?;
         hist.save(HistoryItem::from_command_line("find me"))?;
@@ -334,9 +359,11 @@ mod tests {
         );
         Ok(())
     }
-    #[test]
-    fn prefix_search_returns_to_none() -> Result<()> {
-        let (mut hist, _) = create_history();
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn prefix_search_returns_to_none(#[case] backend: TestBackend) -> Result<()> {
+        let (mut hist, _) = create_history(backend);
         hist.save(HistoryItem::from_command_line("find me as well"))?;
         hist.save(HistoryItem::from_command_line("test"))?;
         hist.save(HistoryItem::from_command_line("find me"))?;
@@ -361,9 +388,13 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn prefix_search_ignores_consecutive_equivalent_entries_going_backwards() -> Result<()> {
-        let (mut hist, _) = create_history();
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn prefix_search_ignores_consecutive_equivalent_entries_going_backwards(
+        #[case] backend: TestBackend,
+    ) -> Result<()> {
+        let (mut hist, _) = create_history(backend);
         hist.save(HistoryItem::from_command_line("find me as well"))?;
         hist.save(HistoryItem::from_command_line("find me once"))?;
         hist.save(HistoryItem::from_command_line("test"))?;
@@ -383,9 +414,13 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn prefix_search_ignores_consecutive_equivalent_entries_going_forwards() -> Result<()> {
-        let (mut hist, _) = create_history();
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn prefix_search_ignores_consecutive_equivalent_entries_going_forwards(
+        #[case] backend: TestBackend,
+    ) -> Result<()> {
+        let (mut hist, _) = create_history(backend);
         hist.save(HistoryItem::from_command_line("find me once"))?;
         hist.save(HistoryItem::from_command_line("test"))?;
         hist.save(HistoryItem::from_command_line("find me once"))?;
@@ -413,9 +448,11 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn substring_search_works() -> Result<()> {
-        let (mut hist, _) = create_history();
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn substring_search_works(#[case] backend: TestBackend) -> Result<()> {
+        let (mut hist, _) = create_history(backend);
         hist.save(HistoryItem::from_command_line("substring"))?;
         hist.save(HistoryItem::from_command_line("don't find me either"))?;
         hist.save(HistoryItem::from_command_line("prefix substring"))?;
@@ -441,9 +478,11 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn substring_search_with_empty_value_returns_none() -> Result<()> {
-        let (mut hist, _) = create_history();
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn substring_search_with_empty_value_returns_none(#[case] backend: TestBackend) -> Result<()> {
+        let (mut hist, _) = create_history(backend);
         hist.save(HistoryItem::from_command_line("substring"))?;
 
         let cursor = HistoryCursor::new(
@@ -509,7 +548,6 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(feature = "_sqlite"))]
     #[test]
     fn truncates_file_to_capacity() -> Result<()> {
         use tempfile::tempdir;

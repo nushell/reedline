@@ -506,7 +506,7 @@ impl Painter {
     /// Height of the current terminal window.
     ///
     /// A lower bound on the real height, not a reading: the reported size,
-    /// raised to fit rows measured by [`Painter::measure_cursor_position`].
+    /// raised to fit rows measured by `Painter::measure_cursor_position`.
     pub fn screen_height(&self) -> u16 {
         self.terminal_size.1
     }
