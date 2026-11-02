@@ -1848,8 +1848,11 @@ impl Reedline {
             }
             ReedlineEvent::CtrlC => {
                 self.input_mode = InputMode::Regular;
-                // The line from before the search, not the search query.
+                // The line from before the search, not the search query. It is
+                // abandoned like any other, so the next read starts empty.
                 let buffer = self.editor.get_buffer().to_string();
+                self.run_edit_commands(&[EditCommand::Clear]);
+                self.editor.reset_undo_stack();
                 Ok(EventStatus::Exits(Signal::CtrlC(buffer)))
             }
             ReedlineEvent::ClearScreen => {
@@ -8717,6 +8720,7 @@ mod tests {
             panic!("Ctrl+C did not exit with CtrlC");
         };
         assert_eq!(buffer, "the line");
+        assert_eq!(reedline.current_buffer_contents(), "");
     }
 
     /// Engine with a completion menu opened over "th" by a completer that has no
