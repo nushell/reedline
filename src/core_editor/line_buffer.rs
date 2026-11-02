@@ -21,7 +21,7 @@ use {
 /// external-editor (`edit-command-line`) round-trip, and completer-supplied text
 /// can all introduce `\r` (e.g. a `\r\n` from a Windows editor). Line, word, and
 /// cursor logic therefore treats `\r`/`\r\n` as a terminator throughout (see
-/// [`core_editor::line`], [`word`], and the rest policies). Do not drop those
+/// the `line` and `word` modules and the rest policies). Do not drop those
 /// guards on the assumption that the buffer is CR-free.
 #[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub struct LineBuffer {
@@ -524,7 +524,7 @@ impl LineBuffer {
     }
 
     /// Range over the current line (the one the cursor head is on). See
-    /// [`line_range_at`](Self::line_range_at).
+    /// `line_range_at`.
     pub fn current_line_range(&self) -> Range<usize> {
         self.line_range_at(self.cursor.head())
     }

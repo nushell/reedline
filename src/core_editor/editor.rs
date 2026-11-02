@@ -583,7 +583,7 @@ impl Editor {
     /// Adopt `mode`'s rest policy *without* committing the cursor.
     ///
     /// Called at the parse seam, before the events a mode transition emitted
-    /// are run, so those commands resolve under the new [`RestPolicy`] (e.g.
+    /// are run, so those commands resolve under the new `RestPolicy` (e.g.
     /// the Esc→normal grapheme step-back reads `OnGrapheme`). The cursor is
     /// deliberately left where insert mode put it: the emitted commands move
     /// and commit it under the new policy, and any no-command transition is
