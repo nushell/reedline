@@ -319,6 +319,8 @@ impl FileBackedHistory {
     /// History file format: commands separated by new lines.
     /// If file exists file will be read otherwise empty file will be created.
     ///
+    /// Loading trims the file to `capacity` entries, so a capacity of 0 empties an
+    /// existing file. To keep no history, use [`FileBackedHistory::new`] instead.
     ///
     /// **Side effects:** creates all nested directories to the file
     ///
