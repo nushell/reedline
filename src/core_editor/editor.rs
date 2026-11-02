@@ -130,8 +130,9 @@ impl Editor {
             EditCommand::MoveBigWordRightStart { select } => {
                 self.move_big_word_right_start(*select)
             }
+            // Deprecated alias: the same word-end target as `MoveWordRight` (#766).
             #[allow(deprecated)]
-            EditCommand::MoveWordRightEnd { select } => self.move_word_right_end(*select),
+            EditCommand::MoveWordRightEnd { select } => self.move_word_right(*select),
             EditCommand::MoveBigWordRightEnd { select } => self.move_big_word_right_end(*select),
             EditCommand::Move(t) => {
                 let head = self.resolve_head(*t);
@@ -1503,15 +1504,6 @@ impl Editor {
     fn move_big_word_right_start(&mut self, select: bool) {
         self.apply_move(
             word_target(WordKind::LongWord, WordEdge::Start, Direction::Forward),
-            select,
-        );
-    }
-
-    fn move_word_right_end(&mut self, select: bool) {
-        // The same target as `move_word_right`: the resolver lands on the last
-        // grapheme under a block caret and behind it under a bar (#766).
-        self.apply_move(
-            word_target(WordKind::Unicode, WordEdge::End, Direction::Forward),
             select,
         );
     }
