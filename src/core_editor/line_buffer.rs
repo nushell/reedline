@@ -529,34 +529,38 @@ impl LineBuffer {
         self.line_range_at(self.cursor.head())
     }
 
+    /// Replaces the whole word under the cursor with `change` of it and moves
+    /// the insertion point past it.
+    fn map_current_word(&mut self, change: impl FnOnce(&str) -> String) {
+        let change_range = self.current_word_range();
+        let changed = change(&self.get_buffer()[change_range.clone()]);
+        self.replace_range(change_range, &changed);
+        self.set_head(self.word_boundary(WordKind::Unicode, WordEdge::End, Direction::Forward));
+    }
+
     /// Uppercases the current word
     pub fn uppercase_word(&mut self) {
-        let change_range = self.current_word_range();
-        let uppercased = self.get_buffer()[change_range.clone()].to_uppercase();
-        self.replace_range(change_range, &uppercased);
-        self.set_head(self.word_boundary(WordKind::Unicode, WordEdge::End, Direction::Forward));
+        self.map_current_word(str::to_uppercase);
     }
 
     /// Lowercases the current word
     pub fn lowercase_word(&mut self) {
-        let change_range = self.current_word_range();
-        let uppercased = self.get_buffer()[change_range.clone()].to_lowercase();
-        self.replace_range(change_range, &uppercased);
-        self.set_head(self.word_boundary(WordKind::Unicode, WordEdge::End, Direction::Forward));
+        self.map_current_word(str::to_lowercase);
     }
 
     /// Capitalizes the current word: upper cases its first character and
     /// lower cases the rest. Like [`Self::uppercase_word`] it acts on the
     /// whole word under the cursor and moves the insertion point past it.
     pub fn capitalize_word(&mut self) {
-        let change_range = self.current_word_range();
-        let mut chars = self.get_buffer()[change_range.clone()].chars();
-        if let Some(first) = chars.next() {
-            let mut capitalized = first.to_uppercase().collect::<String>();
-            capitalized.push_str(&chars.as_str().to_lowercase());
-            self.replace_range(change_range, &capitalized);
-        }
-        self.set_head(self.word_boundary(WordKind::Unicode, WordEdge::End, Direction::Forward));
+        self.map_current_word(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                Some(first) => {
+                    first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
+                }
+                None => String::new(),
+            }
+        });
     }
 
     /// Switches the ASCII case of the current char
