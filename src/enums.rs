@@ -1178,7 +1178,7 @@ pub enum ReedlineEvent {
 
     /// Leave the history for the buffer that was being edited before the
     /// navigation started. Inapplicable when not navigating the history.
-    LastHistory,
+    LeaveHistory,
 
     /// Search the history for a string
     SearchHistory,

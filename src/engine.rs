@@ -1929,7 +1929,7 @@ impl Reedline {
             | ReedlineEvent::ToStart
             | ReedlineEvent::ToEnd
             | ReedlineEvent::FirstHistory
-            | ReedlineEvent::LastHistory
+            | ReedlineEvent::LeaveHistory
             | ReedlineEvent::Multiple(_)
             | ReedlineEvent::None
             | ReedlineEvent::HistoryHintWordComplete
@@ -2299,7 +2299,7 @@ impl Reedline {
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::FirstHistory => self.first_history(),
-            ReedlineEvent::LastHistory => Ok(self.last_history()),
+            ReedlineEvent::LeaveHistory => Ok(self.leave_history()),
             ReedlineEvent::Up => self.up_command(),
             ReedlineEvent::Down => self.down_command(),
             ReedlineEvent::Left | ReedlineEvent::Right => {
@@ -2561,7 +2561,7 @@ impl Reedline {
         Ok(EventStatus::Handled)
     }
 
-    fn last_history(&mut self) -> EventStatus {
+    fn leave_history(&mut self) -> EventStatus {
         if self.input_mode != InputMode::HistoryTraversal {
             return EventStatus::Inapplicable;
         }
@@ -8617,7 +8617,7 @@ mod tests {
     }
 
     #[test]
-    fn first_history_honors_the_typed_prefix_and_last_history_restores_it() {
+    fn first_history_honors_the_typed_prefix_and_leave_history_restores_it() {
         let mut reedline = history_jump_engine();
         reedline.run_edit_commands(&[EditCommand::InsertString("git".into())]);
 
@@ -8625,18 +8625,18 @@ mod tests {
         assert_eq!(reedline.current_buffer_contents(), "git status");
 
         assert!(matches!(
-            send(&mut reedline, ReedlineEvent::LastHistory),
+            send(&mut reedline, ReedlineEvent::LeaveHistory),
             EventStatus::Handled
         ));
         assert_eq!(reedline.current_buffer_contents(), "git");
         assert!(matches!(
-            send(&mut reedline, ReedlineEvent::LastHistory),
+            send(&mut reedline, ReedlineEvent::LeaveHistory),
             EventStatus::Inapplicable
         ));
     }
 
     #[test]
-    fn last_history_restores_the_draft_after_walking_back() {
+    fn leave_history_restores_the_draft_after_walking_back() {
         let mut reedline = history_jump_engine();
         reedline.run_edit_commands(&[
             EditCommand::InsertString("draft".into()),
@@ -8647,7 +8647,7 @@ mod tests {
         send(&mut reedline, ReedlineEvent::PreviousHistory);
         assert_eq!(reedline.current_buffer_contents(), "ls");
 
-        send(&mut reedline, ReedlineEvent::LastHistory);
+        send(&mut reedline, ReedlineEvent::LeaveHistory);
         assert_eq!(reedline.current_buffer_contents(), "draft");
     }
 
@@ -8680,7 +8680,7 @@ mod tests {
         ));
         assert_eq!(reedline.current_buffer_contents(), "zzz");
         assert!(matches!(
-            send(&mut reedline, ReedlineEvent::LastHistory),
+            send(&mut reedline, ReedlineEvent::LeaveHistory),
             EventStatus::Inapplicable
         ));
     }

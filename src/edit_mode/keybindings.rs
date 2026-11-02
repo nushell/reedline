@@ -142,7 +142,7 @@ pub fn add_common_navigation_bindings(kb: &mut Keybindings) {
         KC::PageDown,
         ReedlineEvent::UntilFound(vec![
             ReedlineEvent::MenuPageNext,
-            ReedlineEvent::LastHistory,
+            ReedlineEvent::LeaveHistory,
         ]),
     );
     kb.add_binding(
