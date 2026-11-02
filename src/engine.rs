@@ -81,6 +81,15 @@ const EVENTS_THRESHOLD: usize = 10;
 /// idle callback).
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
+/// Where history navigation leaves the cursor in the entry it shows.
+#[derive(Debug, Clone, Copy)]
+enum HistoryLanding {
+    /// End of the first line, so the next Up keeps walking history.
+    FirstLineEnd,
+    /// End of the buffer, so the next Down keeps walking history.
+    End,
+}
+
 /// Determines if inputs should be used to extend the regular line buffer,
 /// traverse the history in the standard prompt or edit the search string in the
 /// reverse search
@@ -1928,6 +1937,8 @@ impl Reedline {
             | ReedlineEvent::Left
             | ReedlineEvent::ToStart
             | ReedlineEvent::ToEnd
+            | ReedlineEvent::FirstHistory
+            | ReedlineEvent::LeaveHistory
             | ReedlineEvent::Multiple(_)
             | ReedlineEvent::None
             | ReedlineEvent::HistoryHintWordComplete
@@ -2305,6 +2316,8 @@ impl Reedline {
                 self.next_history()?;
                 Ok(EventStatus::Handled)
             }
+            ReedlineEvent::FirstHistory => self.first_history(),
+            ReedlineEvent::LeaveHistory => Ok(self.leave_history()),
             ReedlineEvent::Up => self.up_command(),
             ReedlineEvent::Down => self.down_command(),
             ReedlineEvent::Left | ReedlineEvent::Right => {
@@ -2527,15 +2540,55 @@ impl Reedline {
             // On `Err` the next press retries on the fresh cursor; no rollback.
             self.history_cursor.back(self.history.as_ref())?;
         }
+        self.show_history_entry(HistoryLanding::FirstLineEnd);
+        Ok(())
+    }
+
+    /// Puts the history cursor's entry (or the draft past the newest one) in
+    /// the buffer, with the cursor where `landing` says.
+    fn show_history_entry(&mut self, landing: HistoryLanding) {
         self.update_buffer_from_history();
-        self.editor.move_to_start(false);
-        self.editor.move_to_line_end(false);
+        match landing {
+            HistoryLanding::FirstLineEnd => {
+                self.editor.move_to_start(false);
+                self.editor.move_to_line_end(false);
+            }
+            HistoryLanding::End => self.editor.move_to_end(false),
+        }
         // History navigation positions the cursor outside the command path, so
         // settle it under the rest policy (vi-normal must not rest past the line).
         self.editor.commit_cursor();
         self.editor
             .update_undo_state(UndoBehavior::HistoryNavigation);
-        Ok(())
+    }
+
+    fn first_history(&mut self) -> io::Result<EventStatus> {
+        if self.input_mode != InputMode::HistoryTraversal {
+            self.history_cursor = HistoryCursor::new(
+                self.get_history_navigation_based_on_line_buffer(),
+                self.get_history_session_id(),
+            );
+        }
+        if !self.history_cursor.jump_to_oldest(self.history.as_ref())? {
+            return Ok(EventStatus::Inapplicable);
+        }
+
+        self.input_mode = InputMode::HistoryTraversal;
+        self.history_last_run.set_recalled(false);
+        self.show_history_entry(HistoryLanding::FirstLineEnd);
+        Ok(EventStatus::Handled)
+    }
+
+    fn leave_history(&mut self) -> EventStatus {
+        if self.input_mode != InputMode::HistoryTraversal {
+            return EventStatus::Inapplicable;
+        }
+
+        self.history_cursor.past_newest();
+        self.history_last_run.set_recalled(false);
+        self.input_mode = InputMode::Regular;
+        self.show_history_entry(HistoryLanding::End);
+        EventStatus::Handled
     }
 
     fn next_history(&mut self) -> io::Result<()> {
@@ -2565,12 +2618,7 @@ impl Reedline {
         {
             self.input_mode = InputMode::Regular;
         }
-        self.update_buffer_from_history();
-        self.editor.move_to_end(false);
-        // See `previous_history`: settle the out-of-band cursor under the policy.
-        self.editor.commit_cursor();
-        self.editor
-            .update_undo_state(UndoBehavior::HistoryNavigation);
+        self.show_history_entry(HistoryLanding::End);
         Ok(())
     }
 
@@ -8560,6 +8608,105 @@ mod tests {
                 assert_eq!(reedline.current_buffer_contents(), buffer);
             }
         }
+    }
+
+    fn history_jump_engine() -> Reedline {
+        let mut reedline = Reedline::create();
+        for entry in ["echo hi", "git status", "ls", "git log"] {
+            reedline
+                .history
+                .save(HistoryItem::from_command_line(entry))
+                .unwrap();
+        }
+        reedline
+    }
+
+    #[test]
+    fn first_history_jumps_to_the_oldest_entry() {
+        let mut reedline = history_jump_engine();
+
+        assert!(matches!(
+            send(&mut reedline, ReedlineEvent::FirstHistory),
+            EventStatus::Handled
+        ));
+        assert_eq!(reedline.current_buffer_contents(), "echo hi");
+        assert!(matches!(
+            send(&mut reedline, ReedlineEvent::FirstHistory),
+            EventStatus::Inapplicable
+        ));
+        assert_eq!(reedline.current_buffer_contents(), "echo hi");
+
+        send(&mut reedline, ReedlineEvent::NextHistory);
+        assert_eq!(reedline.current_buffer_contents(), "git status");
+    }
+
+    #[test]
+    fn first_history_honors_the_typed_prefix_and_leave_history_restores_it() {
+        let mut reedline = history_jump_engine();
+        reedline.run_edit_commands(&[EditCommand::InsertString("git".into())]);
+
+        send(&mut reedline, ReedlineEvent::FirstHistory);
+        assert_eq!(reedline.current_buffer_contents(), "git status");
+
+        assert!(matches!(
+            send(&mut reedline, ReedlineEvent::LeaveHistory),
+            EventStatus::Handled
+        ));
+        assert_eq!(reedline.current_buffer_contents(), "git");
+        assert!(matches!(
+            send(&mut reedline, ReedlineEvent::LeaveHistory),
+            EventStatus::Inapplicable
+        ));
+    }
+
+    #[test]
+    fn leave_history_restores_the_draft_after_walking_back() {
+        let mut reedline = history_jump_engine();
+        reedline.run_edit_commands(&[
+            EditCommand::InsertString("draft".into()),
+            EditCommand::MoveToStart { select: false },
+        ]);
+
+        send(&mut reedline, ReedlineEvent::PreviousHistory);
+        send(&mut reedline, ReedlineEvent::PreviousHistory);
+        assert_eq!(reedline.current_buffer_contents(), "ls");
+
+        send(&mut reedline, ReedlineEvent::LeaveHistory);
+        assert_eq!(reedline.current_buffer_contents(), "draft");
+    }
+
+    #[test]
+    fn page_keys_jump_through_history_without_a_menu() {
+        let keybindings = crate::default_emacs_keybindings();
+        let page_up = keybindings
+            .find_binding(KeyModifiers::NONE, KeyCode::PageUp)
+            .unwrap();
+        let page_down = keybindings
+            .find_binding(KeyModifiers::NONE, KeyCode::PageDown)
+            .unwrap();
+        let mut reedline = history_jump_engine();
+        reedline.run_edit_commands(&[EditCommand::InsertString("git".into())]);
+
+        send(&mut reedline, page_up);
+        assert_eq!(reedline.current_buffer_contents(), "git status");
+        send(&mut reedline, page_down);
+        assert_eq!(reedline.current_buffer_contents(), "git");
+    }
+
+    #[test]
+    fn first_history_without_a_match_leaves_the_line_alone() {
+        let mut reedline = history_jump_engine();
+        reedline.run_edit_commands(&[EditCommand::InsertString("zzz".into())]);
+
+        assert!(matches!(
+            send(&mut reedline, ReedlineEvent::FirstHistory),
+            EventStatus::Inapplicable
+        ));
+        assert_eq!(reedline.current_buffer_contents(), "zzz");
+        assert!(matches!(
+            send(&mut reedline, ReedlineEvent::LeaveHistory),
+            EventStatus::Inapplicable
+        ));
     }
 
     #[test]

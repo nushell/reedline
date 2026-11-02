@@ -38,8 +38,31 @@ impl HistoryCursor {
         self.navigate_in_direction(history, SearchDirection::Forward)
     }
 
-    fn get_search_filter(&self) -> SearchFilter {
-        let filter = match self.query.clone() {
+    /// Moves the cursor to the oldest entry the navigation query matches.
+    /// Returns whether the cursor moved, so a jump from the oldest entry or
+    /// on a history without a match is a no-op.
+    pub fn jump_to_oldest(&mut self, history: &dyn History) -> Result<bool> {
+        let mut oldest = history.search(SearchQuery {
+            direction: SearchDirection::Forward,
+            ..SearchQuery::last_with_search(self.get_query_filter())
+        })?;
+        let Some(oldest) = oldest.pop() else {
+            return Ok(false);
+        };
+        if self.current.as_ref().map(|e| e.id) == Some(oldest.id) {
+            return Ok(false);
+        }
+        self.current = Some(oldest);
+        Ok(true)
+    }
+
+    /// Moves the cursor past the newest entry, where the navigation started.
+    pub fn past_newest(&mut self) {
+        self.current = None;
+    }
+
+    fn get_query_filter(&self) -> SearchFilter {
+        match self.query.clone() {
             HistoryNavigationQuery::Normal(_) => SearchFilter::anything(self.session),
             HistoryNavigationQuery::PrefixSearch(prefix) => {
                 SearchFilter::from_text_search(CommandLineSearch::Prefix(prefix), self.session)
@@ -48,7 +71,11 @@ impl HistoryCursor {
                 CommandLineSearch::Substring(substring),
                 self.session,
             ),
-        };
+        }
+    }
+
+    fn get_search_filter(&self) -> SearchFilter {
+        let filter = self.get_query_filter();
         if let (true, Some(current)) = (self.skip_dupes, &self.current) {
             SearchFilter {
                 not_command_line: Some(current.command_line.clone()),
@@ -237,6 +264,68 @@ mod tests {
             cursor.string_at_cursor(),
             Some("find me as well".to_string())
         );
+        Ok(())
+    }
+
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn to_oldest_jumps_and_then_stays(#[case] backend: TestBackend) -> Result<()> {
+        let (mut hist, mut cursor) = create_history(backend);
+        add_text_entries(hist.as_mut(), &["one", "two", "one"]);
+
+        assert!(cursor.jump_to_oldest(&*hist)?);
+        assert_eq!(cursor.string_at_cursor(), Some("one".to_string()));
+        assert!(!cursor.jump_to_oldest(&*hist)?);
+
+        cursor.forward(&*hist)?;
+        assert_eq!(cursor.string_at_cursor(), Some("two".to_string()));
+        Ok(())
+    }
+
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn to_oldest_honors_the_prefix(#[case] backend: TestBackend) -> Result<()> {
+        let (mut hist, _) = create_history(backend);
+        add_text_entries(hist.as_mut(), &["test", "find me first", "find me"]);
+
+        let mut cursor = HistoryCursor::new(
+            HistoryNavigationQuery::PrefixSearch("find".to_string()),
+            None,
+        );
+        assert!(cursor.jump_to_oldest(&*hist)?);
+        assert_eq!(cursor.string_at_cursor(), Some("find me first".to_string()));
+        Ok(())
+    }
+
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn to_oldest_without_a_match_stays(#[case] backend: TestBackend) -> Result<()> {
+        let (mut hist, _) = create_history(backend);
+        add_text_entries(hist.as_mut(), &["test"]);
+
+        let mut cursor = HistoryCursor::new(
+            HistoryNavigationQuery::PrefixSearch("find".to_string()),
+            None,
+        );
+        assert!(!cursor.jump_to_oldest(&*hist)?);
+        assert_eq!(cursor.string_at_cursor(), None);
+        Ok(())
+    }
+
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn past_newest_leaves_the_entries(#[case] backend: TestBackend) -> Result<()> {
+        let (mut hist, mut cursor) = create_history(backend);
+        add_text_entries(hist.as_mut(), &["one", "two"]);
+
+        cursor.back(&*hist)?;
+        assert_eq!(cursor.string_at_cursor(), Some("two".to_string()));
+        cursor.past_newest();
+        assert_eq!(cursor.string_at_cursor(), None);
         Ok(())
     }
 
