@@ -133,7 +133,12 @@ Reedline's default when no edit mode is configured. All four
 | `Ctrl-g` | Redo |
 | `Alt-u` | Uppercase the whole word under the cursor |
 | `Alt-l` | Lowercase the whole word under the cursor |
-| `Alt-c` | Capitalize the grapheme under the cursor |
+| `Alt-c` | Capitalize the whole word under the cursor |
+
+`Alt-u`, `Alt-l` and `Alt-c` act on the whole word even with the cursor in the
+middle of it or right after it. Emacs and readline change case from the cursor
+forward instead, so on `hELLO` with the cursor on `E` they give `hEllo` where
+reedline gives `Hello`.
 
 ## Vi mode
 
