@@ -83,7 +83,7 @@ pub struct SearchFilter {
     /// or string `"true"`).
     ///
     /// Rows where `more_info` is SQL `NULL` or the JSON path does not exist will not match.
-    /// Only evaluated by [`crate::SqliteBackedHistory`] typed search methods
+    /// Only evaluated by the typed search methods of `SqliteBackedHistory` (`sqlite` feature)
     /// (`search_with_extra`); the non-typed [`History`] trait methods and
     /// [`crate::FileBackedHistory`] ignore this field.
     pub more_info_json: Option<Vec<(String, JsonFilterValue)>>,
