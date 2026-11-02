@@ -40,6 +40,16 @@ impl TestBackend {
         }
     }
 
+    /// The id a backend gives its first entry: file-backed ids are indices
+    /// from 0, sqlite rowids start at 1.
+    pub(crate) fn first_id(self) -> i64 {
+        match self {
+            Self::File => 0,
+            #[cfg(feature = "_sqlite")]
+            Self::Sqlite => 1,
+        }
+    }
+
     pub(crate) fn in_dir(self, dir: &std::path::Path) -> Box<dyn History> {
         match self {
             Self::File => {

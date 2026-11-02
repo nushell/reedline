@@ -268,8 +268,8 @@ mod test {
     use super::*;
     fn create_filled_example_history(backend: TestBackend) -> Result<Box<dyn History>> {
         let mut history = backend.in_memory();
-        if backend == TestBackend::File {
-            // File-backed ids are indices from 0, sqlite ones start at 1.
+        if backend.first_id() == 0 {
+            // A dummy at id 0, so the numbered ids below hold for every backend.
             history.save(create_item(1, "/", "dummy", 0))?;
         }
         history.save(create_item(1, "/home/me", "cd ~/Downloads", 0))?; // 1
@@ -328,9 +328,8 @@ mod test {
     #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
     fn count_all(#[case] backend: TestBackend) -> Result<()> {
         let history = create_filled_example_history(backend)?;
-        let with_dummy = backend == TestBackend::File;
-
-        assert_eq!(history.count_all()?, if with_dummy { 13 } else { 12 });
+        // Twelve entries, plus the dummy on a backend counting from 0.
+        assert_eq!(history.count_all()?, 13 - backend.first_id());
         Ok(())
     }
 
@@ -354,8 +353,7 @@ mod test {
             limit: Some(1),
             ..SearchQuery::everything(SearchDirection::Forward, None)
         })?;
-        let first_id = if backend == TestBackend::File { 0 } else { 1 };
-        search_returned(&*history, res, vec![first_id])?;
+        search_returned(&*history, res, vec![backend.first_id()])?;
         Ok(())
     }
 
