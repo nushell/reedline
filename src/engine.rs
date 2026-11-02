@@ -531,6 +531,8 @@ fn is_pasted_newline(event: &Event) -> bool {
 
 impl Reedline {
     /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file.
+    ///
+    /// That history is a [`FileBackedHistory`] without a file, so it lives in memory only.
     #[must_use]
     pub fn create() -> Self {
         let history = Box::<FileBackedHistory>::default();
@@ -916,6 +918,9 @@ impl Reedline {
     }
 
     /// A builder which configures the history for your instance of the Reedline engine
+    ///
+    /// To keep no history at all, pass a [`FileBackedHistory`] with a capacity of 0,
+    /// `Box::new(FileBackedHistory::new(0)?)`, which saves nothing.
     /// # Example
     /// ```rust,no_run
     /// // Create a reedline object with history support, including history size limits

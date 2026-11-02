@@ -297,6 +297,7 @@ impl History for FileBackedHistory {
 impl FileBackedHistory {
     /// Creates a new in-memory history that remembers `n <= capacity` elements
     ///
+    /// A capacity of 0 remembers nothing, which disables history.
     pub fn new(capacity: usize) -> Result<Self> {
         if capacity == usize::MAX {
             return Err(ReedlineError(ReedlineErrorVariants::OtherHistoryError(
