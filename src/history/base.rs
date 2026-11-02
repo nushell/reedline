@@ -245,11 +245,9 @@ pub trait History: Send {
 
 #[cfg(test)]
 mod test {
-    #[cfg(feature = "_sqlite")]
-    const IS_FILE_BASED: bool = false;
-    #[cfg(not(feature = "_sqlite"))]
-    const IS_FILE_BASED: bool = true;
+    use rstest::rstest;
 
+    use crate::history::TestBackend;
     use crate::HistorySessionId;
 
     fn create_item(session: i64, cwd: &str, cmd: &str, exit_status: i64) -> HistoryItem {
@@ -268,13 +266,12 @@ mod test {
     use std::time::Duration;
 
     use super::*;
-    fn create_filled_example_history() -> Result<Box<dyn History>> {
-        #[cfg(feature = "_sqlite")]
-        let mut history = crate::SqliteBackedHistory::in_memory()?;
-        #[cfg(not(feature = "_sqlite"))]
-        let mut history = crate::FileBackedHistory::default();
-        #[cfg(not(feature = "_sqlite"))]
-        history.save(create_item(1, "/", "dummy", 0))?; // add dummy item so ids start with 1
+    fn create_filled_example_history(backend: TestBackend) -> Result<Box<dyn History>> {
+        let mut history = backend.in_memory();
+        if backend.first_id() == 0 {
+            // A dummy at id 0, so the numbered ids below hold for every backend.
+            history.save(create_item(1, "/", "dummy", 0))?;
+        }
         history.save(create_item(1, "/home/me", "cd ~/Downloads", 0))?; // 1
         history.save(create_item(1, "/home/me/Downloads", "unzp foo.zip", 1))?; // 2
         history.save(create_item(1, "/home/me/Downloads", "unzip foo.zip", 0))?; // 3
@@ -288,13 +285,14 @@ mod test {
         history.save(create_item(1, "/etc/nginx", "vim nginx.conf", 0))?; // 10
         history.save(create_item(1, "/etc/nginx", "vim htpasswd", 0))?; // 11
         history.save(create_item(1, "/etc/nginx", "cat nginx.conf", 0))?; // 12
-        Ok(Box::new(history))
+        Ok(history)
     }
 
+    /// File-backed history cannot update entries.
     #[cfg(feature = "_sqlite")]
     #[test]
     fn update_item() -> Result<()> {
-        let mut history = create_filled_example_history()?;
+        let mut history = create_filled_example_history(TestBackend::Sqlite)?;
         let id = HistoryItemId::new(2);
         let before = history.load(id)?;
         history.update(id, &|mut e| {
@@ -325,41 +323,45 @@ mod test {
         Ok(())
     }
 
-    #[test]
-    fn count_all() -> Result<()> {
-        let history = create_filled_example_history()?;
-        println!(
-            "{:#?}",
-            history.search(SearchQuery::everything(SearchDirection::Forward, None))
-        );
-
-        assert_eq!(history.count_all()?, if IS_FILE_BASED { 13 } else { 12 });
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn count_all(#[case] backend: TestBackend) -> Result<()> {
+        let history = create_filled_example_history(backend)?;
+        // Twelve entries, plus the dummy on a backend counting from 0.
+        assert_eq!(history.count_all()?, 13 - backend.first_id());
         Ok(())
     }
 
-    #[test]
-    fn get_latest() -> Result<()> {
-        let history = create_filled_example_history()?;
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn get_latest(#[case] backend: TestBackend) -> Result<()> {
+        let history = create_filled_example_history(backend)?;
         let res = history.search(SearchQuery::last_with_search(SearchFilter::anything(None)))?;
 
         search_returned(&*history, res, vec![12])?;
         Ok(())
     }
 
-    #[test]
-    fn get_earliest() -> Result<()> {
-        let history = create_filled_example_history()?;
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn get_earliest(#[case] backend: TestBackend) -> Result<()> {
+        let history = create_filled_example_history(backend)?;
         let res = history.search(SearchQuery {
             limit: Some(1),
             ..SearchQuery::everything(SearchDirection::Forward, None)
         })?;
-        search_returned(&*history, res, vec![if IS_FILE_BASED { 0 } else { 1 }])?;
+        search_returned(&*history, res, vec![backend.first_id()])?;
         Ok(())
     }
 
-    #[test]
-    fn search_prefix() -> Result<()> {
-        let history = create_filled_example_history()?;
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn search_prefix(#[case] backend: TestBackend) -> Result<()> {
+        let history = create_filled_example_history(backend)?;
         let res = history.search(SearchQuery {
             filter: SearchFilter::from_text_search(
                 CommandLineSearch::Prefix("ls ".to_string()),
@@ -372,12 +374,14 @@ mod test {
         Ok(())
     }
 
-    #[test]
-    fn search_prefix_is_case_sensitive() -> Result<()> {
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn search_prefix_is_case_sensitive(#[case] backend: TestBackend) -> Result<()> {
         // Basic prefix search should preserve case
         //
         // https://github.com/nushell/nushell/issues/10131
-        let history = create_filled_example_history()?;
+        let history = create_filled_example_history(backend)?;
         let res = history.search(SearchQuery {
             filter: SearchFilter::from_text_search(
                 CommandLineSearch::Prefix("LS ".to_string()),
@@ -390,9 +394,11 @@ mod test {
         Ok(())
     }
 
-    #[test]
-    fn search_includes() -> Result<()> {
-        let history = create_filled_example_history()?;
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn search_includes(#[case] backend: TestBackend) -> Result<()> {
+        let history = create_filled_example_history(backend)?;
         let res = history.search(SearchQuery {
             filter: SearchFilter::from_text_search(
                 CommandLineSearch::Substring("foo.zip".to_string()),
@@ -404,9 +410,11 @@ mod test {
         Ok(())
     }
 
-    #[test]
-    fn search_includes_limit() -> Result<()> {
-        let history = create_filled_example_history()?;
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn search_includes_limit(#[case] backend: TestBackend) -> Result<()> {
+        let history = create_filled_example_history(backend)?;
         let res = history.search(SearchQuery {
             filter: SearchFilter::from_text_search(
                 CommandLineSearch::Substring("c".to_string()),
@@ -420,9 +428,11 @@ mod test {
         Ok(())
     }
 
-    #[test]
-    fn clear_history() -> Result<()> {
-        let mut history = create_filled_example_history()?;
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn clear_history(#[case] backend: TestBackend) -> Result<()> {
+        let mut history = create_filled_example_history(backend)?;
         assert_ne!(history.count_all()?, 0);
         history.clear().unwrap();
         assert_eq!(history.count_all()?, 0);
@@ -431,22 +441,12 @@ mod test {
     }
 
     // test that clear() works as expected across multiple instances of History
-    #[test]
-    fn clear_history_with_backing_file() -> Result<()> {
-        #[cfg(feature = "_sqlite")]
-        fn open_history() -> Box<dyn History> {
-            Box::new(
-                crate::SqliteBackedHistory::with_file("target/test-history.db".into(), None, None)
-                    .unwrap(),
-            )
-        }
-
-        #[cfg(not(feature = "_sqlite"))]
-        fn open_history() -> Box<dyn History> {
-            Box::new(
-                crate::FileBackedHistory::with_file(100, "target/test-history.txt".into()).unwrap(),
-            )
-        }
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn clear_history_with_backing_file(#[case] backend: TestBackend) -> Result<()> {
+        let tmp = tempfile::tempdir().unwrap();
+        let open_history = || backend.in_dir(tmp.path());
 
         // create history, add a few entries
         let mut history = open_history();
@@ -469,7 +469,6 @@ mod test {
         Ok(())
     }
 
-    #[cfg(not(feature = "_sqlite"))]
     #[test]
     fn history_size_zero() -> Result<()> {
         let mut history = crate::FileBackedHistory::new(0)?;
