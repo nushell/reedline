@@ -1013,10 +1013,22 @@ impl Reedline {
         self
     }
 
-    /// A builder that appends a menu to the engine
+    /// A builder that adds a menu to the engine
+    ///
+    /// Menus are looked up by name (see [`ReedlineEvent::Menu`]), so a menu
+    /// whose name is already taken replaces that menu, keeping its place in
+    /// the order. The last menu added under a name wins, the same as for a
+    /// key bound twice in [`crate::Keybindings`].
     #[must_use]
     pub fn with_menu(mut self, menu: ReedlineMenu) -> Self {
-        self.menus.push(menu);
+        match self
+            .menus
+            .iter_mut()
+            .find(|existing| existing.name() == menu.name())
+        {
+            Some(existing) => *existing = menu,
+            None => self.menus.push(menu),
+        }
         self
     }
 
@@ -4982,6 +4994,45 @@ mod tests {
         assert_eq!(rl.editor.get_buffer(), "car");
         apply_menu_paint_cycle(&mut rl);
         assert_eq!(active_menu_values(&rl), 1, "narrowed to \"carpet\"");
+    }
+
+    /// Menus are found by name, so adding a second menu under a taken name
+    /// replaces the first (in its place) instead of hiding behind it.
+    #[test]
+    fn with_menu_replaces_a_menu_of_the_same_name() {
+        let menu = |name: &str, marker: &str| {
+            ReedlineMenu::EngineCompleter(Box::new(
+                ColumnarMenu::default().with_name(name).with_marker(marker),
+            ))
+        };
+        let mut rl = Reedline::create()
+            .with_completer(Box::new(DefaultCompleter::new_with_wordlen(
+                vec![String::from("carpet")],
+                1,
+            )))
+            .with_menu(menu("completion_menu", "first> "))
+            .with_menu(menu("history_menu", "history> "))
+            .with_menu(menu("completion_menu", "second> "));
+
+        let names: Vec<&str> = rl.menus.iter().map(|menu| menu.name()).collect();
+        assert_eq!(
+            names,
+            ["completion_menu", "history_menu"],
+            "the replacement keeps the original's place"
+        );
+
+        rl.run_edit_commands(&[EditCommand::InsertString(String::from("ca"))]);
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::Menu(String::from("completion_menu")),
+        )
+        .expect("menu opens");
+        let opened = rl
+            .menus
+            .iter()
+            .find(|menu| menu.is_active())
+            .expect("a menu is open");
+        assert_eq!(opened.indicator(), "second> ", "the later menu answers");
     }
 
     #[test]
