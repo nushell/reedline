@@ -440,32 +440,65 @@ mod test {
         Ok(())
     }
 
-    // test that clear() works as expected across multiple instances of History
-    #[rstest]
-    #[case::file(TestBackend::File)]
-    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
-    fn clear_history_with_backing_file(#[case] backend: TestBackend) -> Result<()> {
-        let tmp = tempfile::tempdir().unwrap();
-        let open_history = || backend.in_dir(tmp.path());
-
+    fn clear_history_test(
+        open_history: fn(usize) -> Box<dyn History>,
+        check_max: bool,
+    ) -> Result<()> {
         // create history, add a few entries
-        let mut history = open_history();
+        let mut history = open_history(4);
         history.save(create_item(1, "/home/me", "cd ~/Downloads", 0))?; // 1
         history.save(create_item(1, "/home/me/Downloads", "unzp foo.zip", 1))?; // 2
         assert_eq!(history.count_all()?, 2);
         drop(history);
 
+        // open it again and test the capacity is correct
+        let mut history = open_history(4);
+        history.save(create_item(1, "/home/me/Downloads", "cd ..", 0))?; // 1
+        history.save(create_item(1, "/home/me", "sl", 1))?; // 2
+        assert_eq!(history.count_all()?, 4);
+        if check_max {
+            // this goes behound max capacity and should clean old entries
+            history.save(create_item(1, "/home/me", "ls", 0))?; // 2
+            assert_eq!(history.count_all()?, 4);
+        }
+        drop(history);
+
         // open it again and clear it
-        let mut history = open_history();
-        assert_eq!(history.count_all()?, 2);
+        let mut history = open_history(4);
+        assert_eq!(history.count_all()?, 4);
         history.clear().unwrap();
         assert_eq!(history.count_all()?, 0);
         drop(history);
 
         // open it once more and confirm that the cleared data is gone forever
-        let history = open_history();
+        let history = open_history(4);
         assert_eq!(history.count_all()?, 0);
 
+        Ok(())
+    }
+
+    // test that clear() works as expected across multiple instances of History
+    #[test]
+    fn clear_history_with_backing_file() -> Result<()> {
+        fn open_history(cap: usize) -> Box<dyn History> {
+            Box::new(
+                crate::FileBackedHistory::with_file(cap, "target/test-history.txt".into()).unwrap(),
+            )
+        }
+        clear_history_test(open_history, true)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "_sqlite")]
+    #[test]
+    fn clear_history_with_backing_sqlite() -> Result<()> {
+        fn open_history(_cap: usize) -> Box<dyn History> {
+            Box::new(
+                crate::SqliteBackedHistory::with_file("target/test-history.db".into(), None, None)
+                    .unwrap(),
+            )
+        }
+        clear_history_test(open_history, false)?;
         Ok(())
     }
 
