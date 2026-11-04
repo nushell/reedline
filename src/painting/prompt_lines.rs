@@ -24,8 +24,9 @@ pub(crate) struct PromptLines<'prompt> {
     /// closers leaves `after_cursor` empty, but the closers are still in the
     /// buffer.
     pub(crate) exit_after_cursor: Option<Cow<'prompt, str>>,
-    /// The [`StatusLine`](crate::StatusLine) text, drawn on its own rows below
-    /// the buffer and above any menu. Empty draws none.
+    /// The [`StatusLine`](crate::StatusLine) text followed by the prompt
+    /// footer, drawn on their own rows below the buffer and above any menu.
+    /// Empty draws none.
     pub(crate) status: Cow<'prompt, str>,
 }
 
@@ -78,21 +79,21 @@ impl<'prompt> PromptLines<'prompt> {
     /// and draw over it. SGR is kept while `use_ansi_coloring` is on, as in a
     /// hint. Tabs become the spaces to the next stop (see [`expand_tabs`]).
     pub(crate) fn with_status(mut self, status: &str, use_ansi_coloring: bool) -> Self {
-        let mut drawn = String::with_capacity(status.len());
-        // `lines` splits at `\r\n` as well as `\n`, so the `\r` of a line
-        // break never reaches the escape.
-        for (index, line) in status.trim_end_matches(['\r', '\n']).lines().enumerate() {
-            if index > 0 {
-                drawn.push_str("\r\n");
+        self.status = Cow::Owned(drawn_rows(status, use_ansi_coloring));
+        self
+    }
+
+    /// Add the prompt footer below the status line, drawn the same way as
+    /// [`Self::with_status`]. An empty footer adds no row.
+    pub(crate) fn with_footer(mut self, footer: &str, use_ansi_coloring: bool) -> Self {
+        let footer = drawn_rows(footer, use_ansi_coloring);
+        if !footer.is_empty() {
+            let status = self.status.to_mut();
+            if !status.is_empty() {
+                status.push_str("\r\n");
             }
-            let line = if use_ansi_coloring {
-                escape_control_keep_sgr(line)
-            } else {
-                escape_control(line)
-            };
-            drawn.push_str(&expand_tabs(&line));
+            status.push_str(&footer);
         }
-        self.status = Cow::Owned(drawn);
         self
     }
 
@@ -230,6 +231,26 @@ impl<'prompt> PromptLines<'prompt> {
             estimate as u16
         }
     }
+}
+
+/// `text` as the status line draws it, lines joined by `\r\n`. See
+/// [`PromptLines::with_status`].
+fn drawn_rows(text: &str, use_ansi_coloring: bool) -> String {
+    let mut drawn = String::with_capacity(text.len());
+    // `lines` splits at `\r\n` as well as `\n`, so the `\r` of a line
+    // break never reaches the escape.
+    for (index, line) in text.trim_end_matches(['\r', '\n']).lines().enumerate() {
+        if index > 0 {
+            drawn.push_str("\r\n");
+        }
+        let line = if use_ansi_coloring {
+            escape_control_keep_sgr(line)
+        } else {
+            escape_control(line)
+        };
+        drawn.push_str(&expand_tabs(&line));
+    }
+    drawn
 }
 
 #[cfg(test)]
@@ -500,6 +521,20 @@ mod tests {
             status: Cow::Borrowed(""),
         }
         .with_status(status, use_ansi_coloring)
+    }
+
+    /// The footer goes on the rows after the status line, drawn like it, and
+    /// neither side adds a blank row when the other is empty.
+    #[rstest]
+    #[case::below_status("status", "footer", "status\r\nfooter")]
+    #[case::status_trailing_newline("status\n", "footer", "status\r\nfooter")]
+    #[case::no_status("", "footer", "footer")]
+    #[case::no_footer("status", "", "status")]
+    #[case::footer_only_newlines("status", "\n\n", "status")]
+    #[case::tab_and_carriage_return("", "a\tb\rc", "a       b^Mc")]
+    fn test_with_footer(#[case] status: &str, #[case] footer: &str, #[case] expected: &str) {
+        let lines = lines_with_status(status, false).with_footer(footer, false);
+        assert_eq!(lines.status, expected);
     }
 
     #[rstest]
