@@ -5,7 +5,9 @@ mod item;
 #[cfg(feature = "_sqlite")]
 mod sqlite_backed;
 #[cfg(feature = "_sqlite")]
-pub use sqlite_backed::SqliteBackedHistory;
+pub use sqlite_backed::{SqliteBackedArchivalHandler, SqliteBackedHistory};
+
+pub use file_backed::{FileBackedArchivalHandler, FileBackedHistory, HISTORY_SIZE};
 
 pub use base::{
     CommandLineSearch, History, HistoryNavigationQuery, JsonFilterValue, SearchDirection,
@@ -16,8 +18,6 @@ pub use item::{
     HistoryItem, HistoryItemExtraInfo, HistoryItemId, HistorySessionId, HistoryTimestamp,
     IgnoreAllExtraInfo,
 };
-
-pub use file_backed::{FileBackedHistory, HISTORY_SIZE};
 
 /// The history backends compiled into this build. Tests that should hold for
 /// any `History` take one as an rstest case, so enabling `sqlite` adds cases
@@ -31,6 +31,7 @@ pub(crate) enum TestBackend {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 impl TestBackend {
     pub(crate) fn in_memory(self) -> Box<dyn History> {
         match self {
