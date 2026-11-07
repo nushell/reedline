@@ -114,6 +114,32 @@ impl TestScreen {
             .collect()
     }
 
+    /// Every cell of every row with its text and attributes, so two screens
+    /// compare equal only when they also look the same.
+    pub(crate) fn styled_rows(&self) -> Vec<String> {
+        let screen = self.parser.screen();
+        let (height, width) = screen.size();
+        (0..height)
+            .map(|row| {
+                (0..width)
+                    .filter_map(|col| screen.cell(row, col))
+                    .map(|cell| {
+                        format!(
+                            "{}[{:?} {:?} {}{}{}{}]",
+                            cell.contents(),
+                            cell.fgcolor(),
+                            cell.bgcolor(),
+                            u8::from(cell.bold()),
+                            u8::from(cell.italic()),
+                            u8::from(cell.underline()),
+                            u8::from(cell.inverse()),
+                        )
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
     /// Where the cursor is, as `(column, row)` like the painter and crossterm
     /// count it. The column equals the screen width while a wrap is pending.
     pub(crate) fn cursor(&self) -> (u16, u16) {

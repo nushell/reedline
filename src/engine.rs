@@ -10112,4 +10112,81 @@ mod tests {
         assert!(output.contains("ls27"));
         assert!(!output.contains("ls28"));
     }
+
+    /// Offers suggestions whose descriptions span rows, so a description
+    /// menu opens its color on one row and resets it on a later one, and a
+    /// list menu prints a bare line feed inside a row.
+    struct DescribedCompleter;
+
+    impl Completer for DescribedCompleter {
+        fn complete(&mut self, _line: &str, pos: usize) -> CompletionResult {
+            CompletionResult::fresh(
+                (0..16)
+                    .map(|i| Suggestion {
+                        value: format!("a{i:02}"),
+                        description: Some(format!(
+                            "first line\nsecond line of a{i:02}\nthird line of a{i:02}"
+                        )),
+                        span: Span::new(0, pos),
+                        ..Default::default()
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        }
+    }
+
+    /// The screen after opening `menu` over [`DescribedCompleter`] and moving
+    /// to its next entry, with only the changed rows redrawn or, when
+    /// `redraw_whole`, everything.
+    fn screen_after_menu_next(menu: Box<dyn Menu>, redraw_whole: bool) -> Vec<String> {
+        use crate::painting::test_screen::TestScreen;
+        use crate::DefaultPromptSegment;
+
+        // A fixed prompt, so the layout does not depend on the working directory.
+        let prompt = DefaultPrompt::new(
+            DefaultPromptSegment::Basic(String::from("p")),
+            DefaultPromptSegment::Empty,
+        );
+        let name = menu.name().to_string();
+        let mut rl =
+            Reedline::create()
+                .with_ansi_colors(true)
+                .with_menu(ReedlineMenu::WithCompleter {
+                    menu,
+                    completer: Box::new(DescribedCompleter),
+                });
+        rl.painter = Painter::new(W::screen(80, 24));
+        rl.painter.handle_resize(80, 24);
+        rl.painter.force_prompt_anchored_for_test(0);
+        rl.run_edit_commands(&[EditCommand::InsertString("a".into())]);
+        rl.handle_event(&prompt, ReedlineEvent::Menu(name)).unwrap();
+        rl.repaint(&prompt).unwrap();
+        rl.handle_event(&prompt, ReedlineEvent::MenuNext).unwrap();
+        if redraw_whole {
+            rl.painter.invalidate_prompt_start_row();
+        }
+        rl.repaint(&prompt).unwrap();
+        let mut screen = TestScreen::new(80, 24);
+        screen.sync(rl.painter.captured_for_test());
+        screen.styled_rows()
+    }
+
+    #[test]
+    fn moving_in_a_description_menu_keeps_the_description_color() {
+        let menu =
+            || Box::new(crate::DescriptionMenu::default().with_name("help")) as Box<dyn Menu>;
+        assert_eq!(
+            screen_after_menu_next(menu(), false),
+            screen_after_menu_next(menu(), true)
+        );
+    }
+
+    #[test]
+    fn moving_in_a_list_menu_with_multiline_descriptions_matches_a_full_paint() {
+        let menu = || Box::new(ListMenu::default().with_name("list")) as Box<dyn Menu>;
+        assert_eq!(
+            screen_after_menu_next(menu(), false),
+            screen_after_menu_next(menu(), true)
+        );
+    }
 }
