@@ -8,7 +8,7 @@ use crate::painting::test_screen::TestScreen;
 use {
     super::utils::{
         advance_grapheme, certain_line_width, coerce_crlf, deferred_wrap_row, escape_control,
-        line_width, plain_menu_text, resolve_wrap, sgr_len, wrap_position,
+        expand_tabs, line_width, plain_menu_text, resolve_wrap, sgr_len, wrap_position,
     },
     crate::{
         menu::{Menu, ReedlineMenu},
@@ -481,6 +481,121 @@ pub struct Painter {
     /// Rows a menu can take below the reserved status line while the whole
     /// block stays on the screen. Meaningless while `status_rows` is 0.
     menu_room: u16,
+    /// The menu the screen shows, so the next paint resends only the rows
+    /// that changed. Anything that writes past `repaint_buffer` clears it.
+    painted_menu: Option<PaintedMenu>,
+}
+
+/// A menu as the screen shows it: where it was drawn and the text of each row.
+struct PaintedMenu {
+    prompt_start_row: u16,
+    menu_start_row: u16,
+    terminal_size: (u16, u16),
+    rows: Vec<String>,
+}
+
+/// A menu's text for one paint, with the screen rows it covers.
+struct MenuFrame {
+    start_row: u16,
+    text: String,
+    /// One entry per screen row, each led by the styles still in effect from
+    /// the rows above it, so a row compares and redraws as the full paint
+    /// draws it. A menu that opens a style on one row and closes it rows
+    /// later, as a multi-line description does, leaves it on every row
+    /// between.
+    ///
+    /// `None` when a row is wider than the screen, or ends in a bare line feed:
+    /// a wrapped row moves every row below it, and a bare line feed starts the
+    /// next row at the column the row ended on, so the rows no longer map one
+    /// to one onto screen rows from column 0 and the menu is drawn whole.
+    rows: Option<Vec<String>>,
+}
+
+impl MenuFrame {
+    fn new(start_row: u16, text: String, screen_width: u16) -> Self {
+        let mut carried = String::new();
+        let body = text.trim_end_matches('\n');
+        let last = body.matches('\n').count();
+        let rows = body
+            .split('\n')
+            .enumerate()
+            .map(|(index, row)| {
+                let (row, returned) = row
+                    .strip_suffix('\r')
+                    .map_or((row, false), |row| (row, true));
+                let styled = format!("{carried}{row}");
+                carry_sgr(&mut carried, row);
+                ((returned || index == last)
+                    && line_width(&expand_tabs(row)) <= usize::from(screen_width))
+                .then_some(styled)
+            })
+            .collect();
+        Self {
+            start_row,
+            text,
+            rows,
+        }
+    }
+}
+
+/// A menu to draw below the buffer, with the rows the screen already shows
+/// for it when they can be kept.
+struct MenuPaint<'a> {
+    frame: &'a MenuFrame,
+    on_screen: Option<&'a [String]>,
+}
+
+/// Append to `carried` the SGR sequences `row` leaves in effect, dropping
+/// everything before a bare reset. Replaying `carried` puts the terminal in
+/// the state the row ended in.
+fn carry_sgr(carried: &mut String, row: &str) {
+    let mut rest = row;
+    while let Some(start) = rest.find("\x1b[") {
+        let after = &rest[start + 2..];
+        let params_len = after
+            .find(|c: char| !(c.is_ascii_digit() || c == ';' || c == ':'))
+            .unwrap_or(after.len());
+        let (params, tail) = after.split_at(params_len);
+        if tail.starts_with('m') {
+            // A reset among the parameters drops what came before it.
+            if sgr_resets(params) {
+                carried.clear();
+            }
+            if !params.split(';').all(is_reset_param) {
+                carried.push_str(&rest[start..start + 2 + params_len + 1]);
+            }
+        }
+        rest = tail;
+    }
+}
+
+/// An SGR parameter that resets every attribute: empty or all zeros.
+fn is_reset_param(param: &str) -> bool {
+    param.bytes().all(|byte| byte == b'0')
+}
+
+/// Whether the SGR parameter list `params` holds a reset. The arguments of an
+/// extended color (`38;5;n`, `38;2;r;g;b`, and the same after `48` and `58`)
+/// are values, so a `0` among them is a color, never a reset.
+fn sgr_resets(params: &str) -> bool {
+    let mut params = params.split(';');
+    while let Some(param) = params.next() {
+        match param {
+            "38" | "48" | "58" => {
+                let arguments = match params.next() {
+                    Some("5") => 1,
+                    Some("2") => 3,
+                    _ => 0,
+                };
+                for _ in 0..arguments {
+                    params.next();
+                }
+            }
+            param if is_reset_param(param) => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 impl Painter {
@@ -504,6 +619,7 @@ impl Painter {
             bottom_confirmed_at: None,
             status_rows: 0,
             menu_room: 0,
+            painted_menu: None,
         }
     }
 
@@ -838,6 +954,7 @@ impl Painter {
     /// Establishes the prompt's start row for a new line editor invocation by
     /// asking the terminal where the cursor is.
     fn anchor_prompt(&mut self, suspended_state: Option<&PainterSuspendedState>) -> Result<()> {
+        self.painted_menu = None;
         // Hide before asking, not only before painting. The exit path leaves
         // the cursor shown at column 0 of the row the next prompt lands on,
         // and the wait for the query's reply is the longest stretch
@@ -915,6 +1032,7 @@ impl Painter {
     /// cursor (e.g. `$EDITOR`).
     pub(crate) fn invalidate_prompt_start_row(&mut self) {
         self.prompt_start_row.invalidate();
+        self.painted_menu = None;
     }
 
     /// Main painter for the prompt and buffer
@@ -941,6 +1059,12 @@ impl Painter {
         // Taken first, so a paint that reserves none, as history search's
         // does, never inherits the rows of the one before.
         let reserved_status_rows = std::mem::take(&mut self.status_rows);
+        // The menu rows on screen can be kept only from an anchor nothing has
+        // moved since they were drawn. Taken, so a paint that draws no menu
+        // leaves none behind.
+        let painted_menu = self.painted_menu.take().filter(|painted| {
+            self.prompt_start_row == PromptStartRow::Verified(painted.prompt_start_row)
+        });
 
         // Reset any ANSI styling that may have been left by external commands
         // This ensures the prompt is not affected by previous output styling
@@ -998,8 +1122,10 @@ impl Painter {
             // Marking the painter state as larger buffer to avoid animations
             self.large_buffer = required_lines >= screen_height;
 
+            let mut scrolled = false;
             // Moving the start position of the cursor based on the size of the required lines
             if self.large_buffer || anchor_uninitialized {
+                scrolled = true;
                 for _ in 0..screen_height.saturating_sub(lines_before_cursor) {
                     self.stdout.queue(Print(&coerce_crlf("\n")))?;
                 }
@@ -1007,6 +1133,7 @@ impl Painter {
                 self.prompt_start_row.mark_verified(0);
             } else if required_lines >= remaining_lines {
                 let extra = required_lines.saturating_sub(remaining_lines);
+                scrolled = extra > 0;
                 self.queue_universal_scroll(extra)?;
                 let scrolled_row = self.prompt_start_row.last_known_row().saturating_sub(extra);
                 self.prompt_start_row.mark_verified(scrolled_row);
@@ -1021,21 +1148,76 @@ impl Painter {
             // Over the previous paint where that is safe, so a terminal that
             // draws partway through shows the old text instead of an erased
             // block (#1302). What the new text does not cover is erased once
-            // it is all printed.
+            // it is all printed. That needs no menu, so it never meets the
+            // menu rows kept below.
             let in_place = (!anchor_uninitialized)
                 .then(|| self.in_place_rows(lines, menu, &layout, anchor_row))
                 .flatten();
-            match in_place {
-                Some(_) => {
-                    self.stdout.queue(cursor::MoveTo(0, anchor_row))?;
-                }
-                None => self.clear_from_anchor(anchor_row)?,
-            }
 
             let margin_cursor_row = if self.large_buffer {
+                self.clear_from_anchor(anchor_row)?;
                 self.print_large_buffer(prompt, lines, menu, use_ansi_coloring, &layout)?
             } else {
-                self.print_small_buffer(prompt, lines, menu, use_ansi_coloring, &layout)?
+                let frame = menu.zip(layout.menu_start_row).map(|(menu, start_row)| {
+                    let text = self.menu_text(menu, start_row, use_ansi_coloring);
+                    MenuFrame::new(start_row, text, screen_width)
+                });
+                // `block_rows` less the menu's is the buffer's, without a hint:
+                // none is drawn under an open menu.
+                let buffer_rows = block_rows
+                    .saturating_sub(menu.map_or(0, |menu| menu.menu_required_lines(screen_width)));
+                // Rows on screen are kept only where the menu opens on the same
+                // row of an unscrolled screen of the same size, and nothing
+                // above it can reach it: the text after the cursor ends above
+                // the menu.
+                // A dumb terminal is sent a single stream; there is no screen
+                // to keep rows on.
+                let kept = painted_menu.filter(|painted| {
+                    frame.as_ref().is_some_and(|frame| {
+                        frame.rows.is_some()
+                            && !self.term_is_dumb
+                            // Content that scrolled is no longer where the
+                            // remembered rows say, whatever the anchor row.
+                            && !scrolled
+                            && painted.prompt_start_row == anchor_row
+                            && painted.menu_start_row == frame.start_row
+                            && painted.terminal_size == self.terminal_size
+                            && anchor_row + buffer_rows + status_rows <= frame.start_row
+                    })
+                });
+                match (&in_place, &kept, &frame) {
+                    (Some(_), _, _) => {
+                        self.stdout.queue(cursor::MoveTo(0, anchor_row))?;
+                    }
+                    (None, Some(_), Some(frame)) => {
+                        // Erase the rows above the menu, one at a time, and
+                        // leave the menu standing.
+                        for row in anchor_row..frame.start_row {
+                            self.stdout
+                                .queue(cursor::MoveTo(0, row))?
+                                .queue(Clear(ClearType::UntilNewLine))?;
+                        }
+                        self.stdout.queue(cursor::MoveTo(0, anchor_row))?;
+                    }
+                    _ => self.clear_from_anchor(anchor_row)?,
+                }
+                let on_screen = kept.as_ref().map(|painted| painted.rows.as_slice());
+                let cursor_row = self.print_small_buffer(
+                    prompt,
+                    lines,
+                    frame.as_ref().map(|frame| MenuPaint { frame, on_screen }),
+                    use_ansi_coloring,
+                    &layout,
+                )?;
+                self.painted_menu = frame.and_then(|frame| {
+                    frame.rows.map(|rows| PaintedMenu {
+                        prompt_start_row: anchor_row,
+                        menu_start_row: frame.start_row,
+                        terminal_size: self.terminal_size,
+                        rows,
+                    })
+                });
+                cursor_row
             };
 
             if let Some(widths) = &in_place {
@@ -1473,6 +1655,19 @@ impl Painter {
         Ok(())
     }
 
+    /// The text `menu` draws from `start_row` down.
+    fn menu_text(&self, menu: &dyn Menu, start_row: u16, use_ansi_coloring: bool) -> String {
+        let remaining_lines = self.screen_height().saturating_sub(start_row);
+        let menu_string = menu.menu_string(remaining_lines, use_ansi_coloring);
+        // Plain menus uppercase and truncate kept SGR as if it were text, so
+        // whatever is left of it goes here, once for every menu.
+        if use_ansi_coloring {
+            menu_string
+        } else {
+            plain_menu_text(&menu_string).into_owned()
+        }
+    }
+
     fn print_menu(
         &mut self,
         menu: &dyn Menu,
@@ -1480,20 +1675,52 @@ impl Painter {
         layout: &PromptLayout,
     ) -> Result<()> {
         let starting_row = layout.menu_start_row.unwrap_or(0);
-        let remaining_lines = self.screen_height().saturating_sub(starting_row);
-        let menu_string = menu.menu_string(remaining_lines, use_ansi_coloring);
-        // Plain menus uppercase and truncate kept SGR as if it were text, so
-        // whatever is left of it goes here, once for every menu.
-        let menu_string = if use_ansi_coloring {
-            menu_string
-        } else {
-            plain_menu_text(&menu_string).into_owned()
-        };
+        let menu_string = self.menu_text(menu, starting_row, use_ansi_coloring);
+        self.print_menu_text(starting_row, &menu_string)
+    }
+
+    fn print_menu_text(&mut self, starting_row: u16, menu_string: &str) -> Result<()> {
         self.clear_from_anchor(starting_row)?;
         self.stdout
             .queue(Print(menu_string.trim_end_matches('\n')))?;
-
         Ok(())
+    }
+
+    /// The bytes that redraw the rows of `rows` that differ from `on_screen`,
+    /// and erase the rows below the menu that it no longer covers.
+    ///
+    /// A row is erased before it is printed, as the full paint erases the
+    /// menu before printing it: text such as a tab moves over cells without
+    /// writing them.
+    fn changed_menu_rows(
+        &self,
+        start_row: u16,
+        on_screen: &[String],
+        rows: &[String],
+        use_ansi_coloring: bool,
+    ) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        for (row, (offset, text)) in (start_row..).zip(rows.iter().enumerate()) {
+            if on_screen.get(offset) == Some(text) {
+                continue;
+            }
+            out.queue(cursor::MoveTo(0, row))?;
+            if use_ansi_coloring {
+                out.queue(SetAttribute(Attribute::Reset))?;
+            }
+            out.queue(Clear(ClearType::UntilNewLine))?
+                .queue(Print(text))?;
+            if use_ansi_coloring {
+                out.queue(SetAttribute(Attribute::Reset))?;
+            }
+        }
+        if rows.len() < on_screen.len() {
+            let first_free = u16::try_from(rows.len())
+                .map_or(u16::MAX, |offset| start_row.saturating_add(offset));
+            out.queue(cursor::MoveTo(0, first_free))?
+                .queue(Clear(ClearType::FromCursorDown))?;
+        }
+        Ok(out)
     }
 
     /// The absolute row the cursor must be moved to, when `printed` (what this
@@ -1514,11 +1741,14 @@ impl Painter {
         (row < self.screen_height()).then_some(row)
     }
 
+    /// Draw the block below the anchor. With `menu`, the rows the screen
+    /// already shows for it are passed beside it, and only rows that differ
+    /// are drawn; the caller has erased the rows above the menu and left it.
     fn print_small_buffer(
         &mut self,
         prompt: &dyn Prompt,
         lines: &PromptLines,
-        menu: Option<&ReedlineMenu>,
+        menu: Option<MenuPaint<'_>>,
         use_ansi_coloring: bool,
         layout: &PromptLayout,
     ) -> Result<Option<u16>> {
@@ -1579,12 +1809,39 @@ impl Painter {
             &lines.before_cursor,
         ]);
 
-        if let Some(menu) = menu {
-            self.print_status(lines, use_ansi_coloring, layout)?;
-            self.print_menu(menu, use_ansi_coloring, layout)?;
-        } else {
-            self.stdout.queue(Print(&lines.hint))?;
-            self.print_status(lines, use_ansi_coloring, layout)?;
+        match menu {
+            Some(MenuPaint {
+                frame,
+                on_screen: Some(on_screen),
+            }) => {
+                self.print_status_text(lines, use_ansi_coloring, layout)?;
+                let changed = frame
+                    .rows
+                    .as_ref()
+                    .map(|rows| {
+                        self.changed_menu_rows(frame.start_row, on_screen, rows, use_ansi_coloring)
+                    })
+                    .transpose()?;
+                // Each changed row pays for its own move and erase, so once
+                // most rows change, drawing the menu whole is shorter.
+                match changed {
+                    Some(changed) if changed.len() < frame.text.len() => {
+                        self.stdout.write_all(&changed)?;
+                    }
+                    _ => self.print_menu_text(frame.start_row, &frame.text)?,
+                }
+            }
+            Some(MenuPaint {
+                frame,
+                on_screen: None,
+            }) => {
+                self.print_status(lines, use_ansi_coloring, layout)?;
+                self.print_menu_text(frame.start_row, &frame.text)?;
+            }
+            None => {
+                self.stdout.queue(Print(&lines.hint))?;
+                self.print_status(lines, use_ansi_coloring, layout)?;
+            }
         }
 
         Ok(cursor_row)
@@ -1600,11 +1857,25 @@ impl Painter {
         use_ansi_coloring: bool,
         layout: &PromptLayout,
     ) -> Result<()> {
+        if let Some(row) = layout.status_start_row {
+            self.clear_from_anchor(row)?;
+        }
+        self.print_status_text(lines, use_ansi_coloring, layout)
+    }
+
+    /// As [`Painter::print_status`], onto rows the caller has already erased.
+    fn print_status_text(
+        &mut self,
+        lines: &PromptLines,
+        use_ansi_coloring: bool,
+        layout: &PromptLayout,
+    ) -> Result<()> {
         let Some(row) = layout.status_start_row else {
             return Ok(());
         };
-        self.clear_from_anchor(row)?;
-        self.stdout.queue(Print(&lines.status))?;
+        self.stdout
+            .queue(cursor::MoveTo(0, row))?
+            .queue(Print(&lines.status))?;
         if use_ansi_coloring {
             self.stdout
                 .queue(SetAttribute(Attribute::Reset))?
@@ -1847,6 +2118,7 @@ impl Painter {
     ///
     /// Also works in raw mode
     pub(crate) fn print_crlf(&mut self) -> Result<()> {
+        self.painted_menu = None;
         self.stdout.queue(Print("\r\n"))?;
 
         self.stdout.flush()
@@ -1879,6 +2151,7 @@ impl Painter {
     /// cursor survives, leaving a rejected command on screen as the record of
     /// what was aborted (#1143).
     pub(crate) fn move_cursor_to_end(&mut self) -> Result<()> {
+        self.painted_menu = None;
         self.stdout.queue(Clear(ClearType::FromCursorDown))?;
         if let Some(after_cursor) = &self.after_cursor_lines {
             self.stdout.queue(Print(after_cursor))?;
