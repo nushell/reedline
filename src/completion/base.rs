@@ -252,6 +252,25 @@ pub trait Completer {
         (suggestions.len(), page)
     }
 
+    /// Whether this completer may write to the terminal or move its cursor, as
+    /// one shelling out to an interactive picker does.
+    ///
+    /// The answer covers [`complete`](Self::complete) and the background work
+    /// [`poll_completion`](Self::poll_completion) reports on, and must hold for
+    /// any call: the engine may ask before or after the call it is about. When a
+    /// call or background request of a completer that may write completes, the
+    /// engine re-measures the prompt's position, at the cost of a cursor query
+    /// on every keystroke that runs the completer under an open menu, and
+    /// redraws everything below the prompt.
+    ///
+    /// A completer that only computes suggestions returns `false` to skip both.
+    /// One that returns `false` and then writes leaves the screen out of step
+    /// with the painter: every later paint draws at the stale row until
+    /// something else re-measures the prompt's position.
+    fn may_write_to_terminal(&self) -> bool {
+        true
+    }
+
     /// Poll the completer's background work.
     ///
     /// Called once per event-loop iteration by the engine. Synchronous

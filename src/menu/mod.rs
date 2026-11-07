@@ -498,17 +498,23 @@ impl ReedlineMenu {
         }
     }
 
-    /// Whether updating this menu runs a completer supplied by the host.
+    /// Whether updating this menu runs a completer that may write to the terminal.
     ///
-    /// Host completers own the tty while they run and may shell out to a program that
-    /// scrolls the terminal (nushell's external completer running `fzf --height`),
-    /// leaving the painter's cached prompt anchor pointing at the wrong row.
-    /// Reedline cannot tell whether a given completer does that, so any host completer
-    /// is assumed to. [`HistoryMenu`](Self::HistoryMenu) is the one case it can rule
-    /// out: it is answered by reedline's own in-process [`HistoryCompleter`], which
-    /// never yields the terminal. See #1130.
-    pub(crate) fn queries_host_completer(&self) -> bool {
-        !matches!(self, Self::HistoryMenu(_))
+    /// A host completer owns the tty while it runs and may shell out to a program
+    /// that scrolls the terminal (nushell's external completer running
+    /// `fzf --height`), leaving the painter's cached prompt anchor pointing at the
+    /// wrong row. Each completer says whether it can, through
+    /// [`Completer::may_write_to_terminal`]; one that does not say is assumed to.
+    /// [`HistoryMenu`](Self::HistoryMenu) is answered by reedline's in-process
+    /// [`HistoryCompleter`], which never does. See #1130.
+    ///
+    /// `engine_completer` answers for [`EngineCompleter`](Self::EngineCompleter).
+    pub(crate) fn runs_terminal_writing_completer(&self, engine_completer: &dyn Completer) -> bool {
+        match self {
+            Self::EngineCompleter(_) => engine_completer.may_write_to_terminal(),
+            Self::HistoryMenu(_) => false,
+            Self::WithCompleter { completer, .. } => completer.may_write_to_terminal(),
+        }
     }
 
     pub(crate) fn can_partially_complete(
@@ -721,22 +727,42 @@ mod tests {
     use crate::DefaultCompleter;
     use rstest::rstest;
 
-    /// The prompt anchor is only re-verified for menus that can run host code, since
-    /// that is the only thing reedline cannot see past. A history menu is answered
-    /// in-process, so it must not pay a `cursor::position()` round-trip per keystroke.
-    /// See #1130.
+    /// A completer that may write to the terminal, as one shelling out does.
+    struct WritesToTerminal;
+
+    impl Completer for WritesToTerminal {
+        fn complete(&mut self, _line: &str, _pos: usize) -> crate::CompletionResult {
+            crate::CompletionResult::fresh(Vec::new())
+        }
+    }
+
+    /// The prompt anchor is only re-verified for menus that can run host code
+    /// that may use the terminal, since that is the only thing reedline cannot
+    /// see past. A history menu is answered in-process, as is a completer that
+    /// says so, so neither pays a `cursor::position()` round-trip per
+    /// keystroke. See #1130.
     #[test]
-    fn only_a_host_completer_can_have_scrolled_the_terminal() {
+    fn only_a_completer_writing_to_the_terminal_can_have_scrolled_it() {
         let menu = || Box::new(ColumnarMenu::default()) as Box<dyn Menu>;
 
-        assert!(ReedlineMenu::EngineCompleter(menu()).queries_host_completer());
+        assert!(ReedlineMenu::EngineCompleter(menu())
+            .runs_terminal_writing_completer(&WritesToTerminal));
+        assert!(!ReedlineMenu::EngineCompleter(menu())
+            .runs_terminal_writing_completer(&DefaultCompleter::default()));
         assert!(ReedlineMenu::WithCompleter {
+            menu: menu(),
+            completer: Box::new(WritesToTerminal),
+        }
+        .runs_terminal_writing_completer(&DefaultCompleter::default()));
+        assert!(!ReedlineMenu::WithCompleter {
             menu: menu(),
             completer: Box::<DefaultCompleter>::default(),
         }
-        .queries_host_completer());
+        .runs_terminal_writing_completer(&WritesToTerminal));
 
-        assert!(!ReedlineMenu::HistoryMenu(menu()).queries_host_completer());
+        assert!(
+            !ReedlineMenu::HistoryMenu(menu()).runs_terminal_writing_completer(&WritesToTerminal)
+        );
     }
 
     #[rstest]
