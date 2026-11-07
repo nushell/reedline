@@ -71,6 +71,15 @@ impl TestScreen {
         (column, row)
     }
 
+    /// The foreground color of the cell at `(column, row)`.
+    pub(crate) fn fg(&self, column: u16, row: u16) -> vt100::Color {
+        self.parser
+            .screen()
+            .cell(row, column)
+            .unwrap_or_else(|| panic!("({column}, {row}) is off the screen"))
+            .fgcolor()
+    }
+
     pub(crate) fn cursor_visible(&self) -> bool {
         !self.parser.screen().hide_cursor()
     }

@@ -2353,13 +2353,26 @@ impl Reedline {
     }
 
     fn handle_mouse_click(&mut self, column: u16, row: u16) -> Result<()> {
+        if self.input_mode != InputMode::Regular || self.menus.iter().any(|m| m.is_active()) {
+            return Ok(());
+        }
+        // The frame painter knows which buffer grapheme sits in each cell, so
+        // a click is a lookup rather than a reverse layout.
+        if let Some(index) = self.painter.frame_grapheme_at(column, row) {
+            use unicode_segmentation::UnicodeSegmentation;
+            let buffer = self.editor.get_buffer();
+            if let Some((offset, _)) = buffer.grapheme_indices(true).nth(index) {
+                self.editor.edit_buffer(
+                    |buf| buf.set_insertion_point(offset),
+                    UndoBehavior::MoveCursor,
+                );
+            }
+            return Ok(());
+        }
         let snapshot = match &self.last_render_snapshot {
             Some(snapshot) => snapshot,
             None => return Ok(()),
         };
-        if self.input_mode != InputMode::Regular || self.menus.iter().any(|m| m.is_active()) {
-            return Ok(());
-        }
         let buffer = self.editor.get_buffer();
         if let Some(offset) = self.painter.screen_to_buffer_offset(snapshot, column, row) {
             if buffer.is_char_boundary(offset) {

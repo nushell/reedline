@@ -1,3 +1,4 @@
+mod frame;
 mod painter;
 mod prompt_lines;
 mod styled_text;
