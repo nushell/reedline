@@ -328,9 +328,10 @@ fn large_buffer_of_one_wrapped_line_stays_on_screen_with(engine: Engine) {
     assert_eq!(session.screen.cursor(), (2, 4));
 }
 
-/// The frame's reason to exist: a keystroke touching one row costs one row.
+/// The frame's reason to exist: a keystroke touching one row costs that row
+/// from the changed cell on, and the rows above it nothing.
 #[test]
-fn frame_repaint_rewrites_only_the_rows_that_changed() {
+fn frame_repaint_rewrites_only_the_cells_that_changed() {
     let mut session = Session::new(Engine::Frame, 20, 6, 1);
     let prompt = FixedPrompt::new("> ", "");
 
@@ -346,7 +347,65 @@ fn frame_repaint_rewrites_only_the_rows_that_changed() {
         !second_paint.contains("one"),
         "the unchanged row was redrawn: {second_paint:?}"
     );
-    assert!(second_paint.contains("twx"));
+    assert!(
+        !second_paint.contains("tw"),
+        "the unchanged cells were redrawn: {second_paint:?}"
+    );
+    assert!(second_paint.contains('x'));
+}
+
+/// Typing at the end of the first line leaves the prompt cells alone.
+#[test]
+fn frame_typing_after_the_prompt_does_not_redraw_the_prompt() {
+    let mut session = Session::new(Engine::Frame, 20, 6, 1);
+    let prompt = FixedPrompt::new("> ", "");
+
+    session.paint(&prompt, "on", "");
+    let before_second_paint = session.emitted();
+    session.paint(&prompt, "one", "");
+
+    assert_eq!(session.screen.row(1), "> one");
+    assert_eq!(session.screen.cursor(), (5, 1));
+    let second_paint = session.emitted_since(before_second_paint);
+    assert!(
+        !second_paint.contains("> ") && !second_paint.contains("on"),
+        "cells before the change were redrawn: {second_paint:?}"
+    );
+    assert!(second_paint.contains('e'));
+}
+
+/// A tail redrawn from mid-row inherits the style the skipped cells set, or
+/// the new character comes out in the default color.
+#[test]
+fn frame_tail_redraw_keeps_the_style_the_skipped_cells_set() {
+    let mut session = Session::new(Engine::Frame, 20, 6, 0);
+    let prompt = FixedPrompt::new("> ", "");
+    let green = vt100::Color::Idx(2);
+
+    session.paint_with(&prompt, "\x1b[32mabc", "", true);
+    let before_second_paint = session.emitted();
+    session.paint_with(&prompt, "\x1b[32mabcd", "", true);
+
+    let second_paint = session.emitted_since(before_second_paint);
+    assert!(!second_paint.contains("abc"));
+    assert_eq!(session.screen.row(0), "> abcd");
+    assert_eq!(session.screen.fg(5, 0), green);
+    assert_eq!(session.screen.fg(6, 0), vt100::Color::Default);
+}
+
+/// Deleting from the end leaves nothing to draw, only cells to erase.
+#[test]
+fn frame_shortening_a_row_erases_its_tail() {
+    let mut session = Session::new(Engine::Frame, 20, 6, 1);
+    let prompt = FixedPrompt::new("> ", "");
+
+    session.paint(&prompt, "one", "");
+    let before_second_paint = session.emitted();
+    session.paint(&prompt, "on", "");
+
+    assert_eq!(session.screen.row(1), "> on");
+    assert_eq!(session.screen.cursor(), (4, 1));
+    assert!(!session.emitted_since(before_second_paint).contains("on"));
 }
 
 /// A row redrawn alone starts from the SGR state the rows above left it in,

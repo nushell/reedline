@@ -1068,8 +1068,20 @@ impl Painter {
             let last_rows: &[Row] = last.as_ref().map(PaintedFrame::rows).unwrap_or(&[]);
             let new_rows = &frame.rows[top as usize..(top + visible) as usize];
             for (i, row) in new_rows.iter().enumerate() {
-                if last_rows.get(i) != Some(row) {
-                    self.draw_row(anchor.saturating_add(i as u16), row)?;
+                let screen_row = anchor.saturating_add(i as u16);
+                match last_rows.get(i) {
+                    None => self.draw_row_from(screen_row, row, 0)?,
+                    // A row starting in another style state is redrawn whole,
+                    // whatever its glyphs say.
+                    Some(old) if old.leading != row.leading => {
+                        self.draw_row_from(screen_row, row, 0)?
+                    }
+                    Some(old) => {
+                        let same = row.common_prefix(old);
+                        if same < row.cells.len() || same < old.cells.len() {
+                            self.draw_row_from(screen_row, row, same)?;
+                        }
+                    }
                 }
             }
             // Below the frame: rows a taller last frame left, or whatever is
@@ -1138,19 +1150,20 @@ impl Painter {
         painted.and(ended)
     }
 
-    /// Draw `row` on `screen_row`, replacing whatever was there. Starts from a
-    /// reset plus the row's own SGR state, so a row redrawn on its own looks
-    /// as it did when every row was.
-    fn draw_row(&mut self, screen_row: u16, row: &Row) -> Result<()> {
+    /// Draw `row` on `screen_row` from its cell `from` to the end, replacing
+    /// whatever was there. Starts from a reset plus the SGR state the skipped
+    /// cells would have left, so a tail redrawn on its own looks as it did
+    /// when the whole row was.
+    fn draw_row_from(&mut self, screen_row: u16, row: &Row, from: usize) -> Result<()> {
         let mut text = String::from("\x1b[0m");
-        text.push_str(&row.leading);
-        for cell in &row.cells {
+        text.push_str(&row.sgr_state_through(from));
+        for cell in row.cells.iter().skip(from) {
             text.push_str(&cell.prefix);
             text.push_str(&cell.grapheme);
         }
         text.push_str("\x1b[0m");
         self.stdout
-            .queue(MoveTo(0, screen_row))?
+            .queue(MoveTo(row.column_of(from), screen_row))?
             .queue(Print(text))?;
         // A row filling the width leaves the terminal's wrap pending with the
         // cursor still on the last cell, and an erase from there takes that

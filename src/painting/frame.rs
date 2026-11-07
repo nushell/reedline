@@ -51,12 +51,64 @@ pub(crate) struct Row {
     pub(crate) cells: Vec<Cell>,
 }
 
+impl Cell {
+    /// Whether this cell draws the same as `other`. The buffer index is not
+    /// drawn, so it is not compared: an insert renumbers every later cell
+    /// without changing what any of them shows.
+    pub(crate) fn same_glyph(&self, other: &Cell) -> bool {
+        self.prefix == other.prefix && self.grapheme == other.grapheme && self.width == other.width
+    }
+}
+
 impl Row {
     /// Columns drawn on this row.
     pub(crate) fn width(&self) -> u16 {
         self.cells
             .iter()
             .fold(0u16, |acc, cell| acc.saturating_add(cell.width))
+    }
+
+    /// Column the cell at `index` starts on; the row's width past the end.
+    pub(crate) fn column_of(&self, index: usize) -> u16 {
+        self.cells
+            .iter()
+            .take(index)
+            .fold(0u16, |acc, cell| acc.saturating_add(cell.width))
+    }
+
+    /// How many leading cells draw the same as `old`'s, so a redraw can
+    /// start after them.
+    pub(crate) fn common_prefix(&self, old: &Row) -> usize {
+        self.cells
+            .iter()
+            .zip(&old.cells)
+            .take_while(|(new, old)| new.same_glyph(old))
+            .count()
+    }
+
+    /// The SGR state in effect when the cell at `index` is drawn: the row's
+    /// `leading` plus the SGR sequences in the prefixes before it, with a
+    /// reset dropping what came before. What a redraw starting at `index`
+    /// must emit first.
+    pub(crate) fn sgr_state_through(&self, index: usize) -> String {
+        let mut state: Vec<&str> = if self.leading.is_empty() {
+            Vec::new()
+        } else {
+            vec![self.leading.as_str()]
+        };
+        for cell in self.cells.iter().take(index) {
+            for seq in escapes(&cell.prefix) {
+                if !is_sgr(seq) {
+                    continue;
+                }
+                if is_sgr_reset(seq) {
+                    state.clear();
+                } else {
+                    state.push(seq);
+                }
+            }
+        }
+        state.concat()
     }
 
     /// The row's text with the escapes removed, for tests and debugging.
@@ -537,6 +589,14 @@ fn escape_len(text: &str) -> usize {
     }
 }
 
+/// The escape sequences a cell prefix is made of, in order.
+fn escapes(prefix: &str) -> impl Iterator<Item = &str> {
+    tokens(prefix).filter_map(|token| match token {
+        Token::Escape(seq) => Some(seq),
+        Token::Grapheme(_) => None,
+    })
+}
+
 fn is_sgr(seq: &str) -> bool {
     seq.starts_with("\x1b[") && seq.ends_with('m')
 }
@@ -703,6 +763,51 @@ mod tests {
         assert_eq!(texts(&frame), vec!["> abcd", "one", "two"]);
         assert_eq!(frame.menu_row, Some(1));
         assert_eq!(frame.cursor, (4, 0));
+    }
+
+    #[test]
+    fn common_prefix_ignores_the_buffer_index() {
+        // Inserting on the row above renumbers this row's cells; the glyphs
+        // still match.
+        let old = layout(&input("> ", "a\r\nbc", "", 20)).rows.remove(1);
+        let new = layout(&input("> ", "ab\r\nbc", "", 20)).rows.remove(1);
+        assert_ne!(new.cells[0].index, old.cells[0].index);
+        assert_eq!(new.common_prefix(&old), 2);
+        let new = layout(&input("> ", "ab\r\nbd", "", 20)).rows.remove(1);
+        assert_eq!(new.common_prefix(&old), 1);
+        assert_eq!(new.column_of(1), 1);
+        assert_eq!(new.column_of(99), 2);
+    }
+
+    #[test]
+    fn sgr_state_replays_the_skipped_prefixes_and_stops_at_a_reset() {
+        let row = Row {
+            leading: "\x1b[1m".into(),
+            cells: vec![
+                Cell {
+                    prefix: "\x1b[31m\x1b]133;B\x07".into(),
+                    grapheme: "a".into(),
+                    width: 1,
+                    index: None,
+                },
+                Cell {
+                    prefix: "\x1b[0m\x1b[32m".into(),
+                    grapheme: "b".into(),
+                    width: 1,
+                    index: None,
+                },
+                Cell {
+                    prefix: String::new(),
+                    grapheme: "c".into(),
+                    width: 1,
+                    index: None,
+                },
+            ],
+        };
+        assert_eq!(row.sgr_state_through(0), "\x1b[1m");
+        // The OSC marker is not style and is not replayed.
+        assert_eq!(row.sgr_state_through(1), "\x1b[1m\x1b[31m");
+        assert_eq!(row.sgr_state_through(3), "\x1b[32m");
     }
 
     /// Text filling the row puts the cursor on the next one; the menu must
