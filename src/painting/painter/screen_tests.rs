@@ -471,3 +471,52 @@ fn frame_scrolls_to_make_room_and_keeps_the_anchor_aligned() {
     assert!(session.painter.prompt_anchor_is_verified_for_test());
     assert_eq!(session.painter.prompt_start_row.last_known_row(), 2);
 }
+
+// #974: a one-line hint that soft-wraps past the bottom of the screen. The
+// streaming painter's large-buffer path clips the hint by counting `\n`, so
+// a single wrapped line goes out whole, the terminal scrolls and the prompt
+// goes with it. In the frame the hint is rows like any other and the
+// viewport keeps the cursor row, so the prompt stays and the hint is clipped.
+#[test]
+fn frame_long_hint_clips_instead_of_hiding_the_prompt() {
+    let mut session = Session::new(Engine::Frame, 20, 4, 0);
+    let prompt = FixedPrompt::new("> ", "");
+    let hint = "h".repeat(100);
+    let lines = PromptLines::new(&prompt, PromptEditMode::Default, None, "ls", "", &hint);
+
+    for _ in 0..2 {
+        session
+            .painter
+            .repaint_buffer(&prompt, &lines, PromptEditMode::Default, None, false, &None)
+            .expect("repaint_buffer failed");
+        session.screen.sync(session.painter.stdout.captured());
+    }
+
+    assert_eq!(session.screen.row(0), format!("> ls{}", "h".repeat(16)));
+    assert_eq!(session.screen.row(3), "h".repeat(20));
+    assert_eq!(session.screen.cursor(), (4, 0));
+    assert_eq!(session.screen.scrolled(), 0);
+}
+
+// #477 and #897: the right prompt has to follow the right edge through a
+// horizontal resize, with a multiline left prompt and the right prompt on
+// its first row. The resize leaves the anchor to be re-verified, which the
+// capture writer cannot answer, so the paint keeps the cached row.
+#[rstest]
+fn right_prompt_follows_the_edge_after_a_horizontal_resize(
+    #[values(Engine::Streaming, Engine::Frame)] engine: Engine,
+) {
+    let mut session = Session::new(engine, 40, 6, 1);
+    let prompt = FixedPrompt::new("abc\n", "> ").with_right("R", false);
+
+    session.paint(&prompt, "hi", "");
+    assert_eq!(session.screen.row(1), format!("abc{}R", " ".repeat(36)));
+
+    session.screen.resize(30, 6);
+    session.painter.handle_resize(30, 6);
+    session.paint(&prompt, "hi", "");
+
+    assert_eq!(session.screen.row(1), format!("abc{}R", " ".repeat(26)));
+    assert_eq!(session.screen.row(2), "> hi");
+    assert_eq!(session.screen.cursor(), (4, 2));
+}
