@@ -97,7 +97,7 @@ pub fn default_emacs_keybindings() -> Keybindings {
     // Case changes
     kb.add_binding(KM::ALT, KC::Char('u'), edit_bind(EC::UppercaseWord));
     kb.add_binding(KM::ALT, KC::Char('l'), edit_bind(EC::LowercaseWord));
-    kb.add_binding(KM::ALT, KC::Char('c'), edit_bind(EC::CapitalizeChar));
+    kb.add_binding(KM::ALT, KC::Char('c'), edit_bind(EC::CapitalizeWord));
 
     kb
 }
@@ -219,6 +219,22 @@ mod test {
         let result = emacs.parse_event(ctrl_l);
 
         assert_eq!(result, ReedlineEvent::ClearScreen);
+    }
+
+    #[test]
+    fn alt_c_capitalizes_the_word() {
+        let mut emacs = Emacs::default();
+        let alt_c = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
+            KeyCode::Char('c'),
+            KeyModifiers::ALT,
+        )))
+        .unwrap();
+        let result = emacs.parse_event(alt_c);
+
+        assert_eq!(
+            result,
+            ReedlineEvent::Edit(vec![EditCommand::CapitalizeWord])
+        );
     }
 
     #[test]

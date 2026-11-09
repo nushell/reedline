@@ -596,6 +596,8 @@ impl SqliteBackedHistory {
     ///
     /// Note: this method is specific to [`SqliteBackedHistory`]. The [`History`] trait
     /// methods use [`IgnoreAllExtraInfo`] and ignore [`SearchFilter::more_info_json`].
+    ///
+    /// [`SearchFilter::more_info_json`]: crate::SearchFilter::more_info_json
     pub fn search_with_extra<E: HistoryItemExtraInfo>(
         &self,
         query: SearchQuery,

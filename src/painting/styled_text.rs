@@ -4,7 +4,7 @@ use crate::core_editor::{ensure_grapheme_boundary_next, ensure_grapheme_boundary
 use crate::terminal_extensions::semantic_prompt::{PromptKind, SemanticPromptMarkers};
 use crate::Prompt;
 
-use super::utils::strip_ansi;
+use super::utils::{escape_control, strip_ansi};
 
 /// A representation of a buffer with styling, used for doing syntax highlighting
 #[derive(Clone)]
@@ -135,7 +135,7 @@ impl StyledText {
     pub fn render_simple(&self) -> String {
         self.buffer
             .iter()
-            .map(|(style, text)| style.paint(text).to_string())
+            .map(|(style, text)| style.paint(escape_control(text)).to_string())
             .collect()
     }
 
@@ -159,6 +159,56 @@ fn shows_on_a_blank_cell(style: &Style) -> bool {
     style.background.is_some() || style.is_reverse || style.is_underline || style.is_strikethrough
 }
 
+/// What follows each newline of the buffer: the multiline indicator, wrapped in
+/// secondary prompt markers when the terminal gets them
+/// (`\n` + `A;k=s` + indicator + `B`).
+fn format_continuation(
+    multiline_prompt: &str,
+    semantic_markers: Option<&dyn SemanticPromptMarkers>,
+) -> String {
+    match semantic_markers {
+        Some(markers) => format!(
+            "\n{}{}{}",
+            markers.prompt_start(PromptKind::Secondary),
+            multiline_prompt,
+            markers.command_input_start()
+        ),
+        None => format!("\n{multiline_prompt}"),
+    }
+}
+
+/// Gives each line a hint continues onto the multiline indicator the buffer's
+/// lines get (#530), so a multi-line hint lines up with the text it completes.
+///
+/// The indicator goes in unstyled, inside whatever style the hinter has open
+/// at the newline, so it is drawn like the hint and marks those rows as not
+/// typed yet, rather than in the prompt's multiline color.
+pub(crate) fn continue_hint_lines(
+    hint: String,
+    prompt: &dyn Prompt,
+    use_ansi_coloring: bool,
+    semantic_markers: Option<&dyn SemanticPromptMarkers>,
+) -> String {
+    if !hint.contains('\n') {
+        return hint;
+    }
+
+    // Stripped, since a reset in a styled indicator would end the hint's style
+    // for the rest of the row.
+    let continuation = format_continuation(
+        &strip_ansi(&prompt.render_prompt_multiline_indicator()),
+        semantic_markers,
+    );
+    // Without coloring the buffer drops its markers too, see
+    // `render_around_insertion_point`.
+    let continuation = if use_ansi_coloring {
+        continuation
+    } else {
+        strip_ansi(&continuation)
+    };
+    hint.replace('\n', &continuation)
+}
+
 fn render_as_string(
     renderable: &(Style, String),
     prompt_style: &Style,
@@ -166,20 +216,7 @@ fn render_as_string(
     semantic_markers: Option<&dyn SemanticPromptMarkers>,
 ) -> String {
     let mut rendered = String::new();
-
-    // Build the formatted multiline prompt with optional semantic markers
-    let formatted_multiline_prompt = if let Some(markers) = semantic_markers {
-        // Wrap multiline indicator with secondary prompt markers:
-        // \n + A;k=s + multiline_prompt + B
-        format!(
-            "\n{}{}{}",
-            markers.prompt_start(PromptKind::Secondary),
-            multiline_prompt,
-            markers.command_input_start()
-        )
-    } else {
-        format!("\n{multiline_prompt}")
-    };
+    let formatted_multiline_prompt = format_continuation(multiline_prompt, semantic_markers);
 
     // `split` consumes the `\n`, so a terminator has no glyph left to carry the
     // style and a selection covering it paints nothing. Every piece but the last
@@ -189,7 +226,8 @@ fn render_as_string(
     // Only when the style would actually show on a blank cell, or a highlighter
     // that emits the buffer as one plain chunk would gain a stray space per line
     // in every mode. The `\r` of a CRLF is the terminator's own, thus the cell
-    // replaces it; a trailing `\r` on the *last* piece is buffer content, stays.
+    // replaces it; a trailing `\r` on the *last* piece is buffer content, and
+    // shows as `^M` with every other control character.
     //
     // The cell is a real column, so `required_lines` and `cursor_pos` count it.
     // That shows up only on a selected line which exactly fills the terminal.
@@ -201,6 +239,7 @@ fn render_as_string(
         } else {
             line
         };
+        let line = escape_control(line);
 
         // One `paint` for line and cell together: two would wrap each in its own
         // escape pair, and the rendered string is asserted verbatim.
@@ -533,13 +572,28 @@ mod test {
     #[test]
     fn a_trailing_carriage_return_is_not_a_terminator() {
         // The contrast with the case above: with no `\n` after it the `\r` is
-        // buffer content on the last piece, so it survives and gains no cell.
-        // Raw again, for the same reason.
+        // buffer content on the last piece, so it is shown and gains no cell.
+        // Shown as `^M`, not sent: a raw one would snap to column 0.
         let style = Style::new().on(Color::LightGray);
         let result =
             super::render_as_string(&(style, "bar\r".to_string()), &Style::new(), "::: ", None);
-        assert!(result.contains('\r'), "ate buffer content: {result:?}");
-        assert_eq!(strip_ansi(&result), "bar");
+        assert!(!result.contains('\r'), "leaked a CR: {result:?}");
+        assert_eq!(strip_ansi(&result), "bar^M");
+    }
+
+    #[test]
+    fn escape_sequences_in_the_buffer_are_shown_not_sent() {
+        // A pasted or completed line that erases itself and prints `ls` over
+        // the top would show one command and run another.
+        let buffer = "rm -rf ~ #\x1b[2K\x1b[Gls";
+        let result = super::render_as_string(
+            &(Style::new().fg(Color::Red), buffer.to_string()),
+            &Style::new(),
+            "::: ",
+            None,
+        );
+        assert_eq!(strip_ansi(&result), "rm -rf ~ #^[[2K^[[Gls");
+        assert!(!result.contains("\x1b[2K"), "sent an erase: {result:?}");
     }
 
     #[test]
@@ -599,5 +653,78 @@ mod test {
             .map(|p| super::render_as_string(p, &Style::new(), "> ", None))
             .collect();
         assert_eq!(strip_ansi(&rendered), "ab \n> cd");
+    }
+
+    mod continue_hint_lines {
+        use pretty_assertions::assert_eq;
+
+        use crate::painting::continue_hint_lines;
+        use crate::DefaultPrompt;
+
+        #[test]
+        fn each_hint_line_gets_the_indicator() {
+            let hint = continue_hint_lines(
+                "\n  foo: S,\n}".into(),
+                &DefaultPrompt::default(),
+                false,
+                None,
+            );
+            assert_eq!(hint, "\n:::   foo: S,\n::: }");
+        }
+
+        #[test]
+        fn a_single_line_hint_is_left_alone() {
+            let hint = "\x1b[2mfoo\x1b[0m";
+            assert_eq!(
+                continue_hint_lines(hint.into(), &DefaultPrompt::default(), true, None),
+                hint
+            );
+        }
+
+        #[test]
+        fn the_indicator_takes_the_hint_style() {
+            let hint = continue_hint_lines(
+                "\x1b[2;37mab\ncd\x1b[0m".into(),
+                &DefaultPrompt::default(),
+                true,
+                None,
+            );
+            assert_eq!(hint, "\x1b[2;37mab\n::: cd\x1b[0m");
+        }
+
+        /// A prompt whose multiline indicator carries its own SGR, as a nushell
+        /// user can configure.
+        struct StyledIndicator;
+
+        impl crate::Prompt for StyledIndicator {
+            fn render_prompt_left(&self) -> std::borrow::Cow<'_, str> {
+                "".into()
+            }
+            fn render_prompt_right(&self) -> std::borrow::Cow<'_, str> {
+                "".into()
+            }
+            fn render_prompt_indicator(
+                &self,
+                _: crate::PromptEditMode,
+            ) -> std::borrow::Cow<'_, str> {
+                "".into()
+            }
+            fn render_prompt_multiline_indicator(&self) -> std::borrow::Cow<'_, str> {
+                "\x1b[31m::: \x1b[0m".into()
+            }
+            fn render_prompt_history_search_indicator(
+                &self,
+                _: crate::PromptHistorySearch,
+            ) -> std::borrow::Cow<'_, str> {
+                "".into()
+            }
+        }
+
+        #[test]
+        fn a_styled_indicator_does_not_end_the_hint_style() {
+            let hint =
+                continue_hint_lines("\x1b[2mab\ncd\x1b[0m".into(), &StyledIndicator, true, None);
+            assert_eq!(hint, "\x1b[2mab\n::: cd\x1b[0m");
+        }
     }
 }

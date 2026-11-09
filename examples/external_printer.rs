@@ -1,6 +1,6 @@
 // Create a default reedline object to handle user input
 // to run:
-// cargo run --example external_printer --features=external_printer
+// cargo run --example external_printer
 
 use {
     reedline::ExternalPrinter,
@@ -47,7 +47,7 @@ fn main() {
                 Signal::Success(buffer) => {
                     println!("We processed: {buffer}");
                 }
-                Signal::CtrlD | Signal::CtrlC => {
+                Signal::CtrlD | Signal::CtrlC(_) => {
                     println!("\nAborted!");
                     break;
                 }

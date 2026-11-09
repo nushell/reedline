@@ -1,3 +1,8 @@
+// The derives on `EditCommand` (strum's `From` impls in particular) are sibling
+// items, so only a module-level allow reaches them while the deprecated
+// `MoveWordRightEnd` is still defined here.
+#![allow(deprecated)]
+
 use crate::core_editor::EditCommandStatus;
 use crate::PromptEditMode;
 use crossterm::event::{Event, KeyEvent, KeyEventKind};
@@ -28,12 +33,14 @@ impl From<crossterm::event::MouseButton> for MouseButton {
 
 /// Valid ways how `Reedline::read_line()` can return
 #[non_exhaustive]
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Signal {
     /// Entry succeeded with the provided content
     Success(String),
-    /// Entry was aborted with `Ctrl+C`
-    CtrlC, // Interrupt current editing
+    /// Entry was aborted with `Ctrl+C`.
+    /// Contains the buffer as it was, so the host can keep or show what was
+    /// typed. Reedline itself starts the next read with an empty buffer.
+    CtrlC(String),
     /// Abort with `Ctrl+D` signalling `EOF` or abort of a whole interactive session
     CtrlD, // End terminal session
 
@@ -422,6 +429,13 @@ pub enum EditCommand {
     },
 
     /// Move one word to the right, stop at end of word
+    ///
+    /// The same move as [`EditCommand::MoveWordRight`], which lands where the
+    /// active caret shows a word's end.
+    #[deprecated(
+        since = "0.53.0",
+        note = "use `EditCommand::MoveWordRight`, the same move"
+    )]
     MoveWordRightEnd {
         /// Select the text between the current cursor position and destination
         select: bool,
@@ -654,6 +668,10 @@ pub enum EditCommand {
 
     /// Lower case the current word
     LowercaseWord,
+
+    /// Capitalize the current word: upper case its first character and lower
+    /// case the rest
+    CapitalizeWord,
 
     /// Capitalize the current character
     CapitalizeChar,
@@ -939,6 +957,7 @@ impl EditCommand {
             | EditCommand::PasteCutBufferAfter
             | EditCommand::UppercaseWord
             | EditCommand::LowercaseWord
+            | EditCommand::CapitalizeWord
             | EditCommand::SwitchcaseChar
             | EditCommand::CapitalizeChar
             | EditCommand::SwapWords
@@ -1171,6 +1190,15 @@ pub enum ReedlineEvent {
     /// Navigate to the next historic buffer
     NextHistory,
 
+    /// Jump to the oldest historic buffer, the oldest one matching the prefix
+    /// when the navigation searches by prefix. Inapplicable when already there
+    /// or when nothing matches.
+    FirstHistory,
+
+    /// Leave the history for the buffer that was being edited before the
+    /// navigation started. Inapplicable when not navigating the history.
+    LeaveHistory,
+
     /// Search the history for a string
     SearchHistory,
 
@@ -1248,9 +1276,22 @@ pub enum ReedlineEvent {
     SwitchMode(PromptEditMode),
 }
 
+/// What handling a [`ReedlineEvent`] came to.
+///
+/// The engine reports it for every event it runs, and an [`EditMode`](crate::EditMode)
+/// answers with it from
+/// [`handle_mode_specific_event`](crate::EditMode::handle_mode_specific_event).
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EventStatus {
+    /// The event did something. Inside an
+    /// [`UntilFound`](ReedlineEvent::UntilFound) this stops the search.
     Handled,
+    /// The event had nothing to do and changed no state, so an
+    /// [`UntilFound`](ReedlineEvent::UntilFound) moves on to the next event.
     Inapplicable,
+    /// The event ends the current [`read_line`](crate::Reedline::read_line),
+    /// which returns the carried [`Signal`].
     Exits(Signal),
 }
 

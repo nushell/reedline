@@ -49,4 +49,22 @@ pub trait Hinter: Send {
     /// Return the first semantic token of the hint
     /// for incremental completion
     fn next_hint_token(&self) -> String;
+
+    /// Whether the hint continues the text before the cursor, so that it can
+    /// stand in for the auto-pair closers right after the cursor.
+    ///
+    /// When this returns `true` and only closers of the configured
+    /// [`AutoPairs`](crate::AutoPairs) follow the cursor, as in `f(gs|)`,
+    /// [`handle`](Self::handle) receives just the text before the cursor, with
+    /// `pos` at its end. The hint is shown and inserted at the cursor in place
+    /// of the closers, provided the [`Highlighter`](crate::Highlighter) can
+    /// tell how the hint closes them. See
+    /// [`Highlighter::hint_closer_offsets`](crate::Highlighter::hint_closer_offsets).
+    ///
+    /// The default returns `false`: `handle` always receives the whole buffer
+    /// and the cursor, the hint is drawn after the end of the buffer, and it
+    /// can only be accepted with the cursor there.
+    fn continues_text_before_cursor(&self) -> bool {
+        false
+    }
 }

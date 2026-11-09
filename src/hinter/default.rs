@@ -50,6 +50,10 @@ impl Hinter for DefaultHinter {
     fn next_hint_token(&self) -> String {
         get_first_token(&self.current_hint)
     }
+
+    fn continues_text_before_cursor(&self) -> bool {
+        true
+    }
 }
 
 impl Default for DefaultHinter {

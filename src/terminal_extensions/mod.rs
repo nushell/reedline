@@ -1,6 +1,7 @@
 pub(crate) mod bracketed_paste;
 pub(crate) mod kitty;
 pub mod semantic_prompt;
+pub(crate) mod tty_mode;
 
 /// Return if the terminal supports the kitty keyboard enhancement protocol
 ///

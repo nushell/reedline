@@ -193,6 +193,10 @@ pub(crate) struct Frame {
     pub(crate) right_prompt: Option<RightPromptAt>,
     /// Row the menu starts on, if one was laid out.
     pub(crate) menu_row: Option<u16>,
+    /// Row the status line starts on, if one was laid out.
+    pub(crate) status_row: Option<u16>,
+    /// Rows the status line takes; 0 without one.
+    pub(crate) status_rows: u16,
 }
 
 impl Frame {
@@ -211,6 +215,13 @@ impl Frame {
     /// The buffer grapheme drawn at `(column, row)` of the frame.
     pub(crate) fn index_at(&self, column: u16, row: u16) -> Option<usize> {
         self.rows.get(row as usize)?.index_at(column)
+    }
+
+    fn set_status(&mut self, status: Option<(u16, u16)>) {
+        if let Some((row, rows)) = status {
+            self.status_row = Some(row);
+            self.status_rows = rows;
+        }
     }
 }
 
@@ -232,6 +243,9 @@ pub(crate) struct LayoutInput<'a> {
     /// A rendered menu. Replaces the hint and everything after the cursor's
     /// row, as the streaming painter's menu does.
     pub(crate) menu: Option<&'a str>,
+    /// The status line, on rows of its own below the buffer and the hint,
+    /// and above a menu. Empty draws none.
+    pub(crate) status: &'a str,
     pub(crate) width: u16,
 }
 
@@ -281,26 +295,25 @@ pub(crate) fn layout(input: &LayoutInput<'_>) -> Frame {
     let cursor = builder.position();
 
     if let Some(menu) = input.menu {
-        // What follows the cursor on its own row stays; the menu takes the
-        // rows below, as the streaming painter clears them for it.
+        // What follows the cursor on its own row stays; the status line and
+        // the menu take the rows below, as the streaming painter clears them.
         builder.put_first_row(input.after_cursor, Some(&mut index));
-        // A row the text filled leaves the cursor on the next one, and the
-        // menu opens below *that*, not on it.
-        builder.resolve();
-        builder.newline();
-        let menu_row = builder.position().1;
-        builder.put(menu, None);
+        let status = builder.put_block(input.status);
+        let menu_row = builder.put_block(Some(menu)).map(|(row, _)| row);
         builder.finish();
         let mut frame = builder.frame(cursor, prompt_rows);
-        frame.menu_row = Some(menu_row);
+        frame.menu_row = menu_row;
+        frame.set_status(status);
         place_right_prompt(&mut frame, input, prompt_end.1, width);
         return frame;
     }
 
     builder.put(input.after_cursor, Some(&mut index));
     builder.put(input.hint, None);
+    let status = builder.put_block(input.status);
     builder.finish();
     let mut frame = builder.frame(cursor, prompt_rows);
+    frame.set_status(status);
     place_right_prompt(&mut frame, input, prompt_end.1, width);
     frame
 }
@@ -450,6 +463,20 @@ impl Builder {
         self.ensure_row(row);
     }
 
+    /// Put `text` on rows of its own below everything so far: a status line
+    /// or a menu. Returns the row it starts on and the rows it takes, or
+    /// `None` for empty text, which takes no row at all.
+    fn put_block<'t>(&mut self, text: impl Into<Option<&'t str>>) -> Option<(u16, u16)> {
+        let text = text.into().filter(|text| !text.is_empty())?;
+        // A row the text filled leaves the cursor on the next one, and the
+        // block opens below *that*, not on it.
+        self.resolve();
+        self.newline();
+        let start = self.row;
+        self.put(text, None);
+        Some((start, self.row.saturating_sub(start).saturating_add(1)))
+    }
+
     fn ensure_row(&mut self, row: u16) {
         while self.rows.len() <= row as usize {
             self.rows.push(Row {
@@ -494,6 +521,8 @@ impl Builder {
             prompt_rows,
             right_prompt: None,
             menu_row: None,
+            status_row: None,
+            status_rows: 0,
         }
     }
 }
@@ -626,6 +655,7 @@ mod tests {
             colors: None,
             markers: None,
             menu: None,
+            status: "",
             width,
         }
     }
@@ -808,6 +838,29 @@ mod tests {
         // The OSC marker is not style and is not replayed.
         assert_eq!(row.sgr_state_through(1), "\x1b[1m\x1b[31m");
         assert_eq!(row.sgr_state_through(3), "\x1b[32m");
+    }
+
+    #[test]
+    fn status_follows_the_hint_and_sits_above_a_menu() {
+        let mut input = input("> ", "ab", "", 20);
+        input.hint = "cd";
+        input.status = "s1\r\ns2";
+        let frame = layout(&input);
+        assert_eq!(texts(&frame), vec!["> abcd", "s1", "s2"]);
+        assert_eq!(frame.status_row, Some(1));
+        assert_eq!(frame.status_rows, 2);
+
+        input.menu = Some("m1\nm2");
+        let frame = layout(&input);
+        assert_eq!(texts(&frame), vec!["> ab", "s1", "s2", "m1", "m2"]);
+        assert_eq!(frame.status_row, Some(1));
+        assert_eq!(frame.menu_row, Some(3));
+
+        input.status = "";
+        let frame = layout(&input);
+        assert_eq!(frame.status_row, None);
+        assert_eq!(frame.status_rows, 0);
+        assert_eq!(frame.menu_row, Some(1));
     }
 
     /// Text filling the row puts the cursor on the next one; the menu must
