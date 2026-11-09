@@ -6,7 +6,7 @@ use crate::{CursorConfig, PromptEditMode};
 use crate::painting::test_screen::TestScreen;
 
 use {
-    super::frame::{self, Frame, Row},
+    super::frame::{self, CellStyle, Frame, Mark, MarkKind, Row},
     super::utils::{
         advance_grapheme, coerce_crlf, deferred_wrap_row, escape_control, line_width,
         plain_menu_text, resolve_wrap, wrap_position,
@@ -504,6 +504,12 @@ impl PaintedFrame {
         let start = self.top as usize;
         let end = (start + self.visible as usize).min(self.frame.rows.len());
         &self.frame.rows[start..end]
+    }
+
+    /// Whether this paint sent `mark`, at the same place.
+    fn showed(&self, mark: &Mark) -> bool {
+        (self.top..self.top.saturating_add(self.visible)).contains(&mark.row)
+            && self.frame.marks.contains(mark)
     }
 
     /// The frame row drawn on screen row `row`, if any.
@@ -1269,21 +1275,56 @@ impl Painter {
 
             let last_rows: &[Row] = last.as_ref().map(PaintedFrame::rows).unwrap_or(&[]);
             let new_rows = &frame.rows[top as usize..(top + visible) as usize];
+            // A mark goes out once, for a prompt or a position it has not been
+            // sent for, and only if the row it belongs on is showing.
+            let showing = top..top.saturating_add(visible);
+            let mut due: Vec<&Mark> = frame
+                .marks
+                .iter()
+                .filter(|mark| {
+                    showing.contains(&mark.row)
+                        && !last.as_ref().is_some_and(|painted| painted.showed(mark))
+                })
+                .collect();
+            due.sort_by_key(|mark| (mark.row, mark.col));
+
             for (i, row) in new_rows.iter().enumerate() {
                 let screen_row = anchor.saturating_add(i as u16);
-                match last_rows.get(i) {
-                    None => self.draw_row_from(screen_row, row, 0)?,
-                    // A row starting in another style state is redrawn whole,
-                    // whatever its glyphs say.
-                    Some(old) if old.leading != row.leading => {
-                        self.draw_row_from(screen_row, row, 0)?
-                    }
+                let from = match last_rows.get(i) {
+                    None => Some(0),
                     Some(old) => {
                         let same = row.common_prefix(old);
-                        if same < row.cells.len() || same < old.cells.len() {
-                            self.draw_row_from(screen_row, row, same)?;
-                        }
+                        (same < row.cells.len() || same < old.cells.len()).then_some(same)
                     }
+                };
+                // Marks on cells this paint leaves alone are sent on their own;
+                // the rest go out in order with the cells they precede.
+                let start_col = from.map_or(u16::MAX, |from| row.column_of(from));
+                let (behind, inline): (Vec<&Mark>, Vec<&Mark>) = due
+                    .iter()
+                    .filter(|mark| mark.row == top.saturating_add(i as u16))
+                    .partition(|mark| mark.col < start_col);
+                for mark in behind {
+                    self.stdout
+                        .queue(MoveTo(mark.col, screen_row))?
+                        .queue(Print(&mark.sequence))?;
+                }
+                if let Some(from) = from {
+                    self.draw_row_from(screen_row, row, from, &inline)?;
+                }
+            }
+            // The right prompt is drawn after the start of the input on the
+            // same row, so its mark would be the last the terminal saw. Text
+            // typed later belongs to the input.
+            if due.iter().any(|mark| mark.kind == MarkKind::RightPrompt) {
+                if let Some(mark) = frame
+                    .marks
+                    .iter()
+                    .find(|mark| mark.kind == MarkKind::Input && showing.contains(&mark.row))
+                {
+                    self.stdout
+                        .queue(MoveTo(mark.col, anchor.saturating_add(mark.row - top)))?
+                        .queue(Print(&mark.sequence))?;
                 }
             }
             // Below the frame: rows a taller last frame left, or whatever is
@@ -1350,17 +1391,32 @@ impl Painter {
     }
 
     /// Draw `row` on `screen_row` from its cell `from` to the end, replacing
-    /// whatever was there. Starts from a reset plus the SGR state the skipped
-    /// cells would have left, so a tail redrawn on its own looks as it did
-    /// when the whole row was.
-    fn draw_row_from(&mut self, screen_row: u16, row: &Row, from: usize) -> Result<()> {
-        let mut text = String::from("\x1b[0m");
-        text.push_str(&row.sgr_state_through(from));
+    /// whatever was there. Every row ends with the style cleared, so the
+    /// first cell drawn only has to say what it wants.
+    fn draw_row_from(
+        &mut self,
+        screen_row: u16,
+        row: &Row,
+        from: usize,
+        marks: &[&Mark],
+    ) -> Result<()> {
+        let mut text = String::new();
+        let mut drawn = CellStyle::default();
+        let mut column = row.column_of(from);
+        let mut marks = marks.iter().peekable();
         for cell in row.cells.iter().skip(from) {
-            text.push_str(&cell.prefix);
+            while let Some(mark) = marks.next_if(|mark| mark.col <= column) {
+                text.push_str(&mark.sequence);
+            }
+            drawn.write_change_to(&cell.style, &mut text);
+            drawn = cell.style.clone();
             text.push_str(&cell.grapheme);
+            column = column.saturating_add(cell.width);
         }
-        text.push_str("\x1b[0m");
+        for mark in marks {
+            text.push_str(&mark.sequence);
+        }
+        drawn.write_change_to(&CellStyle::default(), &mut text);
         self.stdout
             .queue(MoveTo(row.column_of(from), screen_row))?
             .queue(Print(text))?;

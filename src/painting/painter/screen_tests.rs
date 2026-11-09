@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::painting::test_screen::TestScreen;
+use crate::terminal_extensions::semantic_prompt::Osc133Markers;
 use crate::PromptHistorySearch;
 use pretty_assertions::assert_eq;
 use rstest::rstest;
@@ -832,6 +833,113 @@ fn frame_tail_redraw_keeps_the_style_the_skipped_cells_set() {
     assert_eq!(session.screen.row(0), "> abcd");
     assert_eq!(session.screen.fg(5, 0), green);
     assert_eq!(session.screen.fg(6, 0), vt100::Color::Default);
+}
+
+/// A highlighter closing and reopening the same color between tokens changes
+/// nothing on screen, so it costs nothing.
+#[test]
+fn frame_moving_a_reset_redraws_nothing() {
+    let mut session = Session::new(Engine::Frame, 20, 6, 0);
+    let prompt = FixedPrompt::new("> ", "");
+
+    session.paint_colored(&prompt, "\x1b[32mxy", "");
+    let before_second_paint = session.emitted();
+    session.paint_colored(&prompt, "\x1b[32mx\x1b[0m\x1b[32my", "");
+
+    let second_paint = session.emitted_since(before_second_paint);
+    assert!(
+        !second_paint.contains('x') && !second_paint.contains('y'),
+        "an unchanged look was redrawn: {second_paint:?}"
+    );
+}
+
+/// A tail redrawn inside a hyperlink is still part of it, and the row does
+/// not leave the link open behind it.
+#[test]
+fn frame_tail_redraw_stays_inside_a_hyperlink() {
+    let mut session = Session::new(Engine::Frame, 30, 6, 0);
+    let prompt = FixedPrompt::new("> ", "");
+
+    session.paint_colored(&prompt, "\x1b]8;;http://x\x1b\\ab", "");
+    let before_second_paint = session.emitted();
+    session.paint_colored(&prompt, "\x1b]8;;http://x\x1b\\abc", "");
+
+    let second_paint = session.emitted_since(before_second_paint);
+    let open = second_paint.find("http://x").expect("the link is reopened");
+    let glyph = second_paint.find('c').expect("the new glyph is drawn");
+    let close = second_paint
+        .find("\x1b]8;;\x1b\\")
+        .expect("the link is closed");
+    assert!(open < glyph && glyph < close, "{second_paint:?}");
+    assert!(!second_paint.contains("ab"));
+}
+
+fn count(haystack: &str, needle: &str) -> usize {
+    haystack.matches(needle).count()
+}
+
+/// The marks go out with the prompt and are not repeated by the keystrokes
+/// that follow. Anything that loses the frame sends them again.
+#[test]
+fn frame_marks_are_sent_once_per_prompt() {
+    let mut session = Session::new(Engine::Frame, 20, 6, 1);
+    session
+        .painter
+        .set_semantic_markers(Some(Osc133Markers::boxed()));
+    let prompt = FixedPrompt::new("> ", "");
+
+    session.paint(&prompt, "a", "");
+    let first_paint = session.emitted_since(0);
+    assert_eq!(count(&first_paint, "133;A"), 1);
+    assert_eq!(count(&first_paint, "133;B"), 1);
+    assert!(first_paint.find("133;A") < first_paint.find('>'));
+    assert!(first_paint.find("133;B") < first_paint.find('a'));
+
+    let before_keystroke = session.emitted();
+    session.paint(&prompt, "ab", "");
+    assert_eq!(count(&session.emitted_since(before_keystroke), "133;"), 0);
+
+    session.painter.invalidate_prompt_start_row();
+    let before_repaint = session.emitted();
+    session.paint(&prompt, "ab", "");
+    let repaint = session.emitted_since(before_repaint);
+    assert_eq!(count(&repaint, "133;A"), 1);
+    assert_eq!(count(&repaint, "133;B"), 1);
+}
+
+/// A prompt whose width changes moves the start of the input, and only that
+/// mark follows it.
+#[test]
+fn frame_a_moved_mark_is_sent_again() {
+    let mut session = Session::new(Engine::Frame, 20, 6, 1);
+    session
+        .painter
+        .set_semantic_markers(Some(Osc133Markers::boxed()));
+
+    session.paint(&FixedPrompt::new("> ", ""), "a", "");
+    let before_second_paint = session.emitted();
+    session.paint(&FixedPrompt::new(">> ", ""), "a", "");
+
+    let second_paint = session.emitted_since(before_second_paint);
+    assert_eq!(count(&second_paint, "133;A"), 0);
+    assert_eq!(count(&second_paint, "133;B"), 1);
+}
+
+/// The right prompt is drawn after the input's start on the same row, so the
+/// input's mark has to be repeated to be the last one the terminal saw.
+#[test]
+fn frame_the_input_mark_is_the_last_one_sent() {
+    let mut session = Session::new(Engine::Frame, 20, 6, 1);
+    session
+        .painter
+        .set_semantic_markers(Some(Osc133Markers::boxed()));
+    let prompt = FixedPrompt::new("> ", "").with_right("R", false);
+
+    session.paint(&prompt, "a", "");
+
+    let paint = session.emitted_since(0);
+    assert!(paint.rfind("133;P") < paint.rfind("133;B"), "{paint:?}");
+    assert_eq!(session.screen.cursor(), (3, 1));
 }
 
 /// Deleting from the end leaves nothing to draw, only cells to erase.

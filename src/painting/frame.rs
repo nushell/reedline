@@ -14,26 +14,59 @@
 //! and rewrites only the cells that changed, each row positioned absolutely from
 //! the prompt's anchor row.
 //!
-//! Escape sequences are carried raw. A starship prompt or a menu arrives as a
-//! finished string, and parsing its styling into a model would mean owning an
-//! SGR parser; instead each cell keeps the escapes that preceded its grapheme
-//! as an opaque prefix, and each row records the SGR state it starts in so
-//! that it can be redrawn on its own.
+//! Escape sequences never sit in the text. A starship prompt or a menu arrives
+//! as a finished string, so the layout tracks what those sequences leave in
+//! effect, and each cell records that as its [`CellStyle`]. That takes no SGR
+//! parser: the state is the sequences since the last reset, kept opaque, so
+//! two orderings of the same attributes merely cost a redraw. Semantic prompt
+//! marks are positions on the frame, [`Mark`], not part of any cell. A
+//! sequence the layout does not recognize stays where it was, as a zero-width
+//! cell whose text is the sequence.
 
 use super::utils::advance_grapheme;
+use std::sync::Arc;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-/// One grapheme on screen, with the escape sequences that precede it.
+/// What the terminal has to be told before drawing a cell, beyond the cell.
+///
+/// Shared strings rather than indices into a table, since the diff compares
+/// cells of two different frames.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct CellStyle {
+    /// The SGR sequences in effect, since the last reset.
+    pub(crate) sgr: Arc<str>,
+    /// The OSC 8 sequence that opened the hyperlink in effect, if any.
+    pub(crate) link: Arc<str>,
+}
+
+impl CellStyle {
+    /// Append what takes the terminal from this style to `to`.
+    pub(crate) fn write_change_to(&self, to: &CellStyle, out: &mut String) {
+        if self.link != to.link {
+            out.push_str(if to.link.is_empty() {
+                LINK_END
+            } else {
+                &to.link
+            });
+        }
+        if self.sgr != to.sgr {
+            if !self.sgr.is_empty() {
+                out.push_str("\x1b[0m");
+            }
+            out.push_str(&to.sgr);
+        }
+    }
+}
+
+/// One grapheme on screen and the style it is drawn in.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct Cell {
-    /// Escape sequences emitted before `grapheme`, raw.
-    pub(crate) prefix: String,
-    /// The grapheme itself. Empty for a carrier of escapes with no glyph
-    /// after them, such as the reset that ends a prompt.
+    /// The grapheme itself, or an unrecognized escape sequence with `width` 0.
     pub(crate) grapheme: String,
     /// Columns the grapheme occupies.
     pub(crate) width: u16,
+    pub(crate) style: CellStyle,
     /// Index of the grapheme in the editing buffer, counting from the start
     /// of the buffer, when the grapheme came from it. Prompt, hint and menu
     /// cells have none. An index rather than a byte offset: the buffer text
@@ -45,9 +78,6 @@ pub(crate) struct Cell {
 /// One screen row of a [`Frame`].
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct Row {
-    /// SGR sequences in effect when the row begins, so redrawing this row
-    /// alone starts from the right style.
-    pub(crate) leading: String,
     pub(crate) cells: Vec<Cell>,
 }
 
@@ -56,7 +86,7 @@ impl Cell {
     /// drawn, so it is not compared: an insert renumbers every later cell
     /// without changing what any of them shows.
     pub(crate) fn same_glyph(&self, other: &Cell) -> bool {
-        self.prefix == other.prefix && self.grapheme == other.grapheme && self.width == other.width
+        self.grapheme == other.grapheme && self.width == other.width && self.style == other.style
     }
 }
 
@@ -86,36 +116,12 @@ impl Row {
             .count()
     }
 
-    /// The SGR state in effect when the cell at `index` is drawn: the row's
-    /// `leading` plus the SGR sequences in the prefixes before it, with a
-    /// reset dropping what came before. What a redraw starting at `index`
-    /// must emit first.
-    pub(crate) fn sgr_state_through(&self, index: usize) -> String {
-        let mut state: Vec<&str> = if self.leading.is_empty() {
-            Vec::new()
-        } else {
-            vec![self.leading.as_str()]
-        };
-        for cell in self.cells.iter().take(index) {
-            for seq in escapes(&cell.prefix) {
-                if !is_sgr(seq) {
-                    continue;
-                }
-                if is_sgr_reset(seq) {
-                    state.clear();
-                } else {
-                    state.push(seq);
-                }
-            }
-        }
-        state.concat()
-    }
-
     /// The row's text with the escapes removed, for tests and debugging.
     #[cfg(test)]
     pub(crate) fn text(&self) -> String {
         self.cells
             .iter()
+            .filter(|cell| cell.width > 0)
             .map(|cell| cell.grapheme.as_str())
             .collect()
     }
@@ -149,26 +155,86 @@ impl Row {
 
     /// Append `text` to this row without wrapping. For the right prompt, which
     /// is only placed once it is known to fit.
-    fn push_unwrapped(&mut self, text: &str) {
-        let mut prefix = String::new();
+    fn push_unwrapped(&mut self, text: &str, tracker: &mut StyleTracker) {
         for token in tokens(text) {
             match token {
-                Token::Escape(seq) => prefix.push_str(seq),
+                Token::Escape(seq) => {
+                    if !tracker.apply(seq) {
+                        self.cells.push(raw_cell(seq, tracker));
+                    }
+                }
                 Token::Grapheme(grapheme) => self.cells.push(Cell {
-                    prefix: std::mem::take(&mut prefix),
                     grapheme: grapheme.to_owned(),
                     width: grapheme.width() as u16,
+                    style: tracker.style.clone(),
                     index: None,
                 }),
             }
         }
-        if !prefix.is_empty() {
-            self.cells.push(Cell {
-                prefix,
-                ..Cell::default()
-            });
+    }
+}
+
+/// A zero-width cell holding an escape sequence the layout does not recognize,
+/// so it is still sent, in place, and a change to it still redraws.
+fn raw_cell(seq: &str, tracker: &StyleTracker) -> Cell {
+    Cell {
+        grapheme: seq.to_owned(),
+        width: 0,
+        style: tracker.style.clone(),
+        index: None,
+    }
+}
+
+/// What the escape sequences seen so far leave in effect.
+#[derive(Default)]
+struct StyleTracker {
+    style: CellStyle,
+}
+
+impl StyleTracker {
+    /// Take `seq` into the state. `false` when it is not a style at all.
+    fn apply(&mut self, seq: &str) -> bool {
+        if is_sgr(seq) {
+            let sgr = if is_sgr_reset(seq) {
+                // `0;31` clears what came before and then sets red.
+                if seq.len() > "\x1b[0m".len() {
+                    seq.to_owned()
+                } else {
+                    String::new()
+                }
+            } else {
+                format!("{}{seq}", self.style.sgr)
+            };
+            self.style.sgr = Arc::from(sgr);
+            true
+        } else if is_link(seq) {
+            self.style.link = if closes_link(seq) {
+                Arc::default()
+            } else {
+                Arc::from(seq)
+            };
+            true
+        } else {
+            false
         }
     }
+}
+
+/// Which semantic prompt mark a [`Mark`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MarkKind {
+    Prompt,
+    Input,
+    RightPrompt,
+}
+
+/// A semantic prompt mark (OSC 133) and the frame position it belongs at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Mark {
+    pub(crate) kind: MarkKind,
+    pub(crate) row: u16,
+    pub(crate) col: u16,
+    pub(crate) sequence: String,
 }
 
 /// Where the right prompt was placed in a frame.
@@ -197,6 +263,7 @@ pub(crate) struct Frame {
     pub(crate) status_row: Option<u16>,
     /// Rows the status line takes; 0 without one.
     pub(crate) status_rows: u16,
+    pub(crate) marks: Vec<Mark>,
 }
 
 impl Frame {
@@ -261,8 +328,6 @@ pub(crate) struct Markers {
     pub(crate) right_start: String,
 }
 
-const RESET: &str = "\x1b[0m";
-
 /// Lay `input` out into a frame `input.width` columns wide.
 pub(crate) fn layout(input: &LayoutInput<'_>) -> Frame {
     // A zero-width terminal has no layout; one column at least gives every
@@ -271,7 +336,7 @@ pub(crate) fn layout(input: &LayoutInput<'_>) -> Frame {
     let mut builder = Builder::new(width);
 
     if let Some(markers) = &input.markers {
-        builder.escape(&markers.prompt_start);
+        builder.mark(MarkKind::Prompt, &markers.prompt_start);
     }
     if let Some(colors) = &input.colors {
         builder.escape(&colors.prompt);
@@ -282,13 +347,13 @@ pub(crate) fn layout(input: &LayoutInput<'_>) -> Frame {
     }
     builder.put(input.prompt_indicator, None);
     if input.colors.is_some() {
-        builder.escape(RESET);
+        builder.escape("\x1b[0m");
     }
     let prompt_end = builder.position();
     let prompt_rows = prompt_end.1 + 1;
 
     if let Some(markers) = &input.markers {
-        builder.escape(&markers.input_start);
+        builder.mark(MarkKind::Input, &markers.input_start);
     }
     let mut index = 0usize;
     builder.put(input.before_cursor, Some(&mut index));
@@ -300,7 +365,6 @@ pub(crate) fn layout(input: &LayoutInput<'_>) -> Frame {
         builder.put_first_row(input.after_cursor, Some(&mut index));
         let status = builder.put_block(input.status);
         let menu_row = builder.put_block(Some(menu)).map(|(row, _)| row);
-        builder.finish();
         let mut frame = builder.frame(cursor, prompt_rows);
         frame.menu_row = menu_row;
         frame.set_status(status);
@@ -311,7 +375,6 @@ pub(crate) fn layout(input: &LayoutInput<'_>) -> Frame {
     builder.put(input.after_cursor, Some(&mut index));
     builder.put(input.hint, None);
     let status = builder.put_block(input.status);
-    builder.finish();
     let mut frame = builder.frame(cursor, prompt_rows);
     frame.set_status(status);
     place_right_prompt(&mut frame, input, prompt_end.1, width);
@@ -345,15 +408,22 @@ fn place_right_prompt(frame: &mut Frame, input: &LayoutInput<'_>, prompt_row: u1
         return;
     }
     target.pad_to(start_col);
-    if let Some(markers) = &input.markers {
-        target.push_unwrapped(&markers.right_start);
-    }
+    let mut tracker = StyleTracker::default();
     if let Some(colors) = &input.colors {
-        target.push_unwrapped(&colors.right);
+        target.push_unwrapped(&colors.right, &mut tracker);
     }
-    target.push_unwrapped(input.prompt_right);
-    if input.colors.is_some() {
-        target.push_unwrapped(RESET);
+    target.push_unwrapped(input.prompt_right, &mut tracker);
+    if let Some(markers) = input
+        .markers
+        .as_ref()
+        .filter(|markers| !markers.right_start.is_empty())
+    {
+        frame.marks.push(Mark {
+            kind: MarkKind::RightPrompt,
+            row,
+            col: start_col,
+            sequence: markers.right_start.clone(),
+        });
     }
     frame.right_prompt = Some(RightPromptAt {
         row,
@@ -368,10 +438,8 @@ struct Builder {
     rows: Vec<Row>,
     row: u16,
     col: u16,
-    /// Escapes seen since the last grapheme, waiting to prefix the next one.
-    pending: String,
-    /// SGR sequences in effect, cleared by a reset.
-    sgr: Vec<String>,
+    tracker: StyleTracker,
+    marks: Vec<Mark>,
 }
 
 impl Builder {
@@ -381,8 +449,8 @@ impl Builder {
             rows: vec![Row::default()],
             row: 0,
             col: 0,
-            pending: String::new(),
-            sgr: Vec::new(),
+            tracker: StyleTracker::default(),
+            marks: Vec::new(),
         }
     }
 
@@ -397,17 +465,26 @@ impl Builder {
     }
 
     fn escape(&mut self, seq: &str) {
-        if seq.is_empty() {
+        if seq.is_empty() || self.tracker.apply(seq) {
             return;
         }
-        self.pending.push_str(seq);
-        if is_sgr(seq) {
-            if is_sgr_reset(seq) {
-                self.sgr.clear();
-            } else {
-                self.sgr.push(seq.to_owned());
-            }
+        let cell = raw_cell(seq, &self.tracker);
+        self.ensure_row(self.row);
+        self.rows[self.row as usize].cells.push(cell);
+    }
+
+    /// Record `sequence` as belonging where the next grapheme would start.
+    fn mark(&mut self, kind: MarkKind, sequence: &str) {
+        if sequence.is_empty() {
+            return;
         }
+        let (col, row) = self.position();
+        self.marks.push(Mark {
+            kind,
+            row,
+            col,
+            sequence: sequence.to_owned(),
+        });
     }
 
     /// Append `text`, wrapping at the width and breaking rows at newlines.
@@ -473,16 +550,15 @@ impl Builder {
         self.resolve();
         self.newline();
         let start = self.row;
+        // A block starts clean, whatever the text above it left open.
+        self.tracker = StyleTracker::default();
         self.put(text, None);
         Some((start, self.row.saturating_sub(start).saturating_add(1)))
     }
 
     fn ensure_row(&mut self, row: u16) {
         while self.rows.len() <= row as usize {
-            self.rows.push(Row {
-                leading: self.sgr.concat(),
-                cells: Vec::new(),
-            });
+            self.rows.push(Row::default());
         }
     }
 
@@ -490,26 +566,13 @@ impl Builder {
         let ((row, col), width) = advance_grapheme((self.row, self.col), grapheme, self.width);
         self.ensure_row(row);
         self.rows[row as usize].cells.push(Cell {
-            prefix: std::mem::take(&mut self.pending),
             grapheme: grapheme.to_owned(),
             width,
+            style: self.tracker.style.clone(),
             index,
         });
         self.row = row;
         self.col = col.saturating_add(width);
-    }
-
-    /// Flush escapes that no grapheme followed into a carrier cell.
-    fn finish(&mut self) {
-        if self.pending.is_empty() {
-            return;
-        }
-        let row = self.row;
-        self.ensure_row(row);
-        self.rows[row as usize].cells.push(Cell {
-            prefix: std::mem::take(&mut self.pending),
-            ..Cell::default()
-        });
     }
 
     fn frame(mut self, cursor: (u16, u16), prompt_rows: u16) -> Frame {
@@ -523,6 +586,7 @@ impl Builder {
             menu_row: None,
             status_row: None,
             status_rows: 0,
+            marks: self.marks,
         }
     }
 }
@@ -618,13 +682,18 @@ fn escape_len(text: &str) -> usize {
     }
 }
 
-/// The escape sequences a cell prefix is made of, in order.
-fn escapes(prefix: &str) -> impl Iterator<Item = &str> {
-    tokens(prefix).filter_map(|token| match token {
-        Token::Escape(seq) => Some(seq),
-        Token::Grapheme(_) => None,
-    })
+fn is_link(seq: &str) -> bool {
+    seq.starts_with("\x1b]8;")
 }
+
+/// `ESC ] 8 ; params ; ST` with no URI ends the hyperlink.
+fn closes_link(seq: &str) -> bool {
+    let body = seq["\x1b]8;".len()..].trim_end_matches(['\x07', '\x1b', '\\']);
+    body.split_once(';').is_none_or(|(_, uri)| uri.is_empty())
+}
+
+/// The sequence that ends a hyperlink.
+pub(crate) const LINK_END: &str = "\x1b]8;;\x1b\\";
 
 fn is_sgr(seq: &str) -> bool {
     seq.starts_with("\x1b[") && seq.ends_with('m')
@@ -758,20 +827,57 @@ mod tests {
         assert_eq!(texts(&frame), vec!["> 0123456789abcdefgh", ""]);
     }
 
-    #[test]
-    fn escapes_ride_as_prefixes_and_rows_record_their_sgr_state() {
-        let frame = layout(&input("\x1b[31m> ", "abcdefghi\x1b[0mjk", "", 10));
-        assert_eq!(texts(&frame), vec!["> abcdefgh", "ijk"]);
-        assert_eq!(frame.rows[0].cells[0].prefix, "\x1b[31m");
-        assert_eq!(frame.rows[0].leading, "");
-        // Red is still on when the second row starts; the reset lands on `j`.
-        assert_eq!(frame.rows[1].leading, "\x1b[31m");
-        assert_eq!(frame.rows[1].cells[0].prefix, "");
-        assert_eq!(frame.rows[1].cells[1].prefix, "\x1b[0m");
+    fn sgr(frame: &Frame, row: usize, cell: usize) -> &str {
+        &frame.rows[row].cells[cell].style.sgr
     }
 
     #[test]
-    fn trailing_escapes_get_a_carrier_cell() {
+    fn each_cell_records_the_style_in_effect_across_a_wrap() {
+        let frame = layout(&input("\x1b[31m> ", "abcdefghi\x1b[0mjk", "", 10));
+        assert_eq!(texts(&frame), vec!["> abcdefgh", "ijk"]);
+        assert_eq!(sgr(&frame, 0, 0), "\x1b[31m");
+        // Red is still on when the second row starts; the reset lands on `j`.
+        assert_eq!(sgr(&frame, 1, 0), "\x1b[31m");
+        assert_eq!(sgr(&frame, 1, 1), "");
+    }
+
+    #[rstest]
+    #[case::layers("\x1b[1m\x1b[31ma", "\x1b[1m\x1b[31m")]
+    #[case::reset("\x1b[1m\x1b[0ma", "")]
+    #[case::bare_reset("\x1b[1m\x1b[ma", "")]
+    #[case::reset_then_set("\x1b[1m\x1b[0;31ma", "\x1b[0;31m")]
+    fn the_sgr_state_stops_at_a_reset(#[case] before: &str, #[case] expected: &str) {
+        assert_eq!(sgr(&layout(&input("", before, "", 10)), 0, 0), expected);
+    }
+
+    #[test]
+    fn placement_of_a_reset_does_not_change_a_cell() {
+        let plain = layout(&input("", "\x1b[32mab", "", 10));
+        let chatty = layout(&input("", "\x1b[32ma\x1b[0m\x1b[32mb", "", 10));
+        assert_eq!(plain.rows[0].common_prefix(&chatty.rows[0]), 2);
+    }
+
+    #[rstest]
+    #[case::bel("\x1b]8;;http://x\x07a\x1b]8;;\x07b")]
+    #[case::st("\x1b]8;;http://x\x1b\\a\x1b]8;;\x1b\\b")]
+    fn a_hyperlink_is_part_of_the_cell_style(#[case] before: &str) {
+        let frame = layout(&input("", before, "", 10));
+        assert!(frame.rows[0].cells[0].style.link.contains("http://x"));
+        assert_eq!(&*frame.rows[0].cells[1].style.link, "");
+        assert_eq!(texts(&frame), vec!["ab"]);
+    }
+
+    #[test]
+    fn an_unrecognized_sequence_stays_in_place_at_no_width() {
+        let frame = layout(&input("", "a\x1b]1337;x\x07b", "", 10));
+        assert_eq!(frame.rows[0].cells[1].grapheme, "\x1b]1337;x\x07");
+        assert_eq!(frame.rows[0].cells[1].width, 0);
+        assert_eq!(frame.rows[0].width(), 2);
+        assert_eq!(frame.cursor, (2, 0));
+    }
+
+    #[test]
+    fn a_style_with_no_glyph_after_it_takes_no_cell() {
         let mut input = input("> ", "", "", 10);
         input.colors = Some(Colors {
             prompt: "\x1b[32m".into(),
@@ -779,10 +885,29 @@ mod tests {
             right: String::new(),
         });
         let frame = layout(&input);
-        let last = frame.rows[0].cells.last().unwrap();
-        assert_eq!(last.grapheme, "");
-        assert_eq!(last.prefix, "\x1b[33m\x1b[0m");
+        assert_eq!(frame.rows[0].cells.len(), 2);
         assert_eq!(frame.cursor, (2, 0));
+    }
+
+    #[test]
+    fn marks_sit_at_the_start_of_what_they_mark() {
+        let mut input = input("abc\n> ", "hi", "", 20);
+        input.prompt_right = "R";
+        input.markers = Some(Markers {
+            prompt_start: "A".into(),
+            input_start: "B".into(),
+            right_start: "P".into(),
+        });
+        let frame = layout(&input);
+        let at = |kind| {
+            let mark = frame.marks.iter().find(|m| m.kind == kind).unwrap();
+            (mark.col, mark.row)
+        };
+        assert_eq!(at(MarkKind::Prompt), (0, 0));
+        assert_eq!(at(MarkKind::Input), (2, 1));
+        assert_eq!(at(MarkKind::RightPrompt), (19, 0));
+        // None of it reached a cell.
+        assert_eq!(frame.rows[0].cells[0].grapheme, "a");
     }
 
     #[test]
@@ -807,37 +932,6 @@ mod tests {
         assert_eq!(new.common_prefix(&old), 1);
         assert_eq!(new.column_of(1), 1);
         assert_eq!(new.column_of(99), 2);
-    }
-
-    #[test]
-    fn sgr_state_replays_the_skipped_prefixes_and_stops_at_a_reset() {
-        let row = Row {
-            leading: "\x1b[1m".into(),
-            cells: vec![
-                Cell {
-                    prefix: "\x1b[31m\x1b]133;B\x07".into(),
-                    grapheme: "a".into(),
-                    width: 1,
-                    index: None,
-                },
-                Cell {
-                    prefix: "\x1b[0m\x1b[32m".into(),
-                    grapheme: "b".into(),
-                    width: 1,
-                    index: None,
-                },
-                Cell {
-                    prefix: String::new(),
-                    grapheme: "c".into(),
-                    width: 1,
-                    index: None,
-                },
-            ],
-        };
-        assert_eq!(row.sgr_state_through(0), "\x1b[1m");
-        // The OSC marker is not style and is not replayed.
-        assert_eq!(row.sgr_state_through(1), "\x1b[1m\x1b[31m");
-        assert_eq!(row.sgr_state_through(3), "\x1b[32m");
     }
 
     #[test]
