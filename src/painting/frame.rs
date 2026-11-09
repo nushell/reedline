@@ -1,4 +1,4 @@
-//! A frame painter, in the shape of fish's `screen.cpp`.
+//! A frame painter: lay the screen out first, then diff it against the last one.
 //!
 //! The painter in `painter.rs` streams text at the terminal and asks the
 //! terminal to remember where the cursor landed. Every row count it needs is
@@ -11,7 +11,7 @@
 //! position within the frame. One grapheme walk, [`advance_grapheme`], does
 //! all the wrapping, so there is exactly one row-counting model. The committer
 //! in `Painter::repaint_frame` then diffs the new frame against the last one
-//! and rewrites only the rows that changed, each positioned absolutely from
+//! and rewrites only the cells that changed, each row positioned absolutely from
 //! the prompt's anchor row.
 //!
 //! Escape sequences are carried raw. A starship prompt or a menu arrives as a
