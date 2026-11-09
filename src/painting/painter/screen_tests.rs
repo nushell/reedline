@@ -498,6 +498,35 @@ fn frame_long_hint_clips_instead_of_hiding_the_prompt() {
     assert_eq!(session.screen.scrolled(), 0);
 }
 
+/// A menu opened near the bottom gets the room the paint can scroll into,
+/// not the room below the anchor before the scroll.
+#[test]
+fn frame_menu_gets_the_room_the_scroll_makes() {
+    let mut session = Session::new(Engine::Frame, 20, 5, 3);
+    let prompt = FixedPrompt::new("> ", "");
+    let menu = ReedlineMenu::EngineCompleter(Box::new(super::tests::TestMenu::filling(2)));
+    let lines = Session::lines(&prompt, "ab", "");
+
+    session
+        .painter
+        .repaint_buffer(
+            &prompt,
+            &lines,
+            PromptEditMode::Default,
+            Some(&menu),
+            false,
+            &None,
+        )
+        .expect("repaint_buffer failed");
+    session.screen.sync(session.painter.stdout.captured());
+
+    assert_eq!(session.screen.scrolled(), 3);
+    assert_eq!(session.screen.row(0), "> ab");
+    assert_eq!(session.screen.row(1), "m1");
+    assert_eq!(session.screen.row(4), "m4");
+    assert_eq!(session.screen.cursor(), (4, 0));
+}
+
 // #477 and #897: the right prompt has to follow the right edge through a
 // horizontal resize, with a multiline left prompt and the right prompt on
 // its first row. The resize leaves the anchor to be re-verified, which the

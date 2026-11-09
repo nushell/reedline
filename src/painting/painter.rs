@@ -1010,17 +1010,13 @@ impl Painter {
         let mut frame = frame::layout(&input);
         let menu_text;
         if let Some(menu) = menu {
-            // Rows below the cursor's row from where the prompt is anchored
-            // now. Fewer than the menu's minimum, and the viewport scrolls the
-            // top of the frame off instead.
-            let rows_above = self
-                .prompt_start_row
-                .last_known_row()
-                .saturating_add(frame.cursor.1)
-                .saturating_add(1);
+            // Rows below the cursor's row once the paint has scrolled to make
+            // room, which it can up to the top of the screen, so the anchor
+            // does not enter into it. Fewer than the menu's minimum, and the
+            // viewport scrolls the top of the frame off instead.
             let available = self
                 .screen_height()
-                .saturating_sub(rows_above)
+                .saturating_sub(frame.cursor.1.saturating_add(1))
                 .max(menu.min_rows());
             menu_text = menu.menu_string(available, use_ansi_coloring);
             input.menu = Some(menu_text.trim_end_matches('\n'));
@@ -3289,9 +3285,13 @@ mod tests {
     /// `menu_required_lines` books them, and both derive from the same string so
     /// a test cannot describe a menu that draws more rows than it reserved.
     /// Everything else is unreachable in these tests.
-    struct TestMenu {
+    pub(super) struct TestMenu {
         contents: String,
         settings: MenuSettings,
+        /// `Some`: draw one `m<n>` row per available line instead of
+        /// `contents`, with this as the minimum, so a test can see how much
+        /// room the painter offered.
+        fills: Option<u16>,
     }
 
     impl TestMenu {
@@ -3299,6 +3299,16 @@ mod tests {
             Self {
                 contents: contents.to_string(),
                 settings: MenuSettings::default(),
+                fills: None,
+            }
+        }
+
+        /// A menu that fills whatever room it is given, `min_rows` at least.
+        pub(super) fn filling(min_rows: u16) -> Self {
+            Self {
+                contents: String::new(),
+                settings: MenuSettings::default(),
+                fills: Some(min_rows),
             }
         }
     }
@@ -3307,8 +3317,11 @@ mod tests {
         fn settings(&self) -> &MenuSettings {
             &self.settings
         }
-        fn menu_string(&self, _available_lines: u16, _use_ansi_coloring: bool) -> String {
-            self.contents.clone()
+        fn menu_string(&self, available_lines: u16, _use_ansi_coloring: bool) -> String {
+            match self.fills {
+                Some(_) => (1..=available_lines).map(|n| format!("m{n}\n")).collect(),
+                None => self.contents.clone(),
+            }
         }
         fn is_active(&self) -> bool {
             true
@@ -3350,7 +3363,7 @@ mod tests {
             self.contents.lines().count() as u16
         }
         fn min_rows(&self) -> u16 {
-            unimplemented!()
+            self.fills.unwrap_or_else(|| unimplemented!())
         }
         fn get_values(&self) -> &[Suggestion] {
             unimplemented!()
