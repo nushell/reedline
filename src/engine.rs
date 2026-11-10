@@ -2364,6 +2364,7 @@ impl Reedline {
             }
             ReedlineEvent::Multiple(events) => {
                 let mut latest_signal = EventStatus::Inapplicable;
+                let mut exit_signal = None;
                 for event in events {
                     match self.handle_editor_event(prompt, event)? {
                         EventStatus::Handled => {
@@ -2373,12 +2374,13 @@ impl Reedline {
                             // NO OP
                         }
                         EventStatus::Exits(signal) => {
-                            // TODO: Check if we want to allow execution to
-                            // proceed if there are more events after the
-                            // terminating
-                            return Ok(EventStatus::Exits(signal));
+                            exit_signal = Some(signal);
                         }
                     }
+                }
+
+                if let Some(signal) = exit_signal {
+                    return Ok(EventStatus::Exits(signal));
                 }
 
                 Ok(latest_signal)
