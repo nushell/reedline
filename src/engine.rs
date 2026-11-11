@@ -10045,4 +10045,51 @@ mod tests {
         assert!(output.contains("ls27"));
         assert!(!output.contains("ls28"));
     }
+
+    /// A `Multiple` that contains an edit followed by CtrlC applies the edit
+    /// before returning the exit signal. Before the fix, the exit was returned
+    /// immediately and the edit was lost.
+    #[test]
+    fn multiple_processes_events_before_an_exit() {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[EditCommand::InsertString("hello".into())]);
+
+        let status = send(
+            &mut reedline,
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Edit(vec![EditCommand::InsertChar('!')]),
+                ReedlineEvent::CtrlC,
+            ]),
+        );
+
+        let EventStatus::Exits(Signal::CtrlC(buffer)) = status else {
+            panic!("Multiple did not exit with CtrlC");
+        };
+        // CtrlC captured the buffer after the edit was applied.
+        assert_eq!(buffer, "hello!");
+    }
+
+    /// A `Multiple` that contains CtrlC followed by an edit still runs the
+    /// trailing edit. The exit signal is deferred to the end so every event
+    /// in the sequence has a chance to run.
+    #[test]
+    fn multiple_processes_events_after_an_exit() {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[EditCommand::InsertString("hello".into())]);
+
+        let status = send(
+            &mut reedline,
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::CtrlC,
+                ReedlineEvent::Edit(vec![EditCommand::InsertChar('!')]),
+            ]),
+        );
+
+        let EventStatus::Exits(Signal::CtrlC(buffer)) = status else {
+            panic!("Multiple did not exit with CtrlC");
+        };
+        // CtrlC grabbed "hello" before clearing; the trailing edit then ran.
+        assert_eq!(buffer, "hello");
+        assert_eq!(reedline.current_buffer_contents(), "!");
+    }
 }
