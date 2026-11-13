@@ -113,3 +113,102 @@ impl CwdAwareHinter {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::history::{FileBackedHistory, HistoryItem};
+    use rstest::rstest;
+
+    fn file_history(lines: &[&str]) -> FileBackedHistory {
+        let mut history = FileBackedHistory::new(16).unwrap();
+        for line in lines {
+            history.save(HistoryItem::from_command_line(*line)).unwrap();
+        }
+        history
+    }
+
+    // `FileBackedHistory` cannot filter by cwd, so these exercise the fallback
+    // to the plain prefix search.
+    #[rstest]
+    #[case::rest_of_latest_match("hello ", "world")]
+    #[case::multibyte_prefix("café ", "latte")]
+    #[case::exact_entry_leaves_nothing("hello world", "")]
+    #[case::no_match("zzz", "")]
+    fn falls_back_to_prefix_search_without_cwd_support(#[case] line: &str, #[case] hint: &str) {
+        let history = file_history(&["café latte", "hello world"]);
+        let mut hinter = CwdAwareHinter::default();
+        assert_eq!(
+            hinter.handle(line, line.len(), &history, false, "/tmp"),
+            hint
+        );
+    }
+
+    #[test]
+    fn no_hint_below_min_chars() {
+        let history = file_history(&["hello world"]);
+        let mut hinter = CwdAwareHinter::default().with_min_chars(3);
+        assert_eq!(hinter.handle("he", 2, &history, false, "/tmp"), "");
+        assert_eq!(hinter.complete_hint(), "");
+        assert_eq!(hinter.handle("hel", 3, &history, false, "/tmp"), "lo world");
+    }
+
+    #[test]
+    fn colors_only_a_non_empty_hint() {
+        let history = file_history(&["hello world"]);
+        let style = Style::new().fg(Color::Red);
+        let mut hinter = CwdAwareHinter::default().with_style(style);
+
+        assert_eq!(
+            hinter.handle("hello", 5, &history, true, "/tmp"),
+            style.paint(" world").to_string()
+        );
+        assert_eq!(hinter.complete_hint(), " world");
+        assert_eq!(hinter.handle("zzz", 3, &history, true, "/tmp"), "");
+    }
+
+    #[test]
+    fn next_token_is_the_first_word_of_the_hint() {
+        let history = file_history(&["git commit -m wip"]);
+        let mut hinter = CwdAwareHinter::default();
+        hinter.handle("git", 3, &history, false, "/tmp");
+        assert_eq!(hinter.next_hint_token(), " commit");
+    }
+
+    #[cfg(feature = "_sqlite")]
+    mod with_cwd {
+        use super::*;
+        use crate::history::SqliteBackedHistory;
+
+        fn sqlite_history(entries: &[(&str, &str)]) -> SqliteBackedHistory {
+            let mut history = SqliteBackedHistory::in_memory().unwrap();
+            for (line, cwd) in entries {
+                let mut item = HistoryItem::from_command_line(*line);
+                item.cwd = Some(cwd.to_string());
+                history.save(item).unwrap();
+            }
+            history
+        }
+
+        #[test]
+        fn prefers_an_entry_from_the_current_directory() {
+            let history = sqlite_history(&[("cargo test", "/repo"), ("cargo build", "/other")]);
+            let mut hinter = CwdAwareHinter::default();
+            assert_eq!(hinter.handle("cargo ", 6, &history, false, "/repo"), "test");
+            assert_eq!(
+                hinter.handle("cargo ", 6, &history, false, "/other"),
+                "build"
+            );
+        }
+
+        #[test]
+        fn falls_back_to_other_directories() {
+            let history = sqlite_history(&[("cargo test", "/repo")]);
+            let mut hinter = CwdAwareHinter::default();
+            assert_eq!(
+                hinter.handle("cargo ", 6, &history, false, "/elsewhere"),
+                "test"
+            );
+        }
+    }
+}
