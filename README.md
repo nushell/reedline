@@ -13,8 +13,8 @@
 ![GitHub](https://img.shields.io/github/license/nushell/reedline)
 [![Discord](https://img.shields.io/discord/601130461678272522.svg?logo=discord)](https://discord.gg/NtAbbGn)
 
-Reedline is a project to create a line editor (like bash's `readline` or zsh's `zle`) that supports many of the modern conveniences of CLIs, including syntax highlighting, completions, multiline support, Unicode support, and more.
-It is currently primarily developed as the interactive editor for [nushell](https://github.com/nushell/nushell) (starting with `v0.60`) striving to provide a pleasant interactive experience.
+Reedline is a line editor in the tradition of bash's `readline` and zsh's `zle`, built for what people expect from a modern shell: syntax highlighting, completions, interactive menus, history hints, multiline editing and more.
+It is currently primarily developed as the interactive editor for [nushell](https://github.com/nushell/nushell), striving to provide a pleasant interactive experience.
 
 ## Community and roadmap
 
