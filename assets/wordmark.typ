@@ -1,4 +1,4 @@
-// The reedline wordmark (F5). Build with build-wordmark.sh, which exports
+// The reedline wordmark. Build with `nu build-wordmark.nu`, which exports
 // light and dark SVGs and adds the cursor blink.
 //   --input font="Geist Mono"   typeface
 //   --input ink="#24292f"       colour of everything except the cursor
