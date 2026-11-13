@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./assets/logo-drafts/wordmark-geist-dark.svg">
-    <img src="./assets/logo-drafts/wordmark-geist-light.svg" alt="reedline" width="320">
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/wordmark-dark.svg">
+    <img src="./assets/wordmark-light.svg" alt="reedline" width="320">
   </picture>
 </p>
 
