@@ -18,10 +18,9 @@ It is currently primarily developed as the interactive editor for [nushell](http
 
 ## Community and roadmap
 
-Come talk to us in the `#reedline` channel of the [Nushell Discord](https://discord.gg/NtAbbGn).
-It is the quickest way to get an answer, and the best place to float an idea or a design before you put work into a pull request.
+Talk to us in the `#reedline` channel of the [Nushell Discord](https://discord.gg/NtAbbGn), ideally before you start a larger change.
 
-Where reedline is heading is tracked in the roadmap issues:
+Roadmap:
 
 - [Prompt, history, hints and the API](https://github.com/nushell/reedline/issues/1284)
 - [Edit modes: emacs, vi and helix](https://github.com/nushell/reedline/issues/1221)
@@ -29,21 +28,17 @@ Where reedline is heading is tracked in the roadmap issues:
 
 ## Features
 
-Each of the traits named here is yours to implement, and reedline ships a default for most of them.
-
-- `EditMode`: Emacs, Vi and Helix, each with configurable keybindings. Vi has operators, motions and visual mode, and you can switch between modes at runtime.
-- `Validator`: multiline editing, by deciding whether a line is complete or continues on the next row.
-- `Highlighter`: syntax highlighting as you type.
-- `Completer` and `Menu`: completions shown in a columnar, list, IDE-style or description menu.
-- `History`: in a plain file or in SQLite, shared between sessions, with interactive search.
-- `Hinter`: fish-style autosuggestions from the history.
-- `Prompt`: custom prompts, a transient prompt for finished lines, and semantic prompt markers (OSC 133).
-- `StatusLine`: a line under the buffer that comments on the input while you type.
-- Undo and redo, a cut buffer with optional system clipboard, visual selection, abbreviations and auto pairs.
-- Editing the current line in an external editor.
-- Bracketed paste, the kitty keyboard protocol and mouse click to move the cursor.
-- `ExternalPrinter`: printing from other threads while the prompt is active.
-- Cursor movement by grapheme cluster.
+- `EditMode`: Emacs, Vi and Helix with configurable keybindings, switchable at runtime.
+- `Validator`: multiline editing.
+- `Highlighter`: syntax highlighting.
+- `Completer` and `Menu`: completions in a columnar, list, IDE-style or description menu.
+- `History`: plain file or SQLite, shared between sessions, with interactive search.
+- `Hinter`: fish-style autosuggestions.
+- `Prompt`: custom and transient prompts, semantic prompt markers (OSC 133).
+- `StatusLine`: a live line under the buffer.
+- `ExternalPrinter`: output from other threads while the prompt is active.
+- Undo and redo, system clipboard, visual selection, abbreviations and auto pairs.
+- External editor, bracketed paste, kitty keyboard protocol and mouse click to move the cursor.
 
 ## Getting started
 
@@ -69,25 +64,23 @@ loop {
 }
 ```
 
-From here:
-
-- [`examples/`](./examples) has a small runnable program for each feature. `cargo run --example demo` combines most of them.
-- [docs.rs/reedline](https://docs.rs/reedline) is the API documentation, covering every trait and builder method.
-- [KEYBINDINGS.md](./KEYBINDINGS.md) lists the default bindings of each edit mode.
+- [`examples/`](./examples): one runnable program per feature. Start with `cargo run --example demo`.
+- [docs.rs/reedline](https://docs.rs/reedline): the API documentation.
+- [KEYBINDINGS.md](./KEYBINDINGS.md): the default keybindings.
 
 ## Crate features
 
-All features are off by default.
+All off by default.
 
-- `system_clipboard`: cut and paste through the system clipboard instead of reedline's own cut buffer.
+- `system_clipboard`: use the system clipboard.
 - `bashisms`: history expansion such as `!!` and `!$`.
-- `sqlite`: adds `SqliteBackedHistory`, which stores richer information about each entry. Statically links SQLite.
+- `sqlite`: `SqliteBackedHistory`, with SQLite linked statically.
 - `sqlite-dynlib`: the same, linked dynamically. Requires `sqlite >= 3.45.3`.
-- `libc`: makes crossterm use `libc` instead of `rustix` for its terminal calls.
+- `libc`: crossterm uses `libc` instead of `rustix`.
 
 ## Contributing
 
-[CONTRIBUTING.md](./CONTRIBUTING.md) covers when to talk to us first, the development setup, the checks CI runs and what a pull request should contain.
+See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## Alternatives
 
@@ -95,4 +88,4 @@ All features are off by default.
 
 ## License
 
-Reedline is released under the [MIT License](./LICENSE).
+[MIT](./LICENSE)
