@@ -504,7 +504,7 @@ impl IdeMenu {
             .default_details
             .border
             .as_ref()
-            .map(|border| border.vertical)
+            .map(|border| border.vertical.to_string())
             .unwrap_or_default();
 
         let display_value = suggestion.display_value();
@@ -1874,5 +1874,28 @@ mod tests {
         assert_eq!(menu.selection_at(details.space_left + 1, 1, 100, 100), None);
         assert_eq!(menu.selection_at(box_left + 1, 1, 100, 100), Some(0));
         assert_eq!(menu.selection_at(box_left + 1, 2, 100, 100), Some(1));
+    }
+
+    fn rendered_rows(menu: IdeMenu, values: &[&str], use_ansi_coloring: bool) -> Vec<String> {
+        let mut menu = menu;
+        setup_menu(
+            &mut menu,
+            &mut Editor::default(),
+            &mut FakeCompleter::new(values),
+            (100, 20),
+        );
+        menu.menu_string(20, use_ansi_coloring)
+            .split("\r\n")
+            .map(String::from)
+            .collect()
+    }
+
+    /// Without a border there is nothing to draw at the row edges.
+    #[rstest]
+    #[case::plain(false)]
+    #[case::colored(true)]
+    fn rows_without_border_have_no_edge_chars(#[case] use_ansi_coloring: bool) {
+        let rows = rendered_rows(IdeMenu::default(), &["ab", "cd"], use_ansi_coloring);
+        assert!(rows.iter().all(|row| !row.contains('\0')), "{rows:?}");
     }
 }
