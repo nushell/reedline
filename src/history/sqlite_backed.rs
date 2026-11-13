@@ -8,8 +8,14 @@ use crate::{
     result::{ReedlineError, ReedlineErrorVariants},
     Result,
 };
-use rusqlite::{named_params, params, Connection, ToSql, TransactionBehavior};
-use std::{path::PathBuf, time::Duration};
+use rusqlite::{
+    named_params, params, params_from_iter, types::Value, Connection, ErrorCode, OpenFlags, ToSql,
+    TransactionBehavior,
+};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 const SQLITE_APPLICATION_ID: i32 = 1151497937;
 
 /// A history that stores the values to an SQLite database.
@@ -225,6 +231,62 @@ impl History for SqliteBackedHistory {
         self.session
     }
 }
+
+/// Opens `file` for reading only, and says whether it has a history table.
+///
+/// Even a reader of a WAL database needs the `-shm` file, which SQLite cannot create in
+/// a read-only directory. Then the database is opened as immutable, which skips the
+/// shared memory and locking. Nothing can write to such a directory, and a clean shutdown
+/// folds the WAL back into the main file, so the main file is the whole history.
+fn open_read_only(file: &Path) -> rusqlite::Result<(Connection, bool)> {
+    let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    let has_history = |db: &Connection| {
+        db.query_row(
+            "select exists(select 1 from sqlite_master where type = 'table' and name = 'history')",
+            params![],
+            |r| r.get(0),
+        )
+    };
+
+    let db = Connection::open_with_flags(file, flags)?;
+    match has_history(&db) {
+        Ok(has) => Ok((db, has)),
+        Err(rusqlite::Error::SqliteFailure(err, _))
+            if matches!(err.code, ErrorCode::ReadOnly | ErrorCode::CannotOpen) =>
+        {
+            let db = Connection::open_with_flags(
+                immutable_uri(file),
+                flags | OpenFlags::SQLITE_OPEN_URI,
+            )?;
+            let has = has_history(&db)?;
+            Ok((db, has))
+        }
+        Err(err) => Err(err),
+    }
+}
+
+/// The `file:` URI that opens `file` as immutable, percent-encoding everything that is
+/// not a plain path character.
+fn immutable_uri(file: &Path) -> String {
+    let bytes = file.as_os_str().as_encoded_bytes();
+    let mut uri = String::from("file:");
+    // A Windows drive path becomes `file:/C:/...`.
+    if cfg!(windows) && bytes.get(1) == Some(&b':') {
+        uri.push('/');
+    }
+    for &byte in bytes {
+        match byte {
+            b'\\' if cfg!(windows) => uri.push('/'),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' | b':' => {
+                uri.push(byte as char)
+            }
+            _ => uri.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    uri.push_str("?immutable=1");
+    uri
+}
+
 fn map_sqlite_err(err: rusqlite::Error) -> ReedlineError {
     // TODO: better error mapping
     ReedlineError(ReedlineErrorVariants::HistoryDatabaseError(format!(
@@ -260,6 +322,60 @@ impl SqliteBackedHistory {
         let db = Connection::open(&file).map_err(map_sqlite_err)?;
         Self::from_connection(db, session, session_timestamp)
     }
+    /// Loads a history database without ever writing to it.
+    ///
+    /// Use this when [`SqliteBackedHistory::with_file`] fails because the database cannot
+    /// be written, for example on a read-only or full filesystem. The entries of the file
+    /// are copied into an in-memory database, so new entries and updates work as usual
+    /// but are gone once the history is dropped.
+    ///
+    /// A missing file, or one without a history table, loads as an empty history.
+    pub fn with_file_read_only(
+        file: PathBuf,
+        session: Option<HistorySessionId>,
+        session_timestamp: Option<HistoryTimestamp>,
+    ) -> Result<Self> {
+        let history = Self::from_connection(
+            Connection::open_in_memory().map_err(map_sqlite_err)?,
+            session,
+            session_timestamp,
+        )?;
+        if !file.exists() {
+            return Ok(history);
+        }
+
+        let (source, has_history) = open_read_only(&file).map_err(map_sqlite_err)?;
+        if !has_history {
+            return Ok(history);
+        }
+
+        // Ids are copied too, so they stay the ones the file uses.
+        const COLUMNS: &str = "id, command_line, start_timestamp, session_id, hostname, cwd, duration_ms, exit_status, more_info";
+        let tx = history.db.unchecked_transaction().map_err(map_sqlite_err)?;
+        {
+            let mut select = source
+                .prepare(&format!("select {COLUMNS} from history"))
+                .map_err(map_sqlite_err)?;
+            let mut insert = tx
+                .prepare(&format!(
+                    "insert into history ({COLUMNS}) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
+                ))
+                .map_err(map_sqlite_err)?;
+            let mut rows = select.query(params![]).map_err(map_sqlite_err)?;
+            while let Some(row) = rows.next().map_err(map_sqlite_err)? {
+                let values = (0..9)
+                    .map(|i| row.get::<_, Value>(i))
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .map_err(map_sqlite_err)?;
+                insert
+                    .execute(params_from_iter(values))
+                    .map_err(map_sqlite_err)?;
+            }
+        }
+        tx.commit().map_err(map_sqlite_err)?;
+        Ok(history)
+    }
+
     /// Creates a new history in memory
     pub fn in_memory() -> Result<Self> {
         Self::from_connection(
@@ -1237,6 +1353,45 @@ mod tests {
                 count: 2,
             })
         );
+        Ok(())
+    }
+
+    /// `?`, `%` and `#` mean something in a URI, so the immutable fallback has to escape
+    /// them to open the right file. Windows does not allow `?` in file names.
+    #[cfg(unix)]
+    #[test]
+    fn immutable_uri_escapes_the_path() -> crate::Result<()> {
+        let tmp = tempfile::tempdir().unwrap();
+        let histfile = tmp.path().join("odd ?name%2#.db");
+        let mut history = SqliteBackedHistory::with_file(histfile.clone(), None, None)?;
+        history.save(HistoryItem::from_command_line("ls"))?;
+        drop(history);
+
+        let db = Connection::open_with_flags(
+            immutable_uri(&histfile),
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
+        )
+        .map_err(map_sqlite_err)?;
+        let count: i64 = db
+            .query_row("select count(*) from history", params![], |r| r.get(0))
+            .map_err(map_sqlite_err)?;
+        assert_eq!(count, 1);
+        Ok(())
+    }
+
+    /// While another session holds the database open, its newest entries may still sit in
+    /// the WAL. A read-only history has to see them.
+    #[test]
+    fn read_only_history_sees_entries_in_the_wal() -> crate::Result<()> {
+        let tmp = tempfile::tempdir().unwrap();
+        let histfile = tmp.path().join("history.sqlite3");
+        let mut writer = SqliteBackedHistory::with_file(histfile.clone(), None, None)?;
+        writer.save(HistoryItem::from_command_line("ls"))?;
+        assert!(tmp.path().join("history.sqlite3-wal").exists());
+
+        let reader = SqliteBackedHistory::with_file_read_only(histfile, None, None)?;
+        assert_eq!(reader.count_all()?, 1);
+        drop(writer);
         Ok(())
     }
 

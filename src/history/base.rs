@@ -469,6 +469,93 @@ mod test {
         Ok(())
     }
 
+    /// Snapshot of every file in `dir` with its contents, to prove nothing was written.
+    fn dir_contents(dir: &std::path::Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
+        let mut files: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| {
+                let path = entry.unwrap().path();
+                let bytes = std::fs::read(&path).unwrap();
+                (path, bytes)
+            })
+            .collect();
+        files.sort();
+        files
+    }
+
+    /// Sets `dir` and the files in it read-only, or writable again.
+    #[cfg(unix)]
+    fn set_read_only(dir: &std::path::Path, read_only: bool) {
+        use std::os::unix::fs::PermissionsExt;
+        let (dir_mode, file_mode) = if read_only {
+            (0o555, 0o444)
+        } else {
+            (0o755, 0o644)
+        };
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(file_mode)).unwrap();
+        }
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(dir_mode)).unwrap();
+    }
+
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn read_only_history_never_writes(#[case] backend: TestBackend) -> Result<()> {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut history = backend.in_dir(tmp.path());
+        history.save(create_item(1, "/home/me", "cd ~/Downloads", 0))?;
+        history.save(create_item(1, "/home/me/Downloads", "unzp foo.zip", 1))?;
+        drop(history);
+
+        #[cfg(unix)]
+        set_read_only(tmp.path(), true);
+        let before = dir_contents(tmp.path());
+
+        let mut history = backend.read_only_in_dir(tmp.path());
+        assert_eq!(history.count_all()?, 2);
+        history.save(create_item(1, "/home/me", "ls", 0))?;
+        assert_eq!(history.count_all()?, 3);
+        let _ = history.sync();
+        drop(history);
+
+        assert_eq!(dir_contents(tmp.path()), before);
+        #[cfg(unix)]
+        set_read_only(tmp.path(), false);
+
+        // The entry saved while read-only lived in memory only.
+        assert_eq!(backend.in_dir(tmp.path()).count_all()?, 2);
+        Ok(())
+    }
+
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn read_only_history_of_missing_file_is_empty(#[case] backend: TestBackend) -> Result<()> {
+        let tmp = tempfile::tempdir().unwrap();
+        let history = backend.read_only_in_dir(tmp.path());
+        assert_eq!(history.count_all()?, 0);
+        assert!(dir_contents(tmp.path()).is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn read_only_file_history_keeps_newest_entries() -> Result<()> {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("history.txt");
+        std::fs::write(&path, "one\ntwo\nthree\n").unwrap();
+
+        let history = crate::FileBackedHistory::with_file_read_only(2, path)?;
+        let commands: Vec<_> = history
+            .search(SearchQuery::everything(SearchDirection::Forward, None))?
+            .into_iter()
+            .map(|item| item.command_line)
+            .collect();
+        assert_eq!(commands, ["two", "three"]);
+        Ok(())
+    }
+
     #[test]
     fn history_size_zero() -> Result<()> {
         let mut history = crate::FileBackedHistory::new(0)?;
