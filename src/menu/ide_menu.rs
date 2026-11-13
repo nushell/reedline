@@ -5,7 +5,7 @@ use crate::{
         available_lines, get_match_indices, resolve_completer_input, scroll_offset,
         style_suggestion, truncate_with_ansi, CompletionDisplay, CompletionPhase,
     },
-    painting::Painter,
+    painting::{line_width, Painter},
     Completer, Suggestion,
 };
 use nu_ansi_term::ansi::RESET;
@@ -559,7 +559,15 @@ impl IdeMenu {
                 vertical_border,
             )
         } else {
+            // The marker has no column of its own in the box, so it takes one
+            // from the padding, or from the value when that already fills it.
             let marker = if index == self.index() { ">" } else { "" };
+            let string = truncate_with_ansi(
+                display_value,
+                max_string_width.saturating_sub(marker.width()),
+            );
+            let padding_right = (self.working_details.completion_width as usize)
+                .saturating_sub(line_width(&string) + marker.width() + border_width + padding);
 
             format!(
                 "{}{}{}{}{}{}",
@@ -1897,5 +1905,17 @@ mod tests {
     fn rows_without_border_have_no_edge_chars(#[case] use_ansi_coloring: bool) {
         let rows = rendered_rows(IdeMenu::default(), &["ab", "cd"], use_ansi_coloring);
         assert!(rows.iter().all(|row| !row.contains('\0')), "{rows:?}");
+    }
+
+    /// The `>` marking the selection without color takes its column from the
+    /// row, so every row stays as wide as the border around it.
+    #[rstest]
+    #[case::room_to_spare(&["ab", "cd"], "│>ab│")]
+    #[case::longest_selected(&["abcdef", "gh"], "│>ab...│")]
+    fn plain_selected_row_keeps_the_box_width(#[case] values: &[&str], #[case] selected: &str) {
+        let rows = rendered_rows(IdeMenu::default().with_default_border(), values, false);
+        let box_width = rows[0].width();
+        assert!(rows.iter().all(|row| row.width() == box_width), "{rows:?}");
+        assert_eq!(rows[1], selected);
     }
 }
