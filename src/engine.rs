@@ -3595,8 +3595,10 @@ impl Reedline {
     ///
     /// Common values are 33ms (~30fps) for UI updates or 100ms for less frequent tasks.
     ///
-    /// Note: This setting only takes effect when an external printer or idle callback
-    /// is configured. Without these features, Reedline blocks until input is received.
+    /// Note: This setting only takes effect while something needs polling: an
+    /// idle callback, a break signal, a live repaint handle, or an external
+    /// printer whose [`ExternalOutput::needs_polling`] returns `true`. Otherwise
+    /// Reedline blocks until input is received.
     ///
     /// # Example
     /// ```no_run

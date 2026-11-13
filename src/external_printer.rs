@@ -81,6 +81,11 @@ pub trait ExternalOutput: Send {
     /// arrives anyway is printed after the next key press. Return `false` only
     /// when nothing is waiting to be drained and nothing can arrive. The
     /// default keeps checking.
+    ///
+    /// Check that nothing can arrive before checking that nothing is waiting,
+    /// or read both under one lock. Checked the other way round, a sender can
+    /// queue its last text and finish between the two reads, and the answer
+    /// is `false` with text left waiting.
     fn needs_polling(&self) -> bool {
         true
     }
