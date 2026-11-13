@@ -7,8 +7,8 @@ use crate::painting::test_screen::TestScreen;
 
 use {
     super::utils::{
-        advance_grapheme, coerce_crlf, deferred_wrap_row, escape_control, line_width,
-        plain_menu_text, resolve_wrap, wrap_position,
+        advance_grapheme, certain_line_width, coerce_crlf, deferred_wrap_row, escape_control,
+        line_width, plain_menu_text, resolve_wrap, wrap_position,
     },
     crate::{
         menu::{Menu, ReedlineMenu},
@@ -1003,18 +1003,35 @@ impl Painter {
                 self.prompt_start_row.mark_verified(scrolled_row);
             }
 
+            let anchor_row = self.prompt_start_row.last_known_row();
+            let layout = self.compute_layout(lines, menu, block_rows, status_rows);
+
             // Moving the cursor to the start of the prompt
             // from this position everything will be printed
-            let anchor_row = self.prompt_start_row.last_known_row();
-            self.clear_from_anchor(anchor_row)?;
-
-            let layout = self.compute_layout(lines, menu, block_rows, status_rows);
+            //
+            // Over the previous paint where that is safe, so a terminal that
+            // draws partway through shows the old text instead of an erased
+            // block (#1302). What the new text does not cover is erased once
+            // it is all printed.
+            let in_place = (!anchor_uninitialized)
+                .then(|| self.in_place_rows(lines, menu, &layout, anchor_row))
+                .flatten();
+            match in_place {
+                Some(_) => {
+                    self.stdout.queue(cursor::MoveTo(0, anchor_row))?;
+                }
+                None => self.clear_from_anchor(anchor_row)?,
+            }
 
             let margin_cursor_row = if self.large_buffer {
                 self.print_large_buffer(prompt, lines, menu, use_ansi_coloring, &layout)?
             } else {
                 self.print_small_buffer(prompt, lines, menu, use_ansi_coloring, &layout)?
             };
+
+            if let Some(widths) = &in_place {
+                self.erase_leftovers(widths, anchor_row, &layout)?;
+            }
 
             self.exit_right_prompt = layout.right_prompt.map(|rp| {
                 let text = coerce_crlf(&lines.prompt_str_right);
@@ -1337,6 +1354,109 @@ impl Painter {
                 .queue(Clear(ClearType::FromCursorDown))?
                 .queue(cursor::MoveTo(0, row))?;
         } else {
+            self.stdout
+                .queue(cursor::MoveTo(0, row))?
+                .queue(Clear(ClearType::FromCursorDown))?;
+        }
+        Ok(())
+    }
+
+    /// The width of every row of a paint that can be drawn over the previous
+    /// one, top to bottom, or `None` for a paint that has to erase first.
+    ///
+    /// Drawing in place needs to know where each row's text ends, to erase
+    /// what the previous paint left behind it. That is only certain for the
+    /// plain case, which is also the one a user types in: prompt, buffer and
+    /// hint, each line on a row of its own, all of it on the screen, measured
+    /// by [`certain_line_width`]. A menu, a status line, a large buffer, a
+    /// wrapping line or text some terminal may measure differently keeps the
+    /// erase up front, where a wrong width costs nothing.
+    fn in_place_rows(
+        &self,
+        lines: &PromptLines,
+        menu: Option<&ReedlineMenu>,
+        layout: &PromptLayout,
+        anchor_row: u16,
+    ) -> Option<Vec<u16>> {
+        if self.large_buffer
+            || self.term_is_dumb
+            || menu.is_some()
+            || layout.status_start_row.is_some()
+        {
+            return None;
+        }
+        // What `print_small_buffer` prints without a menu, in its order.
+        let text = [
+            &*lines.prompt_str_left,
+            &*lines.prompt_indicator,
+            &*lines.before_cursor,
+            &*lines.after_cursor,
+            &*lines.hint,
+        ]
+        .concat();
+        let screen_width = self.screen_width();
+        let widths = text
+            .split('\n')
+            .map(|line| certain_line_width(line.strip_suffix('\r').unwrap_or(line), screen_width))
+            .collect::<Option<Vec<u16>>>()?;
+        let rows = u16::try_from(widths.len()).ok()?;
+        let end_row = anchor_row.checked_add(rows)?;
+        if let Some(right) = &layout.right_prompt {
+            // Its bounds come from an estimate of its width. Nothing is
+            // erased behind it, so it has to end on the margin for certain,
+            // on one of the rows measured above. A line break in it fails
+            // the width, and with it the rows no bounds record.
+            let width = certain_line_width(&lines.prompt_str_right, u16::MAX)?;
+            let ends_on_margin = right.end_col == screen_width
+                && right.end_col.checked_sub(right.start_col) == Some(width);
+            if !ends_on_margin || !(anchor_row..end_row).contains(&right.row) {
+                return None;
+            }
+        }
+        (end_row <= self.screen_height()).then_some(widths)
+    }
+
+    /// Erase what a paint drawn in place did not cover: behind the text of
+    /// each of its rows, of the `widths` [`Painter::in_place_rows`] measured,
+    /// and everything below the last one.
+    ///
+    /// After every print, and with the style reset, since an erase fills with
+    /// the background in effect. Each row is addressed absolutely, with no
+    /// save: the one slot already holds where the cursor belongs. The erase
+    /// below never starts on the home cell, see [`Painter::clear_from_anchor`].
+    fn erase_leftovers(
+        &mut self,
+        widths: &[u16],
+        anchor_row: u16,
+        layout: &PromptLayout,
+    ) -> Result<()> {
+        self.stdout.queue(SetAttribute(Attribute::Reset))?;
+        let mut row = anchor_row;
+        for &width in widths {
+            match layout
+                .right_prompt
+                .as_ref()
+                .filter(|right| right.row == row)
+            {
+                // Only up to the right prompt, which ends on the margin and
+                // was drawn before the buffer: erase the gap, not the line.
+                Some(right) => {
+                    let gap = right.start_col.saturating_sub(width);
+                    if gap > 0 {
+                        self.stdout
+                            .queue(cursor::MoveTo(width, row))?
+                            .queue(Print(format!("\x1b[{gap}X")))?;
+                    }
+                }
+                None => {
+                    self.stdout
+                        .queue(cursor::MoveTo(width, row))?
+                        .queue(Clear(ClearType::UntilNewLine))?;
+                }
+            }
+            row = row.saturating_add(1);
+        }
+        if row < self.screen_height() {
             self.stdout
                 .queue(cursor::MoveTo(0, row))?
                 .queue(Clear(ClearType::FromCursorDown))?;
@@ -3610,11 +3730,20 @@ mod tests {
         // as "\x1b[J", so that contiguous pair is exactly the bug (#1062).
         // Deliberately coupled to crossterm's escape encoding — it's the
         // byte-level contract we care about.
-        let (out, ..) = capture_repaint(&make_lines(TEST_PROMPT, "", "RP", "hello", ""), 0);
-        assert!(
-            !out.contains("\x1b[1;1H\x1b[J"),
-            "erase-below at home cell (0,0) would make tmux snapshot the prompt to history; emitted: {out:?}"
-        );
+        //
+        // Both kinds of paint: one that erases first, since its line reaches
+        // the margin of the 20 columns, and one drawn in place.
+        for before in [&*"a".repeat(18), "hello"] {
+            let (out, ..) = capture_repaint(&make_lines(TEST_PROMPT, "", "RP", before, ""), 0);
+            assert!(
+                out.contains("\x1b[J"),
+                "meant to exercise an erase-below; emitted: {out:?}"
+            );
+            assert!(
+                !out.contains("\x1b[1;1H\x1b[J"),
+                "erase-below at home cell (0,0) would make tmux snapshot the prompt to history; emitted: {out:?}"
+            );
+        }
     }
 
     #[test]
@@ -3622,7 +3751,12 @@ mod tests {
         // Sanity: away from the home cell the plain MoveTo + erase-below is
         // correct (tmux is not triggered), so the workaround must not apply
         // there. MoveTo(0,3) == "\x1b[4;1H".
-        let (out, ..) = capture_repaint(&make_lines(TEST_PROMPT, "", "RP", "hello", ""), 3);
+        //
+        // The line reaches the margin of the 20 columns, which keeps this
+        // paint on the erase-first path; a shorter one is drawn in place and
+        // erases nothing from the anchor.
+        let before = "a".repeat(18);
+        let (out, ..) = capture_repaint(&make_lines(TEST_PROMPT, "", "RP", &before, ""), 3);
         assert!(
             out.contains("\x1b[4;1H\x1b[J"),
             "expected an erase-below from the anchor row; emitted: {out:?}"

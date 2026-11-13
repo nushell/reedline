@@ -94,6 +94,26 @@ impl TestScreen {
             .collect()
     }
 
+    /// What every cell holds, by row and then column, blanks as empty
+    /// strings. Unlike [`TestScreen::rows`] this keeps the columns apart, so
+    /// two screens can be compared cell by cell.
+    pub(crate) fn cells(&self) -> Vec<Vec<String>> {
+        let screen = self.parser.screen();
+        let (height, width) = screen.size();
+        (0..height)
+            .map(|row| {
+                (0..width)
+                    .map(|col| {
+                        screen
+                            .cell(row, col)
+                            .map(|cell| cell.contents().trim().to_owned())
+                            .unwrap_or_default()
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
     /// Where the cursor is, as `(column, row)` like the painter and crossterm
     /// count it. The column equals the screen width while a wrap is pending.
     pub(crate) fn cursor(&self) -> (u16, u16) {
