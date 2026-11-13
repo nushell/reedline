@@ -140,3 +140,64 @@ fn get_keybinding_strings(
 
     data
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn keycodes_are_listed_by_name() {
+        let keycodes = get_reedline_keycodes();
+        assert_eq!(keycodes.len(), 19);
+        assert_eq!(keycodes.first().map(String::as_str), Some("Backspace"));
+        for name in ["Enter", "F<number>", "Space", "Char_<letter>", "Esc"] {
+            assert!(keycodes.iter().any(|kc| kc == name), "missing {name}");
+        }
+    }
+
+    #[test]
+    fn modifiers_have_no_duplicates() {
+        let modifiers = get_reedline_keybinding_modifiers();
+        let unique: HashSet<_> = modifiers.iter().collect();
+        assert_eq!(unique.len(), modifiers.len());
+        assert!(modifiers.iter().any(|m| m == "None"));
+    }
+
+    #[test]
+    fn default_keybindings_cover_every_mode() {
+        let bindings = get_reedline_default_keybindings();
+        let modes: HashSet<_> = bindings.iter().map(|(mode, ..)| mode.as_str()).collect();
+        assert_eq!(
+            modes,
+            HashSet::from([
+                "emacs",
+                "vi_normal",
+                "vi_insert",
+                "helix_normal",
+                "helix_insert"
+            ])
+        );
+    }
+
+    #[test]
+    fn default_keybindings_are_sorted_within_each_mode() {
+        let bindings = get_reedline_default_keybindings();
+        for mode in ["emacs", "vi_normal", "vi_insert"] {
+            let rows: Vec<_> = bindings.iter().filter(|(m, ..)| m == mode).collect();
+            assert!(!rows.is_empty(), "no bindings for {mode}");
+            assert!(rows.is_sorted(), "{mode} bindings are not sorted");
+        }
+    }
+
+    #[test]
+    fn emacs_ctrl_c_is_listed_as_strings() {
+        let bindings = get_reedline_default_keybindings();
+        assert!(bindings
+            .iter()
+            .any(|(mode, modifier, key, event)| mode == "emacs"
+                && modifier == "KeyModifiers(CONTROL)"
+                && key == "Char('c')"
+                && event == "CtrlC"));
+    }
+}
