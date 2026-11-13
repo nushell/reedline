@@ -1351,23 +1351,16 @@ impl Reedline {
     /// indefinitely, so external triggers (break signal, repaint signal,
     /// external printer, idle callback) are noticed while waiting for input.
     fn input_needs_polling(&self) -> bool {
-        #[allow(unused_mut)] // Dependent on feature flags
-        let mut poll = self.break_signal.is_some()
+        self.break_signal.is_some()
             || self
                 .repaint_signal
                 .as_ref()
-                .is_some_and(|sig| Arc::strong_count(&sig.flag) > 1);
-
-        {
-            poll |= self
+                .is_some_and(|sig| Arc::strong_count(&sig.flag) > 1)
+            || self
                 .external_printer
                 .as_ref()
-                .is_some_and(|printer| printer.needs_polling());
-        }
-
-        poll |= self.idle_callback.is_some();
-
-        poll
+                .is_some_and(|printer| printer.needs_polling())
+            || self.idle_callback.is_some()
     }
 
     /// Reset the per-call state at the start of a `read_line`, before anything
@@ -6976,6 +6969,37 @@ mod tests {
         assert!(!reedline.take_repaint_request());
     }
 
+    #[test]
+    fn take_repaint_request_consumes_the_request() {
+        let mut reedline = Reedline::create();
+        let signal = reedline.repaint_signal();
+
+        signal.request_repaint();
+        assert!(reedline.take_repaint_request());
+        // Consumed: no repaint left pending
+        assert!(!reedline.take_repaint_request());
+
+        // A new request is honored again
+        signal.request_repaint();
+        assert!(reedline.take_repaint_request());
+        assert!(!reedline.take_repaint_request());
+    }
+
+    #[test]
+    fn repaint_signal_switches_input_loop_to_polling() {
+        let mut reedline = Reedline::create();
+        assert!(
+            !reedline.input_needs_polling(),
+            "without external triggers the loop should block on input"
+        );
+
+        let _signal = reedline.repaint_signal();
+        assert!(
+            reedline.input_needs_polling(),
+            "a repaint handle must switch the loop to polling so requests are noticed"
+        );
+    }
+
     /// An external printer whose `needs_polling` answer the test sets.
     struct SwitchablePrinter(Arc<AtomicBool>);
 
@@ -7013,37 +7037,6 @@ mod tests {
         assert!(
             reedline.input_needs_polling(),
             "a printer without its own answer must keep the loop polling"
-        );
-    }
-
-    #[test]
-    fn take_repaint_request_consumes_the_request() {
-        let mut reedline = Reedline::create();
-        let signal = reedline.repaint_signal();
-
-        signal.request_repaint();
-        assert!(reedline.take_repaint_request());
-        // Consumed: no repaint left pending
-        assert!(!reedline.take_repaint_request());
-
-        // A new request is honored again
-        signal.request_repaint();
-        assert!(reedline.take_repaint_request());
-        assert!(!reedline.take_repaint_request());
-    }
-
-    #[test]
-    fn repaint_signal_switches_input_loop_to_polling() {
-        let mut reedline = Reedline::create();
-        assert!(
-            !reedline.input_needs_polling(),
-            "without external triggers the loop should block on input"
-        );
-
-        let _signal = reedline.repaint_signal();
-        assert!(
-            reedline.input_needs_polling(),
-            "a repaint handle must switch the loop to polling so requests are noticed"
         );
     }
 
