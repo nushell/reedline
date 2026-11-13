@@ -70,4 +70,4 @@ Go through the checklist in [UX_TESTING.md](./UX_TESTING.md) and paste it into y
 
 ## How it started
 
-Reedline began as a series of [live-coding streams](https://www.twitch.tv/jntrnr) by [Sophia J. Turner](https://github.com/sophiajt).
+Reedline began as a series of [live-coding streams](https://www.twitch.tv/jntrnr) by JT.
