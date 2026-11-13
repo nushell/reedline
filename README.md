@@ -71,9 +71,9 @@ loop {
 
 From here:
 
-- To see a feature working, run its program in [`examples`](./examples). `cargo run --example demo` combines most of them.
-- To implement a trait or look up a builder method, read the [API documentation](https://docs.rs/reedline).
-- To learn or rebind keys, [KEYBINDINGS.md](./KEYBINDINGS.md) lists the defaults of each edit mode.
+- [`examples/`](./examples) has a small runnable program for each feature. `cargo run --example demo` combines most of them.
+- [docs.rs/reedline](https://docs.rs/reedline) is the API documentation, covering every trait and builder method.
+- [KEYBINDINGS.md](./KEYBINDINGS.md) lists the default bindings of each edit mode.
 
 ## Crate features
 
@@ -87,8 +87,12 @@ All features are off by default.
 
 ## Contributing
 
-[CONTRIBUTING.md](./CONTRIBUTING.md) has good starting points, the development setup and the checks CI runs.
+[CONTRIBUTING.md](./CONTRIBUTING.md) covers when to talk to us first, the development setup, the checks CI runs and what a pull request should contain.
 
 ## Alternatives
 
 - [rustyline](https://crates.io/crates/rustyline)
+
+## License
+
+Reedline is released under the [MIT License](./LICENSE).
