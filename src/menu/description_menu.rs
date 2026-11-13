@@ -487,6 +487,7 @@ impl Menu for DescriptionMenu {
                 MenuEvent::Activate(_) => {
                     self.reset_position();
                     self.update_values(editor, completer);
+                    self.update_examples();
                 }
                 MenuEvent::Deactivate => self.active = false,
                 MenuEvent::Edit(_) => {
@@ -947,5 +948,26 @@ mod tests {
         assert_eq!(menu.examples, ["beta example"]);
         assert_eq!(menu.example_index, None);
         assert_eq!(menu.skipped_rows, 0);
+    }
+
+    /// The first entry is selected on activation, so its examples show
+    /// right away, and none chosen in an earlier session stays chosen.
+    #[test]
+    fn activation_loads_the_first_entry_examples() {
+        let mut menu = DescriptionMenu {
+            examples: vec!["stale".to_string()],
+            example_index: Some(0),
+            ..Default::default()
+        };
+
+        setup_menu(
+            &mut menu,
+            &mut Editor::default(),
+            &mut ExampleCompleter,
+            (100, 100),
+        );
+
+        assert_eq!(menu.examples, ["alpha example"]);
+        assert_eq!(menu.example_index, None);
     }
 }
