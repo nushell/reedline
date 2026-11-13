@@ -4324,11 +4324,7 @@ mod tests {
             let buffer = context.buffer();
             let point = context.insertion_point();
 
-            if open == close && Self::inside_unclosed_quote(buffer, point, open) {
-                return false;
-            }
-
-            true
+            !(open == close && Self::inside_unclosed_quote(buffer, point, open))
         }
     }
 
