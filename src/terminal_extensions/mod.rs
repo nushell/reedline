@@ -13,9 +13,15 @@ pub fn kitty_protocol_available() -> bool {
     // The probe needs raw mode for its round trip to the terminal. Entering it
     // here, rather than letting crossterm do it, keeps output processing on
     // while the probe waits for the answer.
+    //
+    // Only on Unix: elsewhere crossterm's probe is a constant `false` that
+    // never touches the console, and entering raw mode for it would leave the
+    // console input mode changed afterwards.
+    #[cfg(unix)]
     let entered =
         !crossterm::terminal::is_raw_mode_enabled().unwrap_or(false) && raw_mode::enable().is_ok();
     let available = crossterm::terminal::supports_keyboard_enhancement().unwrap_or_default();
+    #[cfg(unix)]
     if entered {
         let _ = crossterm::terminal::disable_raw_mode();
     }
