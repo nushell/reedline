@@ -10192,7 +10192,9 @@ mod tests {
     }
 
     /// A footer never costs the status line or a menu their rows: when a menu
-    /// needs them back, the footer gives way first, at every height.
+    /// needs them back, the footer gives way first, at every height. It shows
+    /// once the screen has its own rows to spare above what the status line
+    /// needs, however tall the menu.
     #[rstest]
     #[case::ide(|| ReedlineMenu::EngineCompleter(Box::new(
         crate::IdeMenu::default().with_name("completion_menu"),
@@ -10200,8 +10202,14 @@ mod tests {
     #[case::columnar(|| ReedlineMenu::EngineCompleter(Box::new(
         ColumnarMenu::default().with_name("completion_menu"),
     )))]
+    #[case::list(|| ReedlineMenu::EngineCompleter(Box::new(
+        ListMenu::default().with_name("completion_menu"),
+    )))]
+    #[case::description(|| ReedlineMenu::EngineCompleter(Box::new(
+        crate::DescriptionMenu::default().with_name("completion_menu"),
+    )))]
     fn footer_gives_way_to_the_status_line_and_a_menu(#[case] menu: fn() -> ReedlineMenu) {
-        for height in 3..=12 {
+        for height in 3..=30 {
             let (status, entry, _) = status_menu_footer_drawn(menu(), "", height);
             let (status_with_footer, entry_with_footer, _) =
                 status_menu_footer_drawn(menu(), "foot1\nfoot2", height);
@@ -10211,8 +10219,14 @@ mod tests {
                 "status line and menu at height {height}"
             );
         }
-        let (_, _, footer) = status_menu_footer_drawn(menu(), "foot1\nfoot2", 12);
-        assert!(footer, "footer drawn once there is room");
+        let status_from = (3..=30).find(|&height| status_menu_footer_drawn(menu(), "", height).0);
+        let footer_from =
+            (3..=30).find(|&height| status_menu_footer_drawn(menu(), "foot1\nfoot2", height).2);
+        assert!(
+            status_from.is_some(),
+            "status line drawn once there is room"
+        );
+        assert_eq!(footer_from, status_from.map(|height| height + 2));
     }
 
     /// The footer takes the row after the status line.
@@ -10282,5 +10296,26 @@ mod tests {
         let output = repaint_output_with(&mut rl, &footer_prompt(), 10);
 
         assert!(!output.contains(FOOTER_TEXT));
+    }
+
+    /// Typing below a status line, with and without a footer, draws over the
+    /// previous paint: nothing is erased before the prompt is printed again.
+    #[rstest]
+    #[case::status_line_only("")]
+    #[case::with_a_footer("foot1\nfoot2")]
+    fn typing_under_a_status_line_draws_in_place(#[case] footer: &'static str) {
+        let (mut rl, _) = engine_with_status_line();
+        let prompt = FooterPrompt(DefaultPrompt::default(), footer);
+        repaint_output_with(&mut rl, &prompt, 10);
+        let start = rl.painter.captured_for_test().len();
+
+        drive(&mut rl, &[ch('x')]);
+        rl.repaint(&prompt).unwrap();
+
+        let paint = String::from_utf8_lossy(&rl.painter.captured_for_test()[start..]).into_owned();
+        let prompt_at = paint.find("lsx").expect("buffer drawn");
+        assert!(!paint[..prompt_at].contains("\x1b[J"), "{paint:?}");
+        assert!(paint.contains(STATUS_TEXT), "{paint:?}");
+        assert_eq!(paint.contains("foot2"), !footer.is_empty(), "{paint:?}");
     }
 }
