@@ -197,6 +197,14 @@ pub(crate) fn line_width(line: &str) -> usize {
 /// disagree: graphemes of a single character that is not a control, is not
 /// zero-width, and has the same width under both East Asian conventions.
 ///
+/// One gap is known and accepted: `unicode-width` counts the letters of the
+/// East Asian Ambiguous class (accented Latin, Greek, Cyrillic) as narrow
+/// under both conventions, so they pass. On a terminal set to draw ambiguous
+/// characters wide, a row holding one is measured a column short and the
+/// erase takes the end of its text. Refusing them would need the East Asian
+/// Width table itself, and would send most non-English text back to erasing
+/// first.
+///
 /// A line reaching the margin is refused as well: the wrap is pending there,
 /// and an erase with it pending takes the last cell on some terminals.
 ///
@@ -508,7 +516,10 @@ mod test {
     #[case::joined_emoji("\u{1f468}\u{200d}\u{1f469}", None)]
     #[case::emoji_presentation("\u{2764}\u{fe0f}", None)]
     #[case::zero_width("a\u{200b}b", None)]
+    // Accepted although ambiguous: the known gap, letters count as narrow.
     #[case::accented_latin("caf\u{e9}", Some(4))]
+    #[case::greek("\u{3bb}", Some(1))]
+    #[case::cyrillic("\u{43f}\u{440}", Some(2))]
     // Refused: moves the cursor instead of taking columns.
     #[case::tab("a\tb", None)]
     #[case::carriage_return("a\rb", None)]
