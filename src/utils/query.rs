@@ -148,20 +148,51 @@ mod tests {
 
     #[test]
     fn keycodes_are_listed_by_name() {
-        let keycodes = get_reedline_keycodes();
-        assert_eq!(keycodes.len(), 19);
-        assert_eq!(keycodes.first().map(String::as_str), Some("Backspace"));
-        for name in ["Enter", "F<number>", "Space", "Char_<letter>", "Esc"] {
-            assert!(keycodes.iter().any(|kc| kc == name), "missing {name}");
-        }
+        assert_eq!(
+            get_reedline_keycodes(),
+            [
+                "Backspace",
+                "Enter",
+                "Left",
+                "Right",
+                "Up",
+                "Down",
+                "Home",
+                "End",
+                "PageUp",
+                "PageDown",
+                "Tab",
+                "BackTab",
+                "Delete",
+                "Insert",
+                "F<number>",
+                "Space",
+                "Char_<letter>",
+                "Null",
+                "Esc",
+            ]
+        );
     }
 
     #[test]
-    fn modifiers_have_no_duplicates() {
-        let modifiers = get_reedline_keybinding_modifiers();
-        let unique: HashSet<_> = modifiers.iter().collect();
-        assert_eq!(unique.len(), modifiers.len());
-        assert!(modifiers.iter().any(|m| m == "None"));
+    fn modifiers_are_listed_by_name() {
+        assert_eq!(
+            get_reedline_keybinding_modifiers(),
+            [
+                "Alt",
+                "Control",
+                "Shift",
+                "None",
+                "Shift_Alt",
+                "Alt_Shift",
+                "Control_Shift",
+                "Shift_Control",
+                "Control_Alt",
+                "Alt_Control",
+                "Control_Alt_Shift",
+                "Control_Shift_Alt",
+            ]
+        );
     }
 
     #[test]
@@ -183,7 +214,13 @@ mod tests {
     #[test]
     fn default_keybindings_are_sorted_within_each_mode() {
         let bindings = get_reedline_default_keybindings();
-        for mode in ["emacs", "vi_normal", "vi_insert"] {
+        for mode in [
+            "emacs",
+            "vi_normal",
+            "vi_insert",
+            "helix_normal",
+            "helix_insert",
+        ] {
             let rows: Vec<_> = bindings.iter().filter(|(m, ..)| m == mode).collect();
             assert!(!rows.is_empty(), "no bindings for {mode}");
             assert!(rows.is_sorted(), "{mode} bindings are not sorted");

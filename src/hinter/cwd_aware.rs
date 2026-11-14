@@ -146,11 +146,18 @@ mod tests {
 
     #[test]
     fn no_hint_below_min_chars() {
-        let history = file_history(&["hello world"]);
+        let history = file_history(&["éa latte", "hello world"]);
         let mut hinter = CwdAwareHinter::default().with_min_chars(3);
+        assert_eq!(hinter.handle("hel", 3, &history, false, "/tmp"), "lo world");
+        assert_eq!(hinter.complete_hint(), "lo world");
+
+        // The hint of the longer line does not outlive it.
         assert_eq!(hinter.handle("he", 2, &history, false, "/tmp"), "");
         assert_eq!(hinter.complete_hint(), "");
-        assert_eq!(hinter.handle("hel", 3, &history, false, "/tmp"), "lo world");
+
+        // Two chars in three bytes: the threshold counts chars.
+        assert_eq!(hinter.handle("éa", 3, &history, false, "/tmp"), "");
+        assert_eq!(hinter.complete_hint(), "");
     }
 
     #[test]
