@@ -211,6 +211,9 @@ pub struct Reedline {
     persistent_menus: bool,
     // Completions owed to a menu activation the completer could not answer in time
     deferred_menu_completion: Option<DeferredMenuCompletion>,
+    // The menu an event queried, so the paint asks its completer again once the calls the
+    // menu makes while painting have run. See `invalidate_anchor_if_completer_wrote`.
+    menu_query_pending: Option<usize>,
 
     // Optional host hook that intercepts a lone `PasteSystem` paste
     // (see `crate::PasteInterceptor`). `PasteSystem` only exists under
@@ -482,25 +485,31 @@ impl Drop for Reedline {
     }
 }
 
-/// Mark the painter's cached prompt anchor stale around a menu running its completer,
-/// which may have left the cached row pointing at content that has scrolled. See
-/// [`ReedlineMenu::runs_terminal_writing_completer`] for why only some completers count, and
-/// #1130 for the bug.
+/// Ask `menu`'s completer whether it wrote to the terminal in the calls since it was
+/// last asked, and if so mark the painter's cached prompt anchor stale: the cached row
+/// may point at content that has scrolled. See [`Completer::wrote_to_terminal`], and
+/// #1130 for the bug. Returns whether it asked, so the caller can ask again at the paint,
+/// once the calls the menu makes there have run.
 ///
-/// Also skipped for a menu the same keystroke deactivated, whose queued event nothing
-/// goes on to consume.
+/// Skipped for a menu the same keystroke deactivated, whose queued event nothing goes
+/// on to consume.
 ///
 /// Call this from every event that reaches the completer, which is not the same set as
 /// the events that change the menu's selection: `MenuNext` splices a partial completion
 /// and queries, while `MenuPrevious` only moves and does not.
-fn invalidate_anchor_if_completer_may_write(
-    menu: &ReedlineMenu,
-    engine_completer: &dyn Completer,
+fn invalidate_anchor_if_completer_wrote(
+    menu: &mut ReedlineMenu,
+    engine_completer: &mut dyn Completer,
+    history: &dyn History,
     painter: &mut Painter,
-) {
-    if menu.is_active() && menu.runs_terminal_writing_completer(engine_completer) {
+) -> bool {
+    if !menu.is_active() {
+        return false;
+    }
+    if menu.completer_wrote_to_terminal(engine_completer, history) {
         painter.invalidate_prompt_start_row();
     }
+    true
 }
 
 /// The char a key event contributes to a paste burst: a char press under the
@@ -584,6 +593,7 @@ impl Reedline {
             partial_completions: false,
             persistent_menus: false,
             deferred_menu_completion: None,
+            menu_query_pending: None,
             #[cfg(feature = "system_clipboard")]
             paste_interceptor: None,
             paste_burst: None,
@@ -1406,6 +1416,16 @@ impl Reedline {
         // the fresh prompt painted below already reflects the latest state.
         self.take_repaint_request();
 
+        // A menu event that exited before its paint, as Tab then Ctrl-C in one batch
+        // does, leaves its question unasked. The prompt is measured afresh below, so
+        // the answer no longer matters, but it is asked here so a note the completer
+        // keeps for it is spent on this line rather than the next.
+        if let Some(index) = self.menu_query_pending.take() {
+            if let Some(menu) = self.menus.get_mut(index) {
+                menu.completer_wrote_to_terminal(self.completer.as_mut(), self.history.as_ref());
+            }
+        }
+
         self.suspended_state.take()
     }
 
@@ -1601,28 +1621,11 @@ impl Reedline {
     /// Called when the completer reports [`CompletionStatus::Ready`]. Kept out of the
     /// input loop so it is reachable from tests, which cannot drive the loop itself.
     fn settle_completions(&mut self, prompt: &dyn Prompt) -> Result<()> {
-        // The request that just finished was the engine completer's, which may have
-        // scrolled the terminal while it ran in the background — after the keystroke
-        // that dispatched it had already re-verified the anchor — whether or not a
-        // menu is still open to take its answer.
-        if self.completer.may_write_to_terminal() {
-            self.painter.invalidate_prompt_start_row();
-        }
-
         let Some(menu_index) = self.menus.iter().position(|menu| menu.is_active()) else {
             // No menu to answer to, so nothing can still be owed.
             self.deferred_menu_completion = None;
             return Ok(());
         };
-
-        // `update_values` below runs the active menu's completer for a line that may
-        // have moved on, so the repaint at the end of this settle must not trust the
-        // cached row after that either.
-        invalidate_anchor_if_completer_may_write(
-            &self.menus[menu_index],
-            self.completer.as_ref(),
-            &mut self.painter,
-        );
 
         let menu = &mut self.menus[menu_index];
         // The request this menu was waiting on finished, so repopulate it.
@@ -1630,6 +1633,17 @@ impl Reedline {
             &mut self.editor,
             self.completer.as_mut(),
             self.history.as_ref(),
+        );
+        // The request that just finished was host code, which may have scrolled the
+        // terminal while it ran in the background — after the keystroke that dispatched
+        // it had already re-verified the anchor — and `update_values` above may have
+        // dispatched another for a line that moved on. Either way the repaint at the end
+        // of this settle must not trust the cached row if the completer wrote.
+        invalidate_anchor_if_completer_wrote(
+            menu,
+            self.completer.as_mut(),
+            self.history.as_ref(),
+            &mut self.painter,
         );
         let still_provisional = menu.results_are_provisional();
 
@@ -2019,11 +2033,14 @@ impl Reedline {
                 if self.active_menu().is_none() {
                     if let Some(index) = self.menus.iter().position(|menu| menu.name() == name) {
                         self.menus[index].menu_event(MenuEvent::Activate(self.quick_completions));
-                        invalidate_anchor_if_completer_may_write(
-                            &self.menus[index],
-                            self.completer.as_ref(),
+                        if invalidate_anchor_if_completer_wrote(
+                            &mut self.menus[index],
+                            self.completer.as_mut(),
+                            self.history.as_ref(),
                             &mut self.painter,
-                        );
+                        ) {
+                            self.menu_query_pending = Some(index);
+                        }
 
                         if self.decide_menu_completion(index, false) {
                             return self.handle_editor_event(prompt, ReedlineEvent::Enter);
@@ -2066,7 +2083,12 @@ impl Reedline {
                 }
             }
             ReedlineEvent::MenuNext => {
-                if let Some(menu) = self.menus.iter_mut().find(|menu| menu.is_active()) {
+                if let Some((index, menu)) = self
+                    .menus
+                    .iter_mut()
+                    .enumerate()
+                    .find(|(_, menu)| menu.is_active())
+                {
                     // The second route to the lone-value accept, so it carries the same
                     // provisional guard as `decide_menu_completion`: accepting a lone
                     // *stale* value is refused downstream, but the `Enter` would still
@@ -2085,11 +2107,14 @@ impl Reedline {
                                 self.completer.as_mut(),
                                 self.history.as_ref(),
                             );
-                            invalidate_anchor_if_completer_may_write(
+                            if invalidate_anchor_if_completer_wrote(
                                 menu,
-                                self.completer.as_ref(),
+                                self.completer.as_mut(),
+                                self.history.as_ref(),
                                 &mut self.painter,
-                            );
+                            ) {
+                                self.menu_query_pending = Some(index);
+                            }
                         }
                         menu.menu_event(MenuEvent::NextElement);
                         Ok(EventStatus::Handled)
@@ -2136,28 +2161,44 @@ impl Reedline {
             // These two spell out `active_menu()`, since that borrows all of `self` and
             // the painter has to stay reachable alongside the menu.
             ReedlineEvent::MenuPageNext => {
-                match self.menus.iter_mut().find(|menu| menu.is_active()) {
-                    Some(menu) => {
+                match self
+                    .menus
+                    .iter_mut()
+                    .enumerate()
+                    .find(|(_, menu)| menu.is_active())
+                {
+                    Some((index, menu)) => {
                         menu.menu_event(MenuEvent::NextPage);
-                        invalidate_anchor_if_completer_may_write(
+                        if invalidate_anchor_if_completer_wrote(
                             menu,
-                            self.completer.as_ref(),
+                            self.completer.as_mut(),
+                            self.history.as_ref(),
                             &mut self.painter,
-                        );
+                        ) {
+                            self.menu_query_pending = Some(index);
+                        }
                         Ok(EventStatus::Handled)
                     }
                     None => Ok(EventStatus::Inapplicable),
                 }
             }
             ReedlineEvent::MenuPagePrevious => {
-                match self.menus.iter_mut().find(|menu| menu.is_active()) {
-                    Some(menu) => {
+                match self
+                    .menus
+                    .iter_mut()
+                    .enumerate()
+                    .find(|(_, menu)| menu.is_active())
+                {
+                    Some((index, menu)) => {
                         menu.menu_event(MenuEvent::PreviousPage);
-                        invalidate_anchor_if_completer_may_write(
+                        if invalidate_anchor_if_completer_wrote(
                             menu,
-                            self.completer.as_ref(),
+                            self.completer.as_mut(),
+                            self.history.as_ref(),
                             &mut self.painter,
-                        );
+                        ) {
+                            self.menu_query_pending = Some(index);
+                        }
                         Ok(EventStatus::Handled)
                     }
                     None => Ok(EventStatus::Inapplicable),
@@ -2313,7 +2354,12 @@ impl Reedline {
                     }
                 }
 
-                if let Some(menu) = self.menus.iter_mut().find(|menu| menu.is_active()) {
+                if let Some((index, menu)) = self
+                    .menus
+                    .iter_mut()
+                    .enumerate()
+                    .find(|(_, menu)| menu.is_active())
+                {
                     let quick_complete = self.quick_completions && menu.can_quick_complete();
                     // Dismissing a menu handles the event even when the cursor didn't move.
                     if quick_complete
@@ -2333,11 +2379,14 @@ impl Reedline {
                     }
                     if quick_complete {
                         menu.menu_event(MenuEvent::Edit(self.quick_completions));
-                        invalidate_anchor_if_completer_may_write(
+                        if invalidate_anchor_if_completer_wrote(
                             menu,
-                            self.completer.as_ref(),
+                            self.completer.as_mut(),
+                            self.history.as_ref(),
                             &mut self.painter,
-                        );
+                        ) {
+                            self.menu_query_pending = Some(index);
+                        }
                         menu.update_values(
                             &mut self.editor,
                             self.completer.as_mut(),
@@ -2362,11 +2411,14 @@ impl Reedline {
                         menu.menu_event(MenuEvent::Deactivate);
                     } else {
                         menu.menu_event(MenuEvent::Edit(self.quick_completions));
-                        invalidate_anchor_if_completer_may_write(
+                        if invalidate_anchor_if_completer_wrote(
                             menu,
-                            self.completer.as_ref(),
+                            self.completer.as_mut(),
+                            self.history.as_ref(),
                             &mut self.painter,
-                        );
+                        ) {
+                            self.menu_query_pending = Some(index);
+                        }
                     }
                 }
                 Ok(status.into())
@@ -3613,6 +3665,18 @@ impl Reedline {
                 // so on the frame a menu opens that width lags by one paint.
                 if menu.is_visible() {
                     lines.prompt_indicator = menu.indicator().to_owned().into();
+                }
+            }
+        }
+
+        // The event before this paint queried a menu's completer, and the update above may
+        // have run it again, so ask once more before the painter trusts the anchor. Asked
+        // even if that menu has closed since, as accepting a lone suggestion closes it.
+        if let Some(index) = self.menu_query_pending.take() {
+            if let Some(menu) = self.menus.get_mut(index) {
+                if menu.completer_wrote_to_terminal(self.completer.as_mut(), self.history.as_ref())
+                {
+                    self.painter.invalidate_prompt_start_row();
                 }
             }
         }
@@ -8612,11 +8676,9 @@ mod tests {
         );
     }
 
-    /// Settling folds in the engine completer's background work, which ran
-    /// whichever menu is active now: the menu rows on screen are trusted only
-    /// when that completer and the active menu's never write to the terminal.
+    /// Settling asks the active menu's completer whether it wrote: the menu rows
+    /// on screen are trusted only when it did not.
     #[rstest]
-    #[case::engine_completer_writes(true, false, true)]
     #[case::menu_completer_writes(false, true, true)]
     #[case::both_in_process(false, false, false)]
     fn settling_keeps_menu_rows_only_after_in_process_completers(
@@ -8648,6 +8710,7 @@ mod tests {
                 completer: menu_completer,
             });
         reedline.painter = Painter::new(W::capture());
+        reedline.painter.set_keep_menu_rows(true);
         reedline.painter.handle_resize(80, 24);
         reedline.painter.force_prompt_anchored_for_test(0);
         let prompt = DefaultPrompt::default();
@@ -8669,6 +8732,79 @@ mod tests {
         assert_eq!(settled.contains("crates"), menu_resent, "{settled:?}");
     }
 
+    /// Answers per call: writes on the call after the test sets `write_next`,
+    /// as a completer handing only some lines to an external program does.
+    struct SometimesWrites {
+        words: DefaultCompleter,
+        write_next: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        wrote: bool,
+    }
+
+    impl Completer for SometimesWrites {
+        fn complete(&mut self, line: &str, pos: usize) -> CompletionResult {
+            if self
+                .write_next
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
+                self.wrote = true;
+            }
+            self.words.complete(line, pos)
+        }
+
+        fn wrote_to_terminal(&mut self) -> bool {
+            std::mem::take(&mut self.wrote)
+        }
+    }
+
+    /// The answer is per call: typing under the menu keeps its rows after a call
+    /// that did not write, and redraws them after one that did. Typing runs the
+    /// completer while painting, after the keystroke was handled, so this also
+    /// pins that the paint asks again before it trusts the anchor.
+    #[test]
+    fn typing_under_a_menu_redraws_it_only_after_a_call_that_wrote() {
+        let write_next = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let words = (0..8).map(|i| format!("Ethernet{i}")).collect();
+        let mut reedline = Reedline::create()
+            .with_ansi_colors(false)
+            .with_completer(Box::new(SometimesWrites {
+                words: DefaultCompleter::new_with_wordlen(words, 2),
+                write_next: write_next.clone(),
+                wrote: false,
+            }))
+            .with_menu(ReedlineMenu::EngineCompleter(Box::new(
+                ColumnarMenu::default().with_name("completion_menu"),
+            )));
+        reedline.painter = Painter::new(W::capture());
+        reedline.painter.set_keep_menu_rows(true);
+        reedline.painter.handle_resize(80, 24);
+        reedline.painter.force_prompt_anchored_for_test(0);
+        let prompt = DefaultPrompt::default();
+        let paint = |reedline: &mut Reedline, event: ReedlineEvent| {
+            let sent = reedline.painter.captured_for_test().len();
+            reedline.handle_event(&prompt, event).unwrap();
+            reedline.repaint(&prompt).unwrap();
+            String::from_utf8_lossy(&reedline.painter.captured_for_test()[sent..]).into_owned()
+        };
+
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("E"))]);
+        paint(
+            &mut reedline,
+            ReedlineEvent::Menu(String::from("completion_menu")),
+        );
+        let quiet = paint(
+            &mut reedline,
+            ReedlineEvent::Edit(vec![EditCommand::InsertChar('t')]),
+        );
+        write_next.store(true, std::sync::atomic::Ordering::SeqCst);
+        let wrote = paint(
+            &mut reedline,
+            ReedlineEvent::Edit(vec![EditCommand::InsertChar('h')]),
+        );
+
+        assert!(!quiet.contains("Ethernet"), "menu resent: {quiet:?}");
+        assert!(wrote.contains("Ethernet7"), "{wrote:?}");
+    }
+
     /// End to end: typing under a menu filled by an in-process completer, whose
     /// rows the keystroke leaves unchanged, sends the buffer and not the menu.
     #[test]
@@ -8681,6 +8817,7 @@ mod tests {
                 ColumnarMenu::default().with_name("completion_menu"),
             )));
         reedline.painter = Painter::new(W::capture());
+        reedline.painter.set_keep_menu_rows(true);
         reedline.painter.handle_resize(80, 24);
         reedline.painter.force_prompt_anchored_for_test(0);
         let prompt = DefaultPrompt::default();
@@ -8704,21 +8841,6 @@ mod tests {
         assert!(opened.contains("Ethernet7"), "{opened:?}");
         assert!(typed.contains("Et"), "{typed:?}");
         assert!(!typed.contains("Ethernet"), "menu resent: {typed:?}");
-    }
-
-    /// The engine completer's background work may have written to the terminal
-    /// even after its menu closed.
-    #[test]
-    fn settling_with_no_menu_open_distrusts_a_terminal_writing_completer() {
-        let mut reedline =
-            Reedline::create().with_completer(Box::new(DeferredCompleter::pending(&["crates"])));
-        reedline.painter.force_prompt_anchored_for_test(0);
-
-        reedline
-            .settle_completions(&DefaultPrompt::default())
-            .unwrap();
-
-        assert!(!reedline.painter.prompt_anchor_is_verified_for_test());
     }
 
     fn send_edit(reedline: &mut Reedline, command: EditCommand) {
@@ -10471,5 +10593,30 @@ mod tests {
 
         assert!(!kept.contains("Ethernet"), "menu resent: {kept:?}");
         assert!(repainted.contains("Ethernet7"), "{repainted:?}");
+    }
+
+    /// A menu event that exits before its paint leaves nothing owed to the next line.
+    #[test]
+    fn a_new_line_drops_the_question_an_exit_left_unasked() {
+        let mut reedline = Reedline::create()
+            .with_completer(Box::new(DefaultCompleter::new_with_wordlen(
+                vec![String::from("this"), String::from("that")],
+                1,
+            )))
+            .with_menu(ReedlineMenu::EngineCompleter(Box::new(
+                ColumnarMenu::default().with_name("completion_menu"),
+            )));
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("th"))]);
+        reedline
+            .handle_event(
+                &DefaultPrompt::default(),
+                ReedlineEvent::Menu(String::from("completion_menu")),
+            )
+            .unwrap();
+        assert!(reedline.menu_query_pending.is_some());
+
+        reedline.begin_read();
+
+        assert!(reedline.menu_query_pending.is_none());
     }
 }

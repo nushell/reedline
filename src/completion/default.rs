@@ -125,7 +125,7 @@ impl Completer for DefaultCompleter {
     }
 
     /// Completes from its own word list, never touching the terminal.
-    fn may_write_to_terminal(&self) -> bool {
+    fn wrote_to_terminal(&mut self) -> bool {
         false
     }
 }

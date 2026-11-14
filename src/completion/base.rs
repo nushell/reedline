@@ -252,22 +252,29 @@ pub trait Completer {
         (suggestions.len(), page)
     }
 
-    /// Whether this completer may write to the terminal or move its cursor, as
-    /// one shelling out to an interactive picker does.
+    /// Whether the calls made since the engine last asked wrote to the terminal or moved
+    /// its cursor, as shelling out to an interactive picker does.
     ///
-    /// The answer covers [`complete`](Self::complete) and the background work
-    /// [`poll_completion`](Self::poll_completion) reports on, and must hold for
-    /// any call: the engine may ask before or after the call it is about. When a
-    /// call or background request of a completer that may write completes, the
-    /// engine re-measures the prompt's position, at the cost of a cursor query
-    /// on every keystroke that runs the completer under an open menu, and
-    /// redraws everything below the prompt.
+    /// The engine asks after the keystrokes that query an open menu, again before it
+    /// paints them, and after background work
+    /// [`poll_completion`](Self::poll_completion) reported
+    /// [`Ready`](CompletionStatus::Ready). On `true` it measures the prompt's position
+    /// again, a cursor query, and redraws everything below the prompt. A menu may also
+    /// call its completer on a move that is not counted as a query, as a paging menu
+    /// fetching the next page at its edge does; such a call is reported at the next
+    /// time the engine asks.
     ///
-    /// A completer that only computes suggestions returns `false` to skip both.
-    /// One that returns `false` and then writes leaves the screen out of step
-    /// with the painter: every later paint draws at the stale row until
-    /// something else re-measures the prompt's position.
-    fn may_write_to_terminal(&self) -> bool {
+    /// The default answers `true`, since any completer may shell out. One that hands
+    /// only some lines to an external program can note when it did and answer per call,
+    /// clearing the note once asked. One that only computes suggestions answers `false`
+    /// and skips the query on every keystroke.
+    ///
+    /// Answering `false` after writing leaves the screen out of step with the painter:
+    /// later paints draw at the stale row until something else measures the prompt's
+    /// position, and menu rows kept with
+    /// [`Reedline::with_kept_menu_rows`](crate::Reedline::with_kept_menu_rows) are left
+    /// where the write put them, so a row can be lost.
+    fn wrote_to_terminal(&mut self) -> bool {
         true
     }
 

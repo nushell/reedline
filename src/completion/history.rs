@@ -36,6 +36,11 @@ impl Completer for HistoryCompleter<'_> {
         };
         CompletionResult::fresh(suggestions)
     }
+
+    /// Searches the history in process, never touching the terminal.
+    fn wrote_to_terminal(&mut self) -> bool {
+        false
+    }
 }
 
 impl<'menu> HistoryCompleter<'menu> {
