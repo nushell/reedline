@@ -953,6 +953,188 @@ mod tests {
         assert_eq!(menu.skipped_rows, 0);
     }
 
+    /// Two entries with a description and examples, like nushell's help menu.
+    struct HelpCompleter;
+
+    impl Completer for HelpCompleter {
+        fn complete(&mut self, _line: &str, pos: usize) -> crate::CompletionResult {
+            let entry = |value: &str, description: &str, examples: &[&str]| Suggestion {
+                value: value.to_string(),
+                description: Some(description.to_string()),
+                extra: Some(examples.iter().map(|e| e.to_string()).collect()),
+                span: Span { start: 0, end: pos },
+                ..Default::default()
+            };
+            crate::CompletionResult::fresh(vec![
+                entry(
+                    "ls",
+                    "List files\nin the\ncurrent\ndirectory",
+                    &["ls -a", "ls -l"],
+                ),
+                entry("cd", "Change directory", &["cd ~"]),
+            ])
+        }
+    }
+
+    /// Delivers `event` the way the engine does: stored by `menu_event`,
+    /// applied by the next `update_working_details`.
+    fn send(menu: &mut DescriptionMenu, editor: &mut Editor, event: MenuEvent) {
+        let mut painter = Painter::new(W::sink());
+        painter.handle_resize(100, 100);
+        menu.menu_event(event);
+        menu.update_working_details(editor, &mut HelpCompleter, &painter);
+    }
+
+    fn help_menu(editor: &mut Editor) -> DescriptionMenu {
+        let mut menu = DescriptionMenu::default()
+            .with_columns(2)
+            .with_column_width(Some(6));
+        send(&mut menu, editor, MenuEvent::Activate(false));
+        send(&mut menu, editor, MenuEvent::Edit(false));
+        menu
+    }
+
+    #[test]
+    fn down_and_up_walk_the_examples_and_wrap() {
+        let mut editor = Editor::default();
+        let mut menu = help_menu(&mut editor);
+
+        let walk = |menu: &mut DescriptionMenu, editor: &mut Editor, event: fn() -> MenuEvent| {
+            [(); 3].map(|_| {
+                send(menu, editor, event());
+                menu.example_index
+            })
+        };
+        assert_eq!(
+            walk(&mut menu, &mut editor, || MenuEvent::MoveDown),
+            [Some(0), Some(1), Some(0)]
+        );
+        assert_eq!(
+            walk(&mut menu, &mut editor, || MenuEvent::MoveUp),
+            [Some(1), Some(0), Some(1)]
+        );
+    }
+
+    #[test]
+    fn up_and_down_select_nothing_without_examples() {
+        let mut editor = Editor::default();
+        let mut menu = DescriptionMenu::default();
+        send(&mut menu, &mut editor, MenuEvent::MoveDown);
+        send(&mut menu, &mut editor, MenuEvent::MoveUp);
+        assert_eq!(menu.example_index, None);
+    }
+
+    #[test]
+    fn moving_to_another_entry_drops_the_chosen_example() {
+        let mut editor = Editor::default();
+        let mut menu = help_menu(&mut editor);
+        send(&mut menu, &mut editor, MenuEvent::MoveDown);
+
+        send(&mut menu, &mut editor, MenuEvent::NextElement);
+        assert_eq!(menu.examples, ["cd ~"]);
+        assert_eq!(menu.example_index, None);
+
+        send(&mut menu, &mut editor, MenuEvent::PreviousElement);
+        assert_eq!(menu.examples, ["ls -a", "ls -l"]);
+    }
+
+    #[rstest]
+    #[case::entry(None, "ls")]
+    #[case::example(Some(1), "ls -l")]
+    fn accepting_inserts_the_entry_or_its_chosen_example(
+        #[case] example: Option<usize>,
+        #[case] buffer: &str,
+    ) {
+        let mut editor = Editor::default();
+        let mut menu = help_menu(&mut editor);
+        menu.example_index = example;
+        menu.replace_in_buffer(&mut editor);
+        assert_eq!(editor.get_buffer(), buffer);
+    }
+
+    /// Right scrolls the description until its last line is the last shown
+    /// row, Left scrolls back and stops at the top.
+    #[test]
+    fn left_and_right_scroll_the_description_within_its_lines() {
+        let mut editor = Editor::default();
+        let mut menu = DescriptionMenu::default().with_description_rows(2);
+        send(&mut menu, &mut editor, MenuEvent::Activate(false));
+
+        let scroll = |menu: &mut DescriptionMenu, editor: &mut Editor, event: fn() -> MenuEvent| {
+            [(); 3].map(|_| {
+                send(menu, editor, event());
+                menu.create_description_string(false)
+            })
+        };
+        assert_eq!(
+            scroll(&mut menu, &mut editor, || MenuEvent::MoveRight),
+            [
+                "in the\r\ncurrent",
+                "current\r\ndirectory",
+                "current\r\ndirectory"
+            ]
+        );
+        assert_eq!(
+            scroll(&mut menu, &mut editor, || MenuEvent::MoveLeft),
+            [
+                "in the\r\ncurrent",
+                "List files\r\nin the",
+                "List files\r\nin the"
+            ]
+        );
+    }
+
+    #[test]
+    fn renders_entries_description_and_examples_without_color() {
+        let mut editor = Editor::default();
+        let mut menu = help_menu(&mut editor);
+        assert_eq!(
+            menu.menu_string(100, false),
+            ">LS   cd    \r\n\
+             List files\r\nin the\r\ncurrent\r\ndirectory\
+             \r\n\r\nExamples:\r\n  ls -a\r\n  ls -l\r\n"
+        );
+
+        send(&mut menu, &mut editor, MenuEvent::NextElement);
+        assert_eq!(
+            menu.menu_string(100, false),
+            "ls    >CD   \r\nChange directory\r\n\r\nExamples:\r\n  cd ~\r\n"
+        );
+    }
+
+    #[test]
+    fn renders_the_chosen_example_and_entries_in_their_styles() {
+        let mut editor = Editor::default();
+        let mut menu = help_menu(&mut editor);
+        send(&mut menu, &mut editor, MenuEvent::MoveDown);
+
+        let color = &menu.settings.color;
+        let (selected, text, description) = (
+            color.selected_text_style.prefix(),
+            color.text_style.prefix(),
+            color.description_style.prefix(),
+        );
+        assert_eq!(
+            menu.menu_string(100, true),
+            format!(
+                "{selected}ls{RESET}    {text}cd{RESET}    \r\n\
+                 {description}List files\r\nin the\r\ncurrent\r\ndirectory{RESET}\
+                 {description}\r\n\r\nExamples:\r\n{RESET}  {selected}ls -a{RESET}\r\n  ls -l\r\n"
+            )
+        );
+    }
+
+    #[rstest]
+    #[case::plain(false, "TYPE TO START SEARCH".to_string())]
+    #[case::colored(true, format!(
+        "{}TYPE TO START SEARCH{RESET}",
+        MenuSettings::default().color.selected_text_style.prefix()
+    ))]
+    fn empty_menu_asks_for_input(#[case] use_ansi_coloring: bool, #[case] msg: String) {
+        let menu = DescriptionMenu::default();
+        assert_eq!(menu.menu_string(10, use_ansi_coloring), msg);
+    }
+
     /// The first entry is selected on activation, so its examples show
     /// right away, and none chosen in an earlier session stays chosen.
     #[test]

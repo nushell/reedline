@@ -985,6 +985,94 @@ mod tests {
         assert_eq!(page.size, 4);
     }
 
+    /// Sends `event` on a 5-row terminal, where a page holds two entries,
+    /// until the selection has moved `moves` times, and returns the selected
+    /// value after each move. Counting moves rather than presses keeps the
+    /// tests off the press that only finds out a page is full.
+    fn walk(menu: &mut ListMenu, event: fn() -> MenuEvent, moves: usize) -> Vec<String> {
+        let mut editor = Editor::default();
+        let mut completer = FakeCompleter::new(&["a", "b", "c", "d", "e"]);
+        let mut painter = Painter::new(W::sink());
+        painter.handle_resize(40, 5);
+        if menu.pages.is_empty() {
+            menu.menu_event(MenuEvent::Activate(false));
+            menu.update_working_details(&mut editor, &mut completer, &painter);
+        }
+
+        let mut last = menu.get_value().map(|s| s.value).unwrap_or_default();
+        let mut seen: Vec<String> = Vec::new();
+        for _ in 0..4 * moves {
+            if seen.len() == moves {
+                break;
+            }
+            menu.menu_event(event());
+            menu.update_working_details(&mut editor, &mut completer, &painter);
+            let value = menu.get_value().map(|s| s.value).unwrap_or_default();
+            if value != last {
+                seen.push(value.clone());
+                last = value;
+            }
+        }
+        seen
+    }
+
+    #[test]
+    fn next_walks_every_page_in_order() {
+        let mut menu = ListMenu::default().with_page_size(2);
+        assert_eq!(
+            walk(&mut menu, || MenuEvent::NextElement, 4),
+            ["b", "c", "d", "e"]
+        );
+        assert!(menu
+            .menu_string(5, false)
+            .starts_with("4: >E\r\nPage 3: records 4 - 4  total: 5"));
+    }
+
+    #[test]
+    fn previous_walks_back_and_wraps_to_the_last_page() {
+        let mut menu = ListMenu::default().with_page_size(2);
+        walk(&mut menu, || MenuEvent::NextElement, 4);
+        assert_eq!(
+            walk(&mut menu, || MenuEvent::PreviousElement, 6),
+            ["d", "c", "b", "a", "e", "d"]
+        );
+        assert_eq!(
+            menu.menu_string(5, false),
+            "2: c\r\n3: >D\r\nPage 2: records 2 - 3  total: 5  [FULL]"
+        );
+    }
+
+    #[rstest]
+    #[case::continued("x\ny", 5, "0: >X\r\n:::Y\r\n")]
+    #[case::cut_at_max_lines("x\ny\nz", 2, "0: >X\r\n:::Y\r\n:::...\r\n")]
+    fn multiline_entries_continue_behind_the_marker(
+        #[case] value: &str,
+        #[case] max_lines: u16,
+        #[case] entry: &str,
+    ) {
+        let mut menu = ListMenu::default().with_max_entry_lines(max_lines);
+        setup_menu(
+            &mut menu,
+            &mut Editor::default(),
+            &mut FakeCompleter::new(&[value]),
+            (40, 20),
+        );
+        assert_eq!(
+            menu.menu_string(20, false),
+            format!("{entry}Page 1: records 0 - 0  total: 1  ")
+        );
+    }
+
+    #[rstest]
+    #[case::plain(false, "PAGE NOT FOUND".to_string())]
+    #[case::colored(true, format!(
+        "{}PAGE NOT FOUND{RESET}",
+        MenuSettings::default().color.selected_text_style.prefix()
+    ))]
+    fn inactive_menu_has_no_page(#[case] use_ansi_coloring: bool, #[case] msg: String) {
+        assert_eq!(ListMenu::default().menu_string(10, use_ansi_coloring), msg);
+    }
+
     /// Selected value after each `event`, on a terminal `rows` high with
     /// pages of two entries over `a` to `e`.
     fn selections(rows: u16, event: fn() -> MenuEvent, presses: usize) -> Vec<String> {
