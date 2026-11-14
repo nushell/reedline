@@ -522,8 +522,20 @@ impl Menu for ListMenu {
 
                     if let Some(page) = self.pages.get(self.page) {
                         if new_pos >= page.size as u16 {
+                            let page_before = self.page;
                             self.event = Some(MenuEvent::NextPage);
                             self.update_working_details(editor, completer, painter);
+
+                            // A page that grew instead of turning holds the
+                            // next entry now, so select it.
+                            let grown = self.page == page_before
+                                && self
+                                    .pages
+                                    .get(self.page)
+                                    .is_some_and(|page| (new_pos as usize) < page.size);
+                            if grown {
+                                self.row_position = new_pos;
+                            }
                         } else {
                             self.row_position = new_pos;
                         }
@@ -548,6 +560,8 @@ impl Menu for ListMenu {
                     }
                 }
                 MenuEvent::NextPage => {
+                    let page_before = self.page;
+                    let size_before = self.pages.get(self.page).map(|page| page.size);
                     if self.values_until_current_page() <= self.total_values().saturating_sub(1) {
                         if let Some(page) = self.pages.get_mut(self.page) {
                             if page.full {
@@ -566,6 +580,18 @@ impl Menu for ListMenu {
 
                         self.update_values(editor, completer);
                         self.set_actual_page_size(self.printable_entries(painter));
+
+                        // Growing a page the screen has no room for only
+                        // finds out that it is full, so turn it after all.
+                        let filled_up = self.page == page_before
+                            && self
+                                .pages
+                                .get(self.page)
+                                .is_some_and(|page| page.full && Some(page.size) <= size_before);
+                        if filled_up {
+                            self.event = Some(MenuEvent::NextPage);
+                            self.update_working_details(editor, completer, painter);
+                        }
                     } else {
                         self.row_position = 0;
                         self.page = 0;
@@ -1045,5 +1071,39 @@ mod tests {
     ))]
     fn inactive_menu_has_no_page(#[case] use_ansi_coloring: bool, #[case] msg: String) {
         assert_eq!(ListMenu::default().menu_string(10, use_ansi_coloring), msg);
+    }
+
+    /// Selected value after each `event`, on a terminal `rows` high with
+    /// pages of two entries over `a` to `e`.
+    fn selections(rows: u16, event: fn() -> MenuEvent, presses: usize) -> Vec<String> {
+        let mut menu = ListMenu::default().with_page_size(2);
+        let mut editor = Editor::default();
+        let mut completer = FakeCompleter::new(&["a", "b", "c", "d", "e"]);
+        let painter = setup_menu(&mut menu, &mut editor, &mut completer, (40, rows));
+
+        (0..presses)
+            .map(|_| {
+                menu.menu_event(event());
+                menu.update_working_details(&mut editor, &mut completer, &painter);
+                menu.get_value().map(|s| s.value).unwrap_or_default()
+            })
+            .collect()
+    }
+
+    /// Every press moves the selection, also the first one past the end of
+    /// a page, whether the page then fills the screen or grows on it.
+    #[rstest]
+    #[case::page_fills_the_screen(5)]
+    #[case::page_grows_on_the_screen(20)]
+    fn every_next_press_moves_the_selection(#[case] rows: u16) {
+        assert_eq!(
+            selections(rows, || MenuEvent::NextElement, 5),
+            ["b", "c", "d", "e", "a"]
+        );
+    }
+
+    #[test]
+    fn next_page_press_moves_to_the_next_page() {
+        assert_eq!(selections(5, || MenuEvent::NextPage, 2), ["c", "e"]);
     }
 }
