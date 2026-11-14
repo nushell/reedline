@@ -1428,10 +1428,11 @@ impl Painter {
     /// Drawing in place needs to know where each row's text ends, to erase
     /// what the previous paint left behind it. That is only certain for the
     /// plain case, which is also the one a user types in: prompt, buffer and
-    /// hint, each line on a row of its own, all of it on the screen, measured
-    /// by [`certain_line_width`]. A menu, a status line, a large buffer, a
-    /// wrapping line or text some terminal may measure differently keeps the
-    /// erase up front, where a wrong width costs nothing.
+    /// hint, then the status line and footer, each line on a row of its own,
+    /// all of it on the screen, measured by [`certain_line_width`]. A menu, a
+    /// large buffer, a wrapping line or text some terminal may measure
+    /// differently keeps the erase up front, where a wrong width costs
+    /// nothing.
     fn in_place_rows(
         &self,
         lines: &PromptLines,
@@ -1439,11 +1440,7 @@ impl Painter {
         layout: &PromptLayout,
         anchor_row: u16,
     ) -> Option<Vec<u16>> {
-        if self.large_buffer
-            || self.term_is_dumb
-            || menu.is_some()
-            || layout.status_start_row.is_some()
-        {
+        if self.large_buffer || self.term_is_dumb || menu.is_some() {
             return None;
         }
         // What `print_small_buffer` prints without a menu, in its order.
@@ -1456,12 +1453,24 @@ impl Painter {
         ]
         .concat();
         let screen_width = self.screen_width();
-        let widths = text
-            .split('\n')
-            .map(|line| certain_line_width(line.strip_suffix('\r').unwrap_or(line), screen_width))
-            .collect::<Option<Vec<u16>>>()?;
+        let row_widths = |text: &str| {
+            text.split('\n')
+                .map(|line| {
+                    certain_line_width(line.strip_suffix('\r').unwrap_or(line), screen_width)
+                })
+                .collect::<Option<Vec<u16>>>()
+        };
+        let mut widths = row_widths(&text)?;
         let rows = u16::try_from(widths.len()).ok()?;
         let end_row = anchor_row.checked_add(rows)?;
+        // The status rows follow the last text row directly, or the layout
+        // left a row between them that nothing here measures.
+        if let Some(status_row) = layout.status_start_row {
+            if status_row != end_row {
+                return None;
+            }
+            widths.extend(row_widths(&lines.status_block(layout.status_with_footer))?);
+        }
         if let Some(right) = &layout.right_prompt {
             // Its bounds come from an estimate of its width. Nothing is
             // erased behind it, so it has to end on the margin for certain,
@@ -1474,7 +1483,8 @@ impl Painter {
                 return None;
             }
         }
-        (end_row <= self.screen_height()).then_some(widths)
+        let last_row = anchor_row.checked_add(u16::try_from(widths.len()).ok()?)?;
+        (last_row <= self.screen_height()).then_some(widths)
     }
 
     /// Erase what a paint drawn in place did not cover: behind the text of
@@ -1642,10 +1652,14 @@ impl Painter {
         Ok(cursor_row)
     }
 
-    /// Draw the status line on the rows [`Painter::compute_layout`] gave it.
+    /// Draw the status line, and the footer when it kept its rows, on the
+    /// rows [`Painter::compute_layout`] gave them.
     ///
-    /// The rows are erased first: with a menu open, text after the cursor
-    /// can reach them, the same rows the menu would otherwise draw over.
+    /// With a menu open the rows are erased first: text after the cursor can
+    /// reach them, the same rows the menu would otherwise draw over. Without
+    /// one they are drawn over: a paint that is not in place erased from the
+    /// anchor down already, and one that is erases what is left behind them
+    /// in [`Painter::erase_leftovers`].
     fn print_status(
         &mut self,
         lines: &PromptLines,
@@ -1655,7 +1669,11 @@ impl Painter {
         let Some(row) = layout.status_start_row else {
             return Ok(());
         };
-        self.clear_from_anchor(row)?;
+        if layout.menu_start_row.is_some() {
+            self.clear_from_anchor(row)?;
+        } else {
+            self.stdout.queue(cursor::MoveTo(0, row))?;
+        }
         self.stdout
             .queue(Print(lines.status_block(layout.status_with_footer)))?;
         if use_ansi_coloring {
@@ -3941,12 +3959,12 @@ mod tests {
         replay(&String::from_utf8_lossy(p.stdout.captured()), 20, false)
     }
 
-    /// Set aside the rows the status line of `lines` takes, as the engine does
-    /// before each paint.
+    /// Set aside the rows the status line and footer of `lines` take, as the
+    /// engine does before each paint.
     pub(super) fn reserve_status(p: &mut Painter, lines: &PromptLines) {
         let width = p.screen_width();
         let room = p.status_room(lines.required_lines(width, false, None));
-        p.reserve_status_rows(lines.status_rows(width), room);
+        p.reserve_status_and_footer_rows(lines.status_rows(width), lines.footer_rows(width), room);
     }
 
     /// The status line is commentary, like a hint, so the exit path leaves
