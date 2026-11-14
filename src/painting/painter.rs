@@ -481,6 +481,9 @@ pub struct Painter {
     /// Rows a menu can take below the reserved status line while the whole
     /// block stays on the screen. Meaningless while `status_rows` is 0.
     menu_room: u16,
+    /// Whether a paint may leave menu rows the screen already shows standing.
+    /// Off unless the host opts in. See [`Painter::set_keep_menu_rows`].
+    keep_menu_rows: bool,
     /// The menu the screen shows, so the next paint resends only the rows
     /// that changed. Anything that writes past `repaint_buffer` clears it.
     painted_menu: Option<PaintedMenu>,
@@ -504,10 +507,14 @@ struct MenuFrame {
     /// later, as a multi-line description does, leaves it on every row
     /// between.
     ///
-    /// `None` when a row is wider than the screen, or ends in a bare line feed:
-    /// a wrapped row moves every row below it, and a bare line feed starts the
-    /// next row at the column the row ended on, so the rows no longer map one
-    /// to one onto screen rows from column 0 and the menu is drawn whole.
+    /// `None` when any row's width is not certain to fit the screen, or a row
+    /// ends in a bare line feed: a wrapped row moves every row below it, and a
+    /// bare line feed starts the next row at the column the row ended on, so
+    /// the rows no longer map one to one onto screen rows from column 0 and
+    /// the menu is drawn whole. Certain is [`certain_line_width`]'s answer, as
+    /// for the erase it guards: a joined emoji may be drawn wider than
+    /// counted, and an escape sequence other than SGR, such as an OSC 8 link,
+    /// carries state [`carry_sgr`] cannot replay on a row drawn alone.
     rows: Option<Vec<String>>,
 }
 
@@ -525,8 +532,11 @@ impl MenuFrame {
                     .map_or((row, false), |row| (row, true));
                 let styled = format!("{carried}{row}");
                 carry_sgr(&mut carried, row);
+                // A row may reach the margin: it is erased before it is
+                // printed, never after, so the pending wrap takes no cell.
                 ((returned || index == last)
-                    && line_width(&expand_tabs(row)) <= usize::from(screen_width))
+                    && certain_line_width(&expand_tabs(row), screen_width.saturating_add(1))
+                        .is_some())
                 .then_some(styled)
             })
             .collect();
@@ -548,24 +558,26 @@ struct MenuPaint<'a> {
 /// Append to `carried` the SGR sequences `row` leaves in effect, dropping
 /// everything before a bare reset. Replaying `carried` puts the terminal in
 /// the state the row ended in.
+///
+/// Only rows [`certain_line_width`] measures are kept, and it refuses every
+/// escape [`sgr_len`] does not read as SGR, so this needs to know no others.
 fn carry_sgr(carried: &mut String, row: &str) {
     let mut rest = row;
     while let Some(start) = rest.find("\x1b[") {
-        let after = &rest[start + 2..];
-        let params_len = after
-            .find(|c: char| !(c.is_ascii_digit() || c == ';' || c == ':'))
-            .unwrap_or(after.len());
-        let (params, tail) = after.split_at(params_len);
-        if tail.starts_with('m') {
-            // A reset among the parameters drops what came before it.
-            if sgr_resets(params) {
-                carried.clear();
-            }
-            if !params.split(';').all(is_reset_param) {
-                carried.push_str(&rest[start..start + 2 + params_len + 1]);
-            }
+        rest = &rest[start..];
+        let Some(len) = sgr_len(rest) else {
+            rest = &rest[2..];
+            continue;
+        };
+        let params = &rest[2..len - 1];
+        // A reset among the parameters drops what came before it.
+        if sgr_resets(params) {
+            carried.clear();
         }
-        rest = tail;
+        if !params.split(';').all(is_reset_param) {
+            carried.push_str(&rest[..len]);
+        }
+        rest = &rest[len..];
     }
 }
 
@@ -619,6 +631,7 @@ impl Painter {
             bottom_confirmed_at: None,
             status_rows: 0,
             menu_room: 0,
+            keep_menu_rows: false,
             painted_menu: None,
         }
     }
@@ -639,6 +652,21 @@ impl Painter {
     /// Sets the semantic prompt markers for terminal integration (OSC 133/633)
     pub fn set_semantic_markers(&mut self, markers: Option<Box<dyn SemanticPromptMarkers>>) {
         self.semantic_markers = markers;
+    }
+
+    /// Let a paint leave the menu rows the screen already shows standing and
+    /// resend only the rows that changed. Off by default.
+    ///
+    /// See [`Reedline::with_kept_menu_rows`](crate::Reedline::with_kept_menu_rows).
+    pub(crate) fn set_keep_menu_rows(&mut self, keep: bool) {
+        self.keep_menu_rows = keep;
+        self.painted_menu = None;
+    }
+
+    /// Forget the menu rows the screen shows, so the next paint draws the
+    /// menu whole.
+    pub(crate) fn forget_menu_rows(&mut self) {
+        self.painted_menu = None;
     }
 
     /// Returns a reference to the semantic prompt markers, if any
@@ -1209,7 +1237,7 @@ impl Painter {
                     use_ansi_coloring,
                     &layout,
                 )?;
-                self.painted_menu = frame.and_then(|frame| {
+                self.painted_menu = frame.filter(|_| self.keep_menu_rows).and_then(|frame| {
                     frame.rows.map(|rows| PaintedMenu {
                         prompt_start_row: anchor_row,
                         menu_start_row: frame.start_row,
@@ -1857,10 +1885,12 @@ impl Painter {
         use_ansi_coloring: bool,
         layout: &PromptLayout,
     ) -> Result<()> {
-        if let Some(row) = layout.status_start_row {
-            self.clear_from_anchor(row)?;
-        }
-        self.print_status_text(lines, use_ansi_coloring, layout)
+        let Some(row) = layout.status_start_row else {
+            return Ok(());
+        };
+        // The erase leaves the cursor at the status line's first cell.
+        self.clear_from_anchor(row)?;
+        self.print_status_here(lines, use_ansi_coloring)
     }
 
     /// As [`Painter::print_status`], onto rows the caller has already erased.
@@ -1873,9 +1903,13 @@ impl Painter {
         let Some(row) = layout.status_start_row else {
             return Ok(());
         };
-        self.stdout
-            .queue(cursor::MoveTo(0, row))?
-            .queue(Print(&lines.status))?;
+        self.stdout.queue(cursor::MoveTo(0, row))?;
+        self.print_status_here(lines, use_ansi_coloring)
+    }
+
+    /// The status line, from where the cursor is.
+    fn print_status_here(&mut self, lines: &PromptLines, use_ansi_coloring: bool) -> Result<()> {
+        self.stdout.queue(Print(&lines.status))?;
         if use_ansi_coloring {
             self.stdout
                 .queue(SetAttribute(Attribute::Reset))?

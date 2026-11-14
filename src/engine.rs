@@ -1047,6 +1047,22 @@ impl Reedline {
         self
     }
 
+    /// A builder that lets a repaint under an open menu resend only the menu
+    /// rows that changed, leaving the rest on screen. Off by default.
+    ///
+    /// Meant for slow links, such as a serial console at 9600 baud, where
+    /// resending a large menu on every keystroke takes seconds. The cost is
+    /// that a row reedline keeps is not checked against the screen: if
+    /// something outside reedline writes over the menu, as a background job
+    /// can, the damage stays until a [`ReedlineEvent::Repaint`] or anything
+    /// else that draws the menu whole. With this off, every paint draws the
+    /// menu whole and so repairs it.
+    #[must_use]
+    pub fn with_kept_menu_rows(mut self, keep: bool) -> Self {
+        self.painter.set_keep_menu_rows(keep);
+        self
+    }
+
     /// A builder that configures semantic prompt markers for terminal integration.
     ///
     /// This enables semantic prompt support for terminals that support it, such as Ghostty.
@@ -1933,7 +1949,9 @@ impl Reedline {
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Repaint => {
-                // A handled Event causes a repaint
+                // A handled Event causes a repaint. A host asks for one to put
+                // the screen back in order, so the menu is drawn whole too.
+                self.painter.forget_menu_rows();
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::PreviousHistory | ReedlineEvent::Up | ReedlineEvent::SearchHistory => {
@@ -2325,7 +2343,9 @@ impl Reedline {
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Repaint => {
-                // A handled Event causes a repaint
+                // A handled Event causes a repaint. A host asks for one to put
+                // the screen back in order, so the menu is drawn whole too.
+                self.painter.forget_menu_rows();
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::PreviousHistory => {
@@ -10156,6 +10176,7 @@ mod tests {
                     completer: Box::new(DescribedCompleter),
                 });
         rl.painter = Painter::new(W::screen(80, 24));
+        rl.painter.set_keep_menu_rows(true);
         rl.painter.handle_resize(80, 24);
         rl.painter.force_prompt_anchored_for_test(0);
         rl.run_edit_commands(&[EditCommand::InsertString("a".into())]);
@@ -10188,5 +10209,47 @@ mod tests {
             screen_after_menu_next(menu(), false),
             screen_after_menu_next(menu(), true)
         );
+    }
+
+    /// A host sends `Repaint` to put the screen back in order, so it draws
+    /// the menu whole even where its rows are kept.
+    #[test]
+    fn repaint_draws_a_kept_menu_whole() {
+        let words = (0..8).map(|i| format!("Ethernet{i}")).collect();
+        let mut reedline = Reedline::create()
+            .with_ansi_colors(false)
+            .with_completer(Box::new(DefaultCompleter::new_with_wordlen(words, 2)))
+            .with_menu(ReedlineMenu::EngineCompleter(Box::new(
+                ColumnarMenu::default().with_name("completion_menu"),
+            )));
+        reedline.painter = Painter::new(W::capture());
+        reedline.painter.set_keep_menu_rows(true);
+        reedline.painter.handle_resize(80, 24);
+        reedline.painter.force_prompt_anchored_for_test(0);
+        let prompt = DefaultPrompt::new(
+            crate::DefaultPromptSegment::Basic(String::from("p")),
+            crate::DefaultPromptSegment::Empty,
+        );
+        let paint = |reedline: &mut Reedline, event: ReedlineEvent| {
+            let sent = reedline.painter.captured_for_test().len();
+            reedline.handle_event(&prompt, event).unwrap();
+            reedline.repaint(&prompt).unwrap();
+            String::from_utf8_lossy(&reedline.painter.captured_for_test()[sent..]).into_owned()
+        };
+
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("E"))]);
+        paint(
+            &mut reedline,
+            ReedlineEvent::Menu(String::from("completion_menu")),
+        );
+        // The anchor a host completer leaves stale is measured again here.
+        reedline.painter.force_prompt_anchored_for_test(0);
+        paint(&mut reedline, ReedlineEvent::Repaint);
+        reedline.painter.force_prompt_anchored_for_test(0);
+        let kept = paint(&mut reedline, ReedlineEvent::None);
+        let repainted = paint(&mut reedline, ReedlineEvent::Repaint);
+
+        assert!(!kept.contains("Ethernet"), "menu resent: {kept:?}");
+        assert!(repainted.contains("Ethernet7"), "{repainted:?}");
     }
 }

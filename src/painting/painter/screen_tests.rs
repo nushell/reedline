@@ -812,6 +812,13 @@ fn test_menu(contents: &str) -> ReedlineMenu {
 }
 
 impl Session {
+    /// As [`Session::new`], with the host opted in to keeping menu rows.
+    fn keeping_menu_rows(width: u16, height: u16, anchor_row: u16) -> Self {
+        let mut session = Self::new(width, height, anchor_row);
+        session.painter.set_keep_menu_rows(true);
+        session
+    }
+
     /// As [`Session::paint_with`], returning the bytes that paint emitted.
     fn paint_menu(&mut self, before: &str, status: &str, menu: &ReedlineMenu) -> String {
         let sent = self.painter.stdout.captured().len();
@@ -824,7 +831,7 @@ impl Session {
 // whose rows are unchanged sends the buffer, never the menu again.
 #[test]
 fn a_repaint_under_an_unchanged_menu_resends_only_the_buffer() {
-    let mut session = Session::new(30, 10, 1);
+    let mut session = Session::keeping_menu_rows(30, 10, 1);
     let menu = test_menu("Ethernet0  Ethernet4\r\nEthernet8  Ethernet12\r\n");
 
     session.paint_menu("E", "", &menu);
@@ -841,7 +848,7 @@ fn a_repaint_under_an_unchanged_menu_resends_only_the_buffer() {
 // Moving the selection changes two rows; only those are sent.
 #[test]
 fn a_changed_menu_row_is_redrawn_alone() {
-    let mut session = Session::new(30, 10, 1);
+    let mut session = Session::keeping_menu_rows(30, 10, 1);
 
     session.paint_menu("x", "", &test_menu("row-a\r\nrow-b\r\nrow-c\r\n"));
     let sent = session.paint_menu("x", "", &test_menu("row-a\r\nROW-B\r\nrow-c\r\n"));
@@ -860,7 +867,7 @@ fn a_changed_menu_row_is_redrawn_alone() {
 // A row that grows shorter loses the cells it no longer covers.
 #[test]
 fn a_shorter_menu_row_erases_its_old_tail() {
-    let mut session = Session::new(30, 10, 1);
+    let mut session = Session::keeping_menu_rows(30, 10, 1);
 
     session.paint_menu("x", "", &test_menu("a long first row\r\nsecond\r\n"));
     session.paint_menu("x", "", &test_menu("short\r\nsecond\r\n"));
@@ -871,7 +878,7 @@ fn a_shorter_menu_row_erases_its_old_tail() {
 // A menu that filters down to fewer rows leaves none of the old ones behind.
 #[test]
 fn a_menu_with_fewer_rows_erases_the_rows_it_left() {
-    let mut session = Session::new(30, 10, 1);
+    let mut session = Session::keeping_menu_rows(30, 10, 1);
 
     session.paint_menu("E", "", &test_menu("one\r\ntwo\r\nthree\r\n"));
     session.paint_menu("Et", "", &test_menu("one\r\n"));
@@ -883,7 +890,7 @@ fn a_menu_with_fewer_rows_erases_the_rows_it_left() {
 // the buffer while the menu stays.
 #[test]
 fn status_line_redraws_above_a_kept_menu() {
-    let mut session = Session::new(30, 10, 1);
+    let mut session = Session::keeping_menu_rows(30, 10, 1);
     let menu = test_menu("m1\r\nm2\r\n");
 
     session.paint_menu("a", "status one", &menu);
@@ -900,7 +907,7 @@ fn status_line_redraws_above_a_kept_menu() {
 // whole again rather than trusted where it was.
 #[test]
 fn a_menu_is_redrawn_whole_after_external_output() {
-    let mut session = Session::new(30, 10, 1);
+    let mut session = Session::keeping_menu_rows(30, 10, 1);
     let menu = test_menu("m1\r\nm2\r\n");
 
     session.paint_menu("a", "", &menu);
@@ -918,7 +925,7 @@ fn a_menu_is_redrawn_whole_after_external_output() {
 // menu is drawn whole every time.
 #[test]
 fn a_menu_with_a_wrapping_row_is_redrawn_whole() {
-    let mut session = Session::new(10, 10, 1);
+    let mut session = Session::keeping_menu_rows(10, 10, 1);
     let menu = test_menu("0123456789abc\r\nnext\r\n");
 
     session.paint_menu("a", "", &menu);
@@ -935,7 +942,7 @@ fn a_menu_with_a_wrapping_row_is_redrawn_whole() {
 // the menu is drawn whole to repair them.
 #[test]
 fn text_after_the_cursor_reaching_the_menu_redraws_it_whole() {
-    let mut session = Session::new(30, 10, 1);
+    let mut session = Session::keeping_menu_rows(30, 10, 1);
     let menu = test_menu("m1\r\nm2\r\n");
     let prompt = FixedPrompt::new("> ", "");
 
@@ -961,22 +968,99 @@ fn text_after_the_cursor_reaching_the_menu_redraws_it_whole() {
 }
 
 // A row exactly as wide as the screen is kept like any other, and redrawn
-// without the erase that would take its last cell.
+// erased first: the erase runs before the row is printed, never after it,
+// where the pending wrap would let it take the last cell. The default
+// four-column `ColumnarMenu` fills 80 columns exactly, so refusing such rows
+// would keep nothing for it.
 #[test]
 fn a_full_width_menu_row_keeps_its_last_cell() {
-    let mut session = Session::new(10, 10, 1);
+    let mut session = Session::keeping_menu_rows(10, 10, 1);
+    let rows = "row-b\r\nrow-c\r\nrow-d\r\nrow-e\r\nrow-f\r\n";
 
-    session.paint_menu("a", "", &test_menu("0123456789\r\nrow\r\n"));
-    session.paint_menu("a", "", &test_menu("abcdefghij\r\nrow\r\n"));
+    session.paint_menu("a", "", &test_menu(&format!("0123456789\r\n{rows}")));
+    let sent = session.paint_menu("a", "", &test_menu(&format!("abcdefghij\r\n{rows}")));
 
-    assert_eq!(session.screen.rows()[1..4], ["> a", "abcdefghij", "row"]);
+    assert!(sent.contains("\x1b[Kabcdefghij"), "{sent:?}");
+    assert!(!sent.contains("row-f"), "{sent:?}");
+    assert_eq!(session.screen.rows()[1..4], ["> a", "abcdefghij", "row-b"]);
+}
+
+// A joined emoji is counted narrower than terminals draw it, so a row holding
+// one may wrap and push the rows below it down. Its width is not certain, so
+// the menu is drawn whole and nothing is left twice.
+#[rstest::rstest]
+#[case::zwj_family("\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}abcd")]
+#[case::skin_tone("\u{1f44d}\u{1f3fd}abcdefgh")]
+fn a_row_of_uncertain_width_draws_the_menu_whole(#[case] row: &str) {
+    let mut session = Session::keeping_menu_rows(12, 10, 1);
+    let menu = |second: &str| test_menu(&format!("{row}\r\n{second}\r\nrow3\r\n"));
+
+    session.paint_menu("a", "", &menu("row2"));
+    let sent = session.paint_menu("a", "", &menu("ROW2"));
+
+    assert!(sent.contains("row3"), "{sent:?}");
+}
+
+// A link opened on one row and closed on a later one is state the row-by-row
+// redraw cannot carry, so a menu holding any escape other than SGR is drawn
+// whole. Painted with ANSI on, where the escapes reach the screen as they are.
+#[test]
+fn a_menu_with_a_link_is_drawn_whole() {
+    let prompt = FixedPrompt::new("> ", "");
+    let mut session = Session::keeping_menu_rows(60, 10, 1);
+    let steps: [MenuStep; 2] = [
+        ("a", "", "", "\x1b]8;;https://example.com\x1b\\link\r\nrow2\x1b]8;;\x1b\\\r\nrow3\r\nrow4\r\nrow5\r\n"),
+        ("a", "", "", "\x1b]8;;https://example.com\x1b\\link\r\nROW2\x1b]8;;\x1b\\\r\nrow3\r\nrow4\r\nrow5\r\n"),
+    ];
+
+    paint_step(&mut session, &prompt, &steps[0], true);
+    let sent = session.painter.stdout.captured().len();
+    paint_step(&mut session, &prompt, &steps[1], true);
+    let sent = String::from_utf8_lossy(&session.painter.stdout.captured()[sent..]).into_owned();
+
+    assert!(sent.contains("https://example.com"), "{sent:?}");
+    assert!(sent.contains("row5"), "{sent:?}");
+}
+
+// Keeping rows is opt-in. Without it every paint draws the menu whole, so a
+// menu something else wrote over is repaired by the next paint.
+#[test]
+fn without_opting_in_a_menu_written_over_is_repaired() {
+    let mut session = Session::new(30, 10, 1);
+    let menu = test_menu("row-a\r\nrow-b\r\n");
+
+    session.paint_menu("x", "", &menu);
+    session.host_output(b"\x1b[3;1HJUNK");
+    let sent = session.paint_menu("x", "", &menu);
+
+    assert!(sent.contains("row-a\r\nrow-b"), "{sent:?}");
+    assert_eq!(session.screen.rows()[1..4], ["> x", "row-a", "row-b"]);
+}
+
+// The trade the host opts in to: a kept row is not checked against the
+// screen, so damage from another writer stays until the rows are forgotten,
+// as a `Repaint` does.
+#[test]
+fn a_kept_menu_written_over_is_repaired_once_forgotten() {
+    let mut session = Session::keeping_menu_rows(30, 10, 1);
+    let menu = test_menu("row-a\r\nrow-b\r\n");
+
+    session.paint_menu("x", "", &menu);
+    session.host_output(b"\x1b[3;1HJUNK");
+    session.paint_menu("x", "", &menu);
+    assert_eq!(session.screen.rows()[1..4], ["> x", "JUNKa", "row-b"]);
+
+    session.painter.forget_menu_rows();
+    session.paint_menu("x", "", &menu);
+
+    assert_eq!(session.screen.rows()[1..4], ["> x", "row-a", "row-b"]);
 }
 
 // Once most rows change, the menu is drawn whole, and the screen shows the
 // same as row by row.
 #[test]
 fn a_menu_whose_rows_all_change_is_drawn_whole() {
-    let mut session = Session::new(30, 10, 1);
+    let mut session = Session::keeping_menu_rows(30, 10, 1);
 
     session.paint_menu("a", "", &test_menu("one\r\ntwo\r\nthree\r\n"));
     let sent = session.paint_menu("a", "", &test_menu("uno\r\ndos\r\n"));
@@ -1012,14 +1096,18 @@ fn paint_step(session: &mut Session, prompt: &FixedPrompt, step: &MenuStep, ansi
 /// Paints `steps` in turn, keeping menu rows where it can, and asserts the
 /// screen looks as it does when the last step is drawn whole, cell by cell
 /// with attributes, cursor included.
+///
+/// This guards that the screen is right, not that anything is saved: with
+/// row keeping switched off every case still passes. The tests above that
+/// look at the bytes sent cover the saving.
 fn assert_kept_rows_match_a_full_paint(
     (width, height, anchor): (u16, u16, u16),
     prompt: &FixedPrompt,
     steps: &[MenuStep],
     ansi: bool,
 ) {
-    let mut kept = Session::new(width, height, anchor);
-    let mut whole = Session::new(width, height, anchor);
+    let mut kept = Session::keeping_menu_rows(width, height, anchor);
+    let mut whole = Session::keeping_menu_rows(width, height, anchor);
     for (index, step) in steps.iter().enumerate() {
         paint_step(&mut kept, prompt, step, ansi);
         if index + 1 == steps.len() {
@@ -1077,7 +1165,7 @@ fn kept_menu_rows_look_like_a_full_paint(
 #[test]
 fn a_dumb_terminal_draws_the_menu_whole() {
     let menu = test_menu("m1\r\nm2\r\n");
-    let mut session = Session::new(30, 10, 1);
+    let mut session = Session::keeping_menu_rows(30, 10, 1);
     session.painter.term_is_dumb = true;
 
     session.paint_menu("a", "", &menu);
