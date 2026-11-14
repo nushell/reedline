@@ -90,7 +90,7 @@ fn main() -> io::Result<()> {
                 prompt.entered += 1;
                 println!("We processed: {buffer}");
             }
-            Signal::CtrlD | Signal::CtrlC => {
+            Signal::CtrlD | Signal::CtrlC(_) => {
                 println!("\nAborted!");
                 break Ok(());
             }
