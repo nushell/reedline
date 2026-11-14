@@ -7,8 +7,8 @@ use crate::painting::test_screen::TestScreen;
 
 use {
     super::utils::{
-        advance_grapheme, coerce_crlf, deferred_wrap_row, escape_control, line_width,
-        plain_menu_text, resolve_wrap, sgr_len, wrap_position,
+        advance_grapheme, certain_line_width, coerce_crlf, deferred_wrap_row, escape_control,
+        line_width, plain_menu_text, resolve_wrap, sgr_len, wrap_position,
     },
     crate::{
         menu::{Menu, ReedlineMenu},
@@ -464,6 +464,9 @@ pub struct Painter {
     pub(crate) last_layout: Option<PromptLayout>,
     /// Set by `hide_cursor`, cleared by every Show. See [`Painter::show_cursor`].
     cursor_hidden: bool,
+    /// Set by `begin_frame`, cleared by `end_frame`, so a paint ends only a
+    /// frame that was opened and a plain one sends no marker at all (#1302).
+    frame_open: bool,
     /// The screen height whose last row an external-message commit measured
     /// as the real bottom. Until then a commit that scrolls past the last row
     /// asks where it ended, since a short reported height would put the real
@@ -497,6 +500,7 @@ impl Painter {
             semantic_markers: None,
             last_layout: None,
             cursor_hidden: false,
+            frame_open: false,
             bottom_confirmed_at: None,
             status_rows: 0,
             menu_room: 0,
@@ -982,9 +986,14 @@ impl Painter {
         };
         let required_lines = block_rows + status_rows;
 
-        // Cursor queries above must finish before the frame begins. End the frame even if
-        // drawing fails, so a recoverable write error cannot leave updates suspended.
-        self.begin_frame()?;
+        // No frame of its own: a paint normally fits the writer's buffer and
+        // goes out as one write, and a multiplexer that handles the frame
+        // itself redraws the pane at every end marker, which flickered on
+        // each keystroke (#1302). A paint larger than the `BufWriter` buffer
+        // spans several writes with no frame around them, so a terminal may
+        // draw between two of them. A frame `print_external_message` left open
+        // is still ended below, even if drawing fails, so a recoverable
+        // write error cannot leave updates suspended.
         let painted = (|| -> Result<()> {
             // Marking the painter state as larger buffer to avoid animations
             self.large_buffer = required_lines >= screen_height;
@@ -1003,18 +1012,35 @@ impl Painter {
                 self.prompt_start_row.mark_verified(scrolled_row);
             }
 
+            let anchor_row = self.prompt_start_row.last_known_row();
+            let layout = self.compute_layout(lines, menu, block_rows, status_rows);
+
             // Moving the cursor to the start of the prompt
             // from this position everything will be printed
-            let anchor_row = self.prompt_start_row.last_known_row();
-            self.clear_from_anchor(anchor_row)?;
-
-            let layout = self.compute_layout(lines, menu, block_rows, status_rows);
+            //
+            // Over the previous paint where that is safe, so a terminal that
+            // draws partway through shows the old text instead of an erased
+            // block (#1302). What the new text does not cover is erased once
+            // it is all printed.
+            let in_place = (!anchor_uninitialized)
+                .then(|| self.in_place_rows(lines, menu, &layout, anchor_row))
+                .flatten();
+            match in_place {
+                Some(_) => {
+                    self.stdout.queue(cursor::MoveTo(0, anchor_row))?;
+                }
+                None => self.clear_from_anchor(anchor_row)?,
+            }
 
             let margin_cursor_row = if self.large_buffer {
                 self.print_large_buffer(prompt, lines, menu, use_ansi_coloring, &layout)?
             } else {
                 self.print_small_buffer(prompt, lines, menu, use_ansi_coloring, &layout)?
             };
+
+            if let Some(widths) = &in_place {
+                self.erase_leftovers(widths, anchor_row, &layout)?;
+            }
 
             self.exit_right_prompt = layout.right_prompt.map(|rp| {
                 let text = coerce_crlf(&lines.prompt_str_right);
@@ -1337,6 +1363,109 @@ impl Painter {
                 .queue(Clear(ClearType::FromCursorDown))?
                 .queue(cursor::MoveTo(0, row))?;
         } else {
+            self.stdout
+                .queue(cursor::MoveTo(0, row))?
+                .queue(Clear(ClearType::FromCursorDown))?;
+        }
+        Ok(())
+    }
+
+    /// The width of every row of a paint that can be drawn over the previous
+    /// one, top to bottom, or `None` for a paint that has to erase first.
+    ///
+    /// Drawing in place needs to know where each row's text ends, to erase
+    /// what the previous paint left behind it. That is only certain for the
+    /// plain case, which is also the one a user types in: prompt, buffer and
+    /// hint, each line on a row of its own, all of it on the screen, measured
+    /// by [`certain_line_width`]. A menu, a status line, a large buffer, a
+    /// wrapping line or text some terminal may measure differently keeps the
+    /// erase up front, where a wrong width costs nothing.
+    fn in_place_rows(
+        &self,
+        lines: &PromptLines,
+        menu: Option<&ReedlineMenu>,
+        layout: &PromptLayout,
+        anchor_row: u16,
+    ) -> Option<Vec<u16>> {
+        if self.large_buffer
+            || self.term_is_dumb
+            || menu.is_some()
+            || layout.status_start_row.is_some()
+        {
+            return None;
+        }
+        // What `print_small_buffer` prints without a menu, in its order.
+        let text = [
+            &*lines.prompt_str_left,
+            &*lines.prompt_indicator,
+            &*lines.before_cursor,
+            &*lines.after_cursor,
+            &*lines.hint,
+        ]
+        .concat();
+        let screen_width = self.screen_width();
+        let widths = text
+            .split('\n')
+            .map(|line| certain_line_width(line.strip_suffix('\r').unwrap_or(line), screen_width))
+            .collect::<Option<Vec<u16>>>()?;
+        let rows = u16::try_from(widths.len()).ok()?;
+        let end_row = anchor_row.checked_add(rows)?;
+        if let Some(right) = &layout.right_prompt {
+            // Its bounds come from an estimate of its width. Nothing is
+            // erased behind it, so it has to end on the margin for certain,
+            // on one of the rows measured above. A line break in it fails
+            // the width, and with it the rows no bounds record.
+            let width = certain_line_width(&lines.prompt_str_right, u16::MAX)?;
+            let ends_on_margin = right.end_col == screen_width
+                && right.end_col.checked_sub(right.start_col) == Some(width);
+            if !ends_on_margin || !(anchor_row..end_row).contains(&right.row) {
+                return None;
+            }
+        }
+        (end_row <= self.screen_height()).then_some(widths)
+    }
+
+    /// Erase what a paint drawn in place did not cover: behind the text of
+    /// each of its rows, of the `widths` [`Painter::in_place_rows`] measured,
+    /// and everything below the last one.
+    ///
+    /// After every print, and with the style reset, since an erase fills with
+    /// the background in effect. Each row is addressed absolutely, with no
+    /// save: the one slot already holds where the cursor belongs. The erase
+    /// below never starts on the home cell, see [`Painter::clear_from_anchor`].
+    fn erase_leftovers(
+        &mut self,
+        widths: &[u16],
+        anchor_row: u16,
+        layout: &PromptLayout,
+    ) -> Result<()> {
+        self.stdout.queue(SetAttribute(Attribute::Reset))?;
+        let mut row = anchor_row;
+        for &width in widths {
+            match layout
+                .right_prompt
+                .as_ref()
+                .filter(|right| right.row == row)
+            {
+                // Only up to the right prompt, which ends on the margin and
+                // was drawn before the buffer: erase the gap, not the line.
+                Some(right) => {
+                    let gap = right.start_col.saturating_sub(width);
+                    if gap > 0 {
+                        self.stdout
+                            .queue(cursor::MoveTo(width, row))?
+                            .queue(Print(format!("\x1b[{gap}X")))?;
+                    }
+                }
+                None => {
+                    self.stdout
+                        .queue(cursor::MoveTo(width, row))?
+                        .queue(Clear(ClearType::UntilNewLine))?;
+                }
+            }
+            row = row.saturating_add(1);
+        }
+        if row < self.screen_height() {
             self.stdout
                 .queue(cursor::MoveTo(0, row))?
                 .queue(Clear(ClearType::FromCursorDown))?;
@@ -1668,23 +1797,28 @@ impl Painter {
     fn begin_frame(&mut self) -> Result<()> {
         if !self.term_is_dumb {
             self.stdout.queue(BeginSynchronizedUpdate)?;
+            self.frame_open = true;
         }
         Ok(())
     }
 
-    /// Queue the end of the frame [`Painter::begin_frame`] opened. Queue it
-    /// before the flush that sends the frame and before any cursor query: an
-    /// end left in the buffer holds the screen until the terminal times out.
+    /// Queue the end of the frame [`Painter::begin_frame`] opened, nothing
+    /// when none is open. Queue it before the flush that sends the frame and
+    /// before any cursor query: an end left in the buffer holds the screen
+    /// until the terminal times out.
     fn end_frame(&mut self) -> Result<()> {
-        if !self.term_is_dumb {
+        if self.frame_open {
+            // Cleared only once the end is queued: after a failed write the
+            // next paint tries again, since a second end marker is harmless
+            // and a missing one holds the screen.
             self.stdout.queue(EndSynchronizedUpdate)?;
+            self.frame_open = false;
         }
         Ok(())
     }
 
     /// End a frame and send it, for a caller that has nothing to paint after
-    /// [`Painter::print_external_message`] left one open. With no frame open
-    /// the end resets a mode that is already off, which no terminal shows.
+    /// [`Painter::print_external_message`] left one open.
     pub(crate) fn finish_frame(&mut self) -> Result<()> {
         self.end_frame()?;
         self.stdout.flush()
@@ -2329,7 +2463,7 @@ mod tests {
         let out = String::from_utf8_lossy(p.stdout.captured()).into_owned();
         let (exit, next) = out.split_at(exit_end);
         assert!(
-            exit.ends_with("\x1b[?25h\x1b[?2026l\x1b[J\r\n"),
+            exit.ends_with("\x1b[?25h\x1b[J\r\n"),
             "exit path changed what it leaves the cursor as: {exit:?}"
         );
         assert!(
@@ -2337,63 +2471,26 @@ mod tests {
             "anchor did not hide the cursor before anything else: {next:?}"
         );
         assert!(
-            next.matches("\x1b[?25h").count() == 1 && next.ends_with("\x1b[?25h\x1b[?2026l"),
+            next.matches("\x1b[?25h").count() == 1 && next.ends_with("\x1b[?25h"),
             "cursor shown between the exit newline and the end of the next paint: {next:?}"
         );
     }
 
+    /// The repaint after an external-message commit is what ends the commit's
+    /// frame. A write that fails while it draws must not skip that end.
     #[test]
-    fn large_repaint_is_bracketed_as_one_synchronized_frame() {
-        let mut painter = make_painter(1000, 20, false);
-        painter.stdout = W::capture();
-        let content = "x".repeat(9000); // Larger than the terminal writer's 8 KiB buffer.
-        let lines = make_lines(">", " ", "", &content, "");
-        painter
-            .repaint_buffer(
-                &TestPrompt,
-                &lines,
-                PromptEditMode::Default,
-                None,
-                false,
-                &None,
-            )
-            .expect("large repaint");
-
-        let output = painter.stdout.captured();
-        let start = b"\x1b[?2026h";
-        let end = b"\x1b[?2026l";
-        let starts = output
-            .windows(start.len())
-            .filter(|bytes| *bytes == start)
-            .count();
-        let ends = output
-            .windows(end.len())
-            .filter(|bytes| *bytes == end)
-            .count();
-        let first_content = output
-            .iter()
-            .position(|byte| *byte == b'x')
-            .expect("painted text");
-        let last_content = output
-            .iter()
-            .rposition(|byte| *byte == b'x')
-            .expect("painted text");
-        let frame_start = output
-            .windows(start.len())
-            .position(|bytes| bytes == start)
-            .expect("frame start");
-        let frame_end = output
-            .windows(end.len())
-            .position(|bytes| bytes == end)
-            .expect("frame end");
-        assert_eq!((starts, ends), (1, 1));
-        assert!(frame_start < first_content && last_content < frame_end);
-    }
-
-    #[test]
-    fn failed_repaint_ends_the_synchronized_frame() {
+    fn failed_repaint_ends_a_frame_left_open_for_it() {
         let mut painter = make_painter(80, 10, false);
-        painter.stdout = W::FailOnce(Vec::new(), 25, false);
+        painter.term_is_dumb = false;
+        // Room for the commit and for the reset and the hide that open the
+        // paint, so the write that fails is one of the draw's.
+        painter.stdout = W::FailOnce(Vec::new(), 60, false);
+        painter.prompt_start_row.mark_verified(0);
+        painter
+            .print_external_message(vec!["one".into()])
+            .expect("print_external_message failed");
+        assert!(painter.frame_open);
+
         let lines = make_lines(">", " ", "", "prompt", "");
         assert!(painter
             .repaint_buffer(
@@ -2410,8 +2507,8 @@ mod tests {
             panic!("test writer changed");
         };
         assert!(*failed);
-        assert!(output.windows(8).any(|bytes| bytes == b"\x1b[?2026h"));
-        assert!(output.ends_with(b"\x1b[?2026l"));
+        assert!(output.ends_with(b"\x1b[?2026l"), "{output:?}");
+        assert!(!painter.frame_open);
     }
 
     #[test]
@@ -3214,26 +3311,18 @@ mod tests {
         assert!(painter.exit_right_prompt.is_none());
     }
 
-    /// A paint is one synchronized frame: the terminal holds the erase and
-    /// the redraw and shows them together. The markers wrap everything that
-    /// draws, on the small- and the large-buffer path alike. The capture
-    /// writer ignores flushes, so where the end sits relative to the final
-    /// flush is not checked here.
+    /// A paint on its own sends no synchronized-update marker, on the small-
+    /// and the large-buffer path alike: a multiplexer redraws the whole pane
+    /// at each end marker, which flickered on every keystroke (#1302).
     #[rstest]
     #[case::small_buffer("abc", false)]
     #[case::large_buffer("l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10", true)]
-    fn a_paint_is_one_synchronized_frame(#[case] before: &str, #[case] expect_large: bool) {
+    fn a_plain_paint_sends_no_frame_marker(#[case] before: &str, #[case] expect_large: bool) {
         let lines = make_lines("> ", "", "", before, "");
         let (out, _, large) = capture_repaint(&lines, 0);
 
         assert_eq!(large, expect_large);
-        // Only the style reset and the cursor hide, which draw nothing, may
-        // come before the frame; the erase must not.
-        let begin = out.find("\x1b[?2026h").expect("no begin marker");
-        let erase = out.find("\x1b[J").expect("no erase");
-        assert!(begin < erase, "{out:?}");
-        assert!(out.ends_with("\x1b[?2026l"), "{out:?}");
-        assert_eq!(out.matches("\x1b[?2026").count(), 2, "{out:?}");
+        assert!(!out.contains("\x1b[?2026"), "{out:?}");
     }
 
     /// `TERM=dumb` would print the markers as text.
@@ -3648,11 +3737,20 @@ mod tests {
         // as "\x1b[J", so that contiguous pair is exactly the bug (#1062).
         // Deliberately coupled to crossterm's escape encoding — it's the
         // byte-level contract we care about.
-        let (out, ..) = capture_repaint(&make_lines(TEST_PROMPT, "", "RP", "hello", ""), 0);
-        assert!(
-            !out.contains("\x1b[1;1H\x1b[J"),
-            "erase-below at home cell (0,0) would make tmux snapshot the prompt to history; emitted: {out:?}"
-        );
+        //
+        // Both kinds of paint: one that erases first, since its line reaches
+        // the margin of the 20 columns, and one drawn in place.
+        for before in [&*"a".repeat(18), "hello"] {
+            let (out, ..) = capture_repaint(&make_lines(TEST_PROMPT, "", "RP", before, ""), 0);
+            assert!(
+                out.contains("\x1b[J"),
+                "meant to exercise an erase-below; emitted: {out:?}"
+            );
+            assert!(
+                !out.contains("\x1b[1;1H\x1b[J"),
+                "erase-below at home cell (0,0) would make tmux snapshot the prompt to history; emitted: {out:?}"
+            );
+        }
     }
 
     #[test]
@@ -3660,7 +3758,12 @@ mod tests {
         // Sanity: away from the home cell the plain MoveTo + erase-below is
         // correct (tmux is not triggered), so the workaround must not apply
         // there. MoveTo(0,3) == "\x1b[4;1H".
-        let (out, ..) = capture_repaint(&make_lines(TEST_PROMPT, "", "RP", "hello", ""), 3);
+        //
+        // The line reaches the margin of the 20 columns, which keeps this
+        // paint on the erase-first path; a shorter one is drawn in place and
+        // erases nothing from the anchor.
+        let before = "a".repeat(18);
+        let (out, ..) = capture_repaint(&make_lines(TEST_PROMPT, "", "RP", &before, ""), 3);
         assert!(
             out.contains("\x1b[4;1H\x1b[J"),
             "expected an erase-below from the anchor row; emitted: {out:?}"

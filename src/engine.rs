@@ -35,6 +35,7 @@ use {
         terminal_extensions::{
             bracketed_paste::BracketedPasteGuard,
             kitty::KittyProtocolGuard,
+            raw_mode,
             semantic_prompt::{Osc133ClickEventsMarkers, SemanticPromptMarkers},
             tty_mode::TtyModeGuard,
         },
@@ -57,7 +58,7 @@ use {
         io::Write,
         process::Command,
         sync::{
-            atomic::{AtomicBool, Ordering},
+            atomic::{fence, AtomicBool, Ordering},
             Arc,
         },
         time::Duration,
@@ -468,7 +469,7 @@ impl RepaintSignal {
 impl Drop for Reedline {
     fn drop(&mut self) {
         if self.cursor_shapes.is_some() {
-            let _ignore = terminal::enable_raw_mode();
+            let _ignore = raw_mode::enable();
             let mut stdout = std::io::stdout();
             let _ignore = stdout.queue(SetCursorStyle::DefaultUserShape);
             let _ignore = stdout.flush();
@@ -1289,7 +1290,7 @@ impl Reedline {
     /// Returns a [`std::io::Result`] in which the `Err` type is [`std::io::Result`]
     /// and the `Ok` variant wraps a [`Signal`] which handles user inputs.
     pub fn read_line(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
-        terminal::enable_raw_mode()?;
+        raw_mode::enable()?;
         self.bracketed_paste.enter();
         self.kitty_protocol.enter();
 
@@ -1421,6 +1422,18 @@ impl Reedline {
                 }
             }
 
+            // Decide whether to poll before taking the repaint request. Nothing
+            // wakes a blocked read, so a request must not land between the take
+            // and the block. A handle count of 1 means every outside handle was
+            // dropped before this read, so none can request after the take. A
+            // higher count makes the loop poll and catch a later request on the
+            // next pass.
+            let needs_polling = self.input_needs_polling();
+            // `Arc::strong_count` is a relaxed load and dropping an `Arc` is a
+            // release decrement, so this fence makes a dropped handle's
+            // `request_repaint` visible to the take below.
+            fence(Ordering::Acquire);
+
             if self.take_repaint_request() {
                 self.repaint(prompt)?;
             }
@@ -1433,9 +1446,8 @@ impl Reedline {
                 }
             }
 
-            // Determine if we need to poll (non-blocking) or can block on input.
-            // We need polling if external_printer or idle_callback is configured,
-            // using the shared poll_interval for the timeout.
+            // A completion still in flight also forces polling, on top of
+            // `needs_polling`, so its result is picked up without a key press.
             let status = self.completer.poll_completion();
             // Anything BUT idle means work is in flight. We need to keep polling.
             let completer_pending = status != CompletionStatus::Idle;
@@ -1447,7 +1459,7 @@ impl Reedline {
             let mut events: Vec<Event> = vec![];
 
             if !self.immediately_accept {
-                if self.input_needs_polling() || completer_pending {
+                if needs_polling || completer_pending {
                     if event::poll(self.poll_interval)? {
                         events.push(crossterm::event::read()?);
                     }
@@ -4324,11 +4336,7 @@ mod tests {
             let buffer = context.buffer();
             let point = context.insertion_point();
 
-            if open == close && Self::inside_unclosed_quote(buffer, point, open) {
-                return false;
-            }
-
-            true
+            !(open == close && Self::inside_unclosed_quote(buffer, point, open))
         }
     }
 
@@ -7002,6 +7010,25 @@ mod tests {
             reedline.input_needs_polling(),
             "a repaint handle must switch the loop to polling so requests are noticed"
         );
+    }
+
+    #[test]
+    fn request_survives_the_last_handle_being_dropped() {
+        // The input loop reads the handle count, then takes the request, then
+        // blocks if the count was 1. This checks the state that order relies
+        // on: once the last handle has requested a repaint and dropped, the
+        // loop chooses to block and the request is still there to take. It
+        // does not drive the loop or exercise the race itself.
+        let mut reedline = Reedline::create();
+        let signal = reedline.repaint_signal();
+
+        std::thread::spawn(move || signal.request_repaint())
+            .join()
+            .expect("worker thread panicked");
+
+        assert!(!reedline.input_needs_polling());
+        assert!(reedline.take_repaint_request());
+        assert!(!reedline.take_repaint_request());
     }
 
     #[test]
