@@ -82,6 +82,10 @@ pub trait ExternalOutput: Send {
     /// when nothing is waiting to be drained and nothing can arrive. The
     /// default keeps checking.
     ///
+    /// The answer is only read between two waits. A change from `false` to
+    /// `true` while the editor is blocked on input goes unnoticed until the
+    /// next key press.
+    ///
     /// Check that nothing can arrive before checking that nothing is waiting,
     /// or read both under one lock. Checked the other way round, a sender can
     /// queue its last text and finish between the two reads, and the answer
