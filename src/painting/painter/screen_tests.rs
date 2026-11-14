@@ -131,10 +131,12 @@ impl Session {
         status: &str,
         menu: Option<&ReedlineMenu>,
     ) {
-        self.paint_with_footer(prompt, before, hint, status, "", menu);
+        self.paint_with_footer(prompt, before, hint, status, "", menu, false);
     }
 
-    /// As [`Session::paint_with`], with a prompt footer below the status line.
+    /// As [`Session::paint_with`], with a prompt footer below the status line,
+    /// and SGR kept and emitted while `use_ansi_coloring`.
+    #[allow(clippy::too_many_arguments)]
     fn paint_with_footer(
         &mut self,
         prompt: &FixedPrompt,
@@ -143,13 +145,21 @@ impl Session {
         status: &str,
         footer: &str,
         menu: Option<&ReedlineMenu>,
+        use_ansi_coloring: bool,
     ) {
         let lines = PromptLines::new(prompt, PromptEditMode::Default, None, before, "", hint)
-            .with_status(status, false)
-            .with_footer(footer, false);
+            .with_status(status, use_ansi_coloring)
+            .with_footer(footer, use_ansi_coloring);
         super::tests::reserve_status(&mut self.painter, &lines);
         self.painter
-            .repaint_buffer(prompt, &lines, PromptEditMode::Default, menu, false, &None)
+            .repaint_buffer(
+                prompt,
+                &lines,
+                PromptEditMode::Default,
+                menu,
+                use_ansi_coloring,
+                &None,
+            )
             .expect("repaint_buffer failed");
         self.screen.sync(self.painter.stdout.captured());
     }
@@ -806,15 +816,24 @@ fn a_right_prompt_hidden_and_shown_draws_in_place(#[case] first: &str, #[case] s
 #[case::a_footer_without_a_status_line(("ab", "", "f1"), ("abc", "", "f1"))]
 #[case::a_footer_going_away(("ls", "status", "f1\nf2"), ("ls", "status", ""))]
 #[case::a_footer_line_less(("ls", "status", "f1\nf2"), ("ls", "status", "f1"))]
+#[case::a_status_line_appearing_above_a_footer(("ls", "", "f1\nf2"), ("ls", "status", "f1\nf2"))]
+#[case::a_status_line_going_away_above_a_footer(("ls", "status", "f1\nf2"), ("ls", "", "f1\nf2"))]
+#[case::a_styled_status_line(
+    ("ls", "\x1b[31merror\x1b[0m: x\nhelp: y", "f1"),
+    ("lsx", "\x1b[32mok\x1b[0m", "f1")
+)]
 fn status_line_and_footer_draw_in_place(
     #[case] first: (&str, &str, &str),
     #[case] second: (&str, &str, &str),
+    #[values(false, true)] use_ansi_coloring: bool,
 ) {
     let prompt = FixedPrompt::new("> ", "");
     let (buffer, status, footer) = first;
-    let first: Paint = &|s| s.paint_with_footer(&prompt, buffer, "", status, footer, None);
+    let first: Paint =
+        &|s| s.paint_with_footer(&prompt, buffer, "", status, footer, None, use_ansi_coloring);
     let (buffer, status, footer) = second;
-    let second: Paint = &|s| s.paint_with_footer(&prompt, buffer, "", status, footer, None);
+    let second: Paint =
+        &|s| s.paint_with_footer(&prompt, buffer, "", status, footer, None, use_ansi_coloring);
     assert_drawn_in_place((20, 8), first, second);
 }
 
@@ -825,8 +844,8 @@ fn status_line_and_footer_draw_in_place(
 #[case::a_wrapping_footer("status", "0123456789abcdefghijklmn")]
 fn a_wrapping_status_line_or_footer_erases_first(#[case] status: &str, #[case] footer: &str) {
     let prompt = FixedPrompt::new("> ", "");
-    let first: Paint = &|s| s.paint_with_footer(&prompt, "ls", "", "status", "", None);
-    let second: Paint = &|s| s.paint_with_footer(&prompt, "lsx", "", status, footer, None);
+    let first: Paint = &|s| s.paint_with_footer(&prompt, "ls", "", "status", "", None, false);
+    let second: Paint = &|s| s.paint_with_footer(&prompt, "lsx", "", status, footer, None, false);
     assert_nothing_left_over((20, 8), first, second);
 
     let mut session = Session::new(20, 8, 1);
