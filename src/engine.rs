@@ -1352,20 +1352,16 @@ impl Reedline {
     /// indefinitely, so external triggers (break signal, repaint signal,
     /// external printer, idle callback) are noticed while waiting for input.
     fn input_needs_polling(&self) -> bool {
-        #[allow(unused_mut)] // Dependent on feature flags
-        let mut poll = self.break_signal.is_some()
+        self.break_signal.is_some()
             || self
                 .repaint_signal
                 .as_ref()
-                .is_some_and(|sig| Arc::strong_count(&sig.flag) > 1);
-
-        {
-            poll |= self.external_printer.is_some();
-        }
-
-        poll |= self.idle_callback.is_some();
-
-        poll
+                .is_some_and(|sig| Arc::strong_count(&sig.flag) > 1)
+            || self
+                .external_printer
+                .as_ref()
+                .is_some_and(|printer| printer.needs_polling())
+            || self.idle_callback.is_some()
     }
 
     /// Reset the per-call state at the start of a `read_line`, before anything
@@ -3594,6 +3590,10 @@ impl Reedline {
     }
 
     /// Adds an external printer
+    ///
+    /// While [`read_line`](Self::read_line) waits for input it checks the
+    /// printer for text every [poll interval](Self::with_poll_interval), for as
+    /// long as [`ExternalOutput::needs_polling`] returns `true`.
     pub fn with_external_printer(mut self, printer: impl ExternalOutput + 'static) -> Self {
         self.external_printer = Some(Box::new(printer));
         self
@@ -3607,8 +3607,10 @@ impl Reedline {
     ///
     /// Common values are 33ms (~30fps) for UI updates or 100ms for less frequent tasks.
     ///
-    /// Note: This setting only takes effect when an external printer or idle callback
-    /// is configured. Without these features, Reedline blocks until input is received.
+    /// Note: This setting only takes effect while something needs polling: an
+    /// idle callback, a break signal, a live repaint handle, or an external
+    /// printer whose [`ExternalOutput::needs_polling`] returns `true`. Otherwise
+    /// Reedline blocks until input is received.
     ///
     /// # Example
     /// ```no_run
@@ -7009,6 +7011,46 @@ mod tests {
         assert!(
             reedline.input_needs_polling(),
             "a repaint handle must switch the loop to polling so requests are noticed"
+        );
+    }
+
+    /// An external printer whose `needs_polling` answer the test sets.
+    struct SwitchablePrinter(Arc<AtomicBool>);
+
+    impl ExternalOutput for SwitchablePrinter {
+        fn drain(&mut self) -> io::Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+
+        fn needs_polling(&self) -> bool {
+            self.0.load(Ordering::Relaxed)
+        }
+    }
+
+    #[test]
+    fn external_printer_polls_only_while_it_expects_text() {
+        let expects_text = Arc::new(AtomicBool::new(false));
+        let reedline =
+            Reedline::create().with_external_printer(SwitchablePrinter(Arc::clone(&expects_text)));
+        assert!(
+            !reedline.input_needs_polling(),
+            "a printer that expects no text must let the loop block on input"
+        );
+
+        expects_text.store(true, Ordering::Relaxed);
+        assert!(
+            reedline.input_needs_polling(),
+            "a printer that expects text must switch the loop to polling"
+        );
+    }
+
+    #[test]
+    fn channel_printer_keeps_polling() {
+        let reedline =
+            Reedline::create().with_external_printer(crate::ExternalPrinter::<String>::default());
+        assert!(
+            reedline.input_needs_polling(),
+            "a printer without its own answer must keep the loop polling"
         );
     }
 

@@ -71,6 +71,28 @@ pub trait ExternalOutput: Send {
     /// without a trailing newline still ends its line, so a source that
     /// reads in chunks should hand over complete lines.
     fn drain(&mut self) -> io::Result<Vec<String>>;
+
+    /// Whether text can still arrive, so the editor must keep checking for it
+    /// while it waits for input.
+    ///
+    /// The editor asks on every pass of its input loop. While this returns
+    /// `false` it blocks on input instead of waking every
+    /// [poll interval](crate::Reedline::with_poll_interval), and text that
+    /// arrives anyway is printed after the next key press. Return `false` only
+    /// when nothing is waiting to be drained and nothing can arrive. The
+    /// default keeps checking.
+    ///
+    /// The answer is only read between two waits. A change from `false` to
+    /// `true` while the editor is blocked on input goes unnoticed until the
+    /// next key press.
+    ///
+    /// Check that nothing can arrive before checking that nothing is waiting,
+    /// or read both under one lock. Checked the other way round, a sender can
+    /// queue its last text and finish between the two reads, and the answer
+    /// is `false` with text left waiting.
+    fn needs_polling(&self) -> bool {
+        true
+    }
 }
 
 impl<T: Display + Send> ExternalOutput for ExternalPrinter<T> {
