@@ -3497,10 +3497,12 @@ impl Reedline {
             )
         };
         // History search paints elsewhere, so only submit hides the status
-        // line here. Measured only with one to show, since the measure walks
-        // the whole buffer.
+        // line and the prompt footer here. Measured only with one to show,
+        // since the measure walks the whole buffer.
         let screen_width = self.painter.screen_width();
-        let status_room = if self.status_line.is_some() && !self.hide_hints {
+        let footer = prompt.render_prompt_footer(screen_width);
+        let status_room = if (self.status_line.is_some() || !footer.is_empty()) && !self.hide_hints
+        {
             // An open menu hides the hint, so measure the block the painter
             // draws above it. Active, not visible: a menu opening on this
             // paint turns visible only in its update below. One that stays
@@ -3526,10 +3528,19 @@ impl Reedline {
             ),
             _ => String::new(),
         };
-        let mut lines = lines.with_status(&status, use_ansi_coloring);
+        let footer = if status_room > 0 { footer } else { "".into() };
+        // The footer goes on the rows after the status line. The two stay
+        // apart up to the painter, so the footer gives way first, to the
+        // buffer here and to a menu there.
+        let mut lines = lines
+            .with_status(&status, use_ansi_coloring)
+            .with_footer(&footer, use_ansi_coloring);
         // Before the menus size themselves below the status line.
-        self.painter
-            .reserve_status_rows(lines.status_rows(screen_width), status_room);
+        self.painter.reserve_status_and_footer_rows(
+            lines.status_rows(screen_width),
+            lines.footer_rows(screen_width),
+            status_room,
+        );
 
         // Updating the working details of the active menu
         for menu in self.menus.iter_mut() {
@@ -3801,6 +3812,7 @@ mod tests {
         ListMenu, MenuBuilder, MotionTarget, PromptHelixMode, PromptViMode, Span, Suggestion,
     };
     use rstest::rstest;
+    use std::borrow::Cow;
     use std::path::Path;
 
     fn seam_engine(edit_mode: Box<dyn EditMode>) -> Reedline {
@@ -10006,11 +10018,16 @@ mod tests {
 
     /// What one repaint writes to an 80-column terminal `height` rows tall.
     fn repaint_output_on(rl: &mut Reedline, height: u16) -> String {
+        repaint_output_with(rl, &DefaultPrompt::default(), height)
+    }
+
+    /// [`repaint_output_on`] with `prompt` in place of the default one.
+    fn repaint_output_with(rl: &mut Reedline, prompt: &dyn Prompt, height: u16) -> String {
         rl.painter = Painter::new(W::capture());
         // Size first: `handle_resize` invalidates the anchor the next line pins.
         rl.painter.handle_resize(80, height);
         rl.painter.force_prompt_anchored_for_test(0);
-        rl.repaint(&DefaultPrompt::default()).unwrap();
+        rl.repaint(prompt).unwrap();
         String::from_utf8_lossy(rl.painter.captured_for_test()).into_owned()
     }
 
@@ -10111,5 +10128,205 @@ mod tests {
         assert!(!output.contains(hint));
         assert!(output.contains("ls27"));
         assert!(!output.contains("ls28"));
+    }
+
+    const FOOTER_TEXT: &str = "footer-from-the-prompt";
+
+    /// [`DefaultPrompt`] with the second field as its footer.
+    struct FooterPrompt(DefaultPrompt, &'static str);
+
+    impl Prompt for FooterPrompt {
+        fn render_prompt_left(&self) -> Cow<'_, str> {
+            self.0.render_prompt_left()
+        }
+        fn render_prompt_right(&self) -> Cow<'_, str> {
+            self.0.render_prompt_right()
+        }
+        fn render_prompt_indicator(&self, mode: PromptEditMode) -> Cow<'_, str> {
+            self.0.render_prompt_indicator(mode)
+        }
+        fn render_prompt_multiline_indicator(&self) -> Cow<'_, str> {
+            self.0.render_prompt_multiline_indicator()
+        }
+        fn render_prompt_history_search_indicator(
+            &self,
+            search: PromptHistorySearch,
+        ) -> Cow<'_, str> {
+            self.0.render_prompt_history_search_indicator(search)
+        }
+        fn render_prompt_footer(&self, screen_width: u16) -> Cow<'_, str> {
+            // `{width}` stands in for the width the footer is asked with.
+            self.1.replace("{width}", &screen_width.to_string()).into()
+        }
+    }
+
+    /// A [`FooterPrompt`] with [`FOOTER_TEXT`] as its footer.
+    fn footer_prompt() -> FooterPrompt {
+        FooterPrompt(DefaultPrompt::default(), FOOTER_TEXT)
+    }
+
+    /// Whether the status line, the last menu entry and the footer's last
+    /// line are drawn, with `menu` open below a status line, on a screen
+    /// `height` rows tall.
+    fn status_menu_footer_drawn(
+        menu: ReedlineMenu,
+        footer: &'static str,
+        height: u16,
+    ) -> (bool, bool, bool) {
+        let words = ["ls01", "ls02", "ls03"].map(String::from).to_vec();
+        let (rl, _) = engine_with_status_line();
+        let mut rl = rl
+            .with_ansi_colors(false)
+            .with_completer(Box::new(DefaultCompleter::new(words)))
+            .with_menu(menu);
+        let prompt = FooterPrompt(DefaultPrompt::default(), footer);
+        rl.handle_event(&prompt, ReedlineEvent::Menu("completion_menu".to_string()))
+            .expect("menu opens");
+
+        let output = repaint_output_with(&mut rl, &prompt, height);
+
+        (
+            output.contains(STATUS_TEXT),
+            output.contains("ls03"),
+            output.contains("foot2"),
+        )
+    }
+
+    /// A footer never costs the status line or a menu their rows: when a menu
+    /// needs them back, the footer gives way first, at every height. It shows
+    /// once the screen has its own rows to spare above what the status line
+    /// needs, however tall the menu.
+    #[rstest]
+    #[case::ide(|| ReedlineMenu::EngineCompleter(Box::new(
+        crate::IdeMenu::default().with_name("completion_menu"),
+    )))]
+    #[case::columnar(|| ReedlineMenu::EngineCompleter(Box::new(
+        ColumnarMenu::default().with_name("completion_menu"),
+    )))]
+    #[case::list(|| ReedlineMenu::EngineCompleter(Box::new(
+        ListMenu::default().with_name("completion_menu"),
+    )))]
+    #[case::description(|| ReedlineMenu::EngineCompleter(Box::new(
+        crate::DescriptionMenu::default().with_name("completion_menu"),
+    )))]
+    fn footer_gives_way_to_the_status_line_and_a_menu(#[case] menu: fn() -> ReedlineMenu) {
+        for height in 3..=30 {
+            let (status, entry, _) = status_menu_footer_drawn(menu(), "", height);
+            let (status_with_footer, entry_with_footer, _) =
+                status_menu_footer_drawn(menu(), "foot1\nfoot2", height);
+            assert_eq!(
+                (status_with_footer, entry_with_footer),
+                (status, entry),
+                "status line and menu at height {height}"
+            );
+        }
+        let status_from = (3..=30).find(|&height| status_menu_footer_drawn(menu(), "", height).0);
+        let footer_from =
+            (3..=30).find(|&height| status_menu_footer_drawn(menu(), "foot1\nfoot2", height).2);
+        assert!(
+            status_from.is_some(),
+            "status line drawn once there is room"
+        );
+        assert_eq!(footer_from, status_from.map(|height| height + 2));
+    }
+
+    /// The footer takes the row after the status line.
+    #[test]
+    fn footer_is_drawn_below_the_status_line() {
+        let (mut rl, _) = engine_with_status_line();
+        let rl = &mut rl;
+        let output = repaint_output_with(rl, &footer_prompt(), 10);
+
+        let status_at = output.find(STATUS_TEXT).expect("status drawn");
+        let footer_at = output.find(FOOTER_TEXT).expect("footer drawn");
+        assert_eq!(&output[status_at + STATUS_TEXT.len()..footer_at], "\r\n");
+    }
+
+    #[test]
+    fn footer_is_asked_with_the_screen_width() {
+        let (mut rl, _) = engine_with_status_line();
+        let prompt = FooterPrompt(DefaultPrompt::default(), "width={width}");
+
+        let output = repaint_output_with(&mut rl, &prompt, 10);
+
+        assert!(output.contains("width=80"), "{output:?}");
+    }
+
+    #[test]
+    fn footer_is_drawn_without_a_status_line() {
+        let mut rl = seam_engine(Box::<crate::Emacs>::default());
+        drive(&mut rl, &[ch('l'), ch('s')]);
+
+        let output = repaint_output_with(&mut rl, &footer_prompt(), 10);
+
+        assert!(output.contains(FOOTER_TEXT));
+    }
+
+    /// One row free below the buffer: the status line keeps it.
+    #[test]
+    fn footer_gives_way_to_the_status_line_first() {
+        let (mut rl, _) = engine_with_status_line();
+
+        let output = repaint_output_with(&mut rl, &footer_prompt(), 3);
+
+        assert!(output.contains(STATUS_TEXT));
+        assert!(!output.contains(FOOTER_TEXT));
+    }
+
+    /// A menu taller than the screen is cut below both, as it is below the
+    /// status line alone, a row shorter.
+    #[test]
+    fn columnar_menu_is_cut_below_status_line_and_footer() {
+        let words = (0..60).map(|index| format!("ls{index:02}")).collect();
+        let (rl, _) = engine_with_status_line();
+        let mut rl = rl
+            .with_ansi_colors(false)
+            .with_completer(Box::new(DefaultCompleter::new(words)))
+            .with_menu(ReedlineMenu::EngineCompleter(Box::new(
+                ColumnarMenu::default().with_name("completion_menu"),
+            )));
+        rl.handle_event(
+            &footer_prompt(),
+            ReedlineEvent::Menu("completion_menu".to_string()),
+        )
+        .expect("menu opens");
+
+        let output = repaint_output_with(&mut rl, &footer_prompt(), 10);
+
+        assert!(output.contains(STATUS_TEXT));
+        assert!(output.contains(FOOTER_TEXT));
+        assert!(output.contains("ls23"));
+        assert!(!output.contains("ls24"));
+    }
+
+    #[test]
+    fn footer_is_hidden_once_the_line_is_submitted() {
+        let (mut rl, _) = engine_with_status_line();
+        rl.hide_hints = true;
+
+        let output = repaint_output_with(&mut rl, &footer_prompt(), 10);
+
+        assert!(!output.contains(FOOTER_TEXT));
+    }
+
+    /// Typing below a status line, with and without a footer, draws over the
+    /// previous paint: nothing is erased before the prompt is printed again.
+    #[rstest]
+    #[case::status_line_only("")]
+    #[case::with_a_footer("foot1\nfoot2")]
+    fn typing_under_a_status_line_draws_in_place(#[case] footer: &'static str) {
+        let (mut rl, _) = engine_with_status_line();
+        let prompt = FooterPrompt(DefaultPrompt::default(), footer);
+        repaint_output_with(&mut rl, &prompt, 10);
+        let start = rl.painter.captured_for_test().len();
+
+        drive(&mut rl, &[ch('x')]);
+        rl.repaint(&prompt).unwrap();
+
+        let paint = String::from_utf8_lossy(&rl.painter.captured_for_test()[start..]).into_owned();
+        let prompt_at = paint.find("lsx").expect("buffer drawn");
+        assert!(!paint[..prompt_at].contains("\x1b[J"), "{paint:?}");
+        assert!(paint.contains(STATUS_TEXT), "{paint:?}");
+        assert_eq!(paint.contains("foot2"), !footer.is_empty(), "{paint:?}");
     }
 }
