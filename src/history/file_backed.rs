@@ -335,6 +335,9 @@ impl FileBackedHistory {
     /// the newest `capacity` entries of the file in memory, takes new entries as usual,
     /// and never writes them back: they are gone once the history is dropped.
     ///
+    /// The history file is never modified, created, truncated or locked, and no other
+    /// file is written. This holds on a full filesystem as well.
+    ///
     /// A missing file loads as an empty history.
     pub fn with_file_read_only(capacity: usize, file: PathBuf) -> Result<Self> {
         let mut hist = Self::new(capacity)?;

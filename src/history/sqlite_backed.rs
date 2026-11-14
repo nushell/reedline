@@ -234,10 +234,13 @@ impl History for SqliteBackedHistory {
 
 /// Opens `file` for reading only, and says whether it has a history table.
 ///
-/// Even a reader of a WAL database needs the `-shm` file, which SQLite cannot create in
-/// a read-only directory. Then the database is opened as immutable, which skips the
-/// shared memory and locking. Nothing can write to such a directory, and a clean shutdown
-/// folds the WAL back into the main file, so the main file is the whole history.
+/// Even a reader of a WAL database needs the `-shm` file. Where SQLite cannot create it,
+/// in a read-only directory or on a full filesystem, the database is opened as immutable
+/// instead, which skips the shared memory and all locking. SQLite documents that mode as
+/// unsafe for a file that changes underneath it, so it stays the last resort: a running
+/// session keeps a `-shm` file around, and with one in place the first open succeeds.
+/// An immutable open reads the main file only, which is the whole history after a clean
+/// shutdown since that folds the WAL back into it.
 fn open_read_only(file: &Path) -> rusqlite::Result<(Connection, bool)> {
     let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
     let has_history = |db: &Connection| {
@@ -251,9 +254,8 @@ fn open_read_only(file: &Path) -> rusqlite::Result<(Connection, bool)> {
     let db = Connection::open_with_flags(file, flags)?;
     match has_history(&db) {
         Ok(has) => Ok((db, has)),
-        Err(rusqlite::Error::SqliteFailure(err, _))
-            if matches!(err.code, ErrorCode::ReadOnly | ErrorCode::CannotOpen) =>
-        {
+        Err(rusqlite::Error::SqliteFailure(err, _)) if cannot_set_up_shared_memory(&err) => {
+            drop(db);
             let db = Connection::open_with_flags(
                 immutable_uri(file),
                 flags | OpenFlags::SQLITE_OPEN_URI,
@@ -263,6 +265,16 @@ fn open_read_only(file: &Path) -> rusqlite::Result<(Connection, bool)> {
         }
         Err(err) => Err(err),
     }
+}
+
+/// Whether `err` says that the `-shm` file could not be created, sized or mapped.
+fn cannot_set_up_shared_memory(err: &rusqlite::ffi::Error) -> bool {
+    use rusqlite::ffi::{SQLITE_IOERR_SHMMAP, SQLITE_IOERR_SHMOPEN, SQLITE_IOERR_SHMSIZE};
+    matches!(err.code, ErrorCode::ReadOnly | ErrorCode::CannotOpen)
+        || matches!(
+            err.extended_code,
+            SQLITE_IOERR_SHMOPEN | SQLITE_IOERR_SHMSIZE | SQLITE_IOERR_SHMMAP
+        )
 }
 
 /// The `file:` URI that opens `file` as immutable, percent-encoding everything that is
@@ -322,12 +334,21 @@ impl SqliteBackedHistory {
         let db = Connection::open(&file).map_err(map_sqlite_err)?;
         Self::from_connection(db, session, session_timestamp)
     }
-    /// Loads a history database without ever writing to it.
+    /// Loads a history database without writing to it.
     ///
     /// Use this when [`SqliteBackedHistory::with_file`] fails because the database cannot
     /// be written, for example on a read-only or full filesystem. The entries of the file
     /// are copied into an in-memory database, so new entries and updates work as usual
     /// but are gone once the history is dropped.
+    ///
+    /// The history file itself is never modified, created, truncated or locked for
+    /// writing. SQLite may create its `-wal` and `-shm` companion files beside it when the
+    /// directory allows, as it does for any reader of a WAL database, and leaves them
+    /// there.
+    ///
+    /// On a full filesystem SQLite cannot set up the `-shm` file, and the entries are
+    /// read from the main database file alone. An empty `-wal` and a partial `-shm` file
+    /// may be left beside it.
     ///
     /// A missing file, or one without a history table, loads as an empty history.
     pub fn with_file_read_only(
@@ -344,14 +365,20 @@ impl SqliteBackedHistory {
             return Ok(history);
         }
 
-        let (source, has_history) = open_read_only(&file).map_err(map_sqlite_err)?;
+        history.copy_entries_from(&file)?;
+        Ok(history)
+    }
+
+    /// Copies every entry of the database `file` into this history, reading only.
+    fn copy_entries_from(&self, file: &Path) -> Result<()> {
+        let (source, has_history) = open_read_only(file).map_err(map_sqlite_err)?;
         if !has_history {
-            return Ok(history);
+            return Ok(());
         }
 
         // Ids are copied too, so they stay the ones the file uses.
         const COLUMNS: &str = "id, command_line, start_timestamp, session_id, hostname, cwd, duration_ms, exit_status, more_info";
-        let tx = history.db.unchecked_transaction().map_err(map_sqlite_err)?;
+        let tx = self.db.unchecked_transaction().map_err(map_sqlite_err)?;
         {
             let mut select = source
                 .prepare(&format!("select {COLUMNS} from history"))
@@ -372,8 +399,7 @@ impl SqliteBackedHistory {
                     .map_err(map_sqlite_err)?;
             }
         }
-        tx.commit().map_err(map_sqlite_err)?;
-        Ok(history)
+        tx.commit().map_err(map_sqlite_err)
     }
 
     /// Creates a new history in memory
@@ -1393,6 +1419,54 @@ mod tests {
         assert_eq!(reader.count_all()?, 1);
         drop(writer);
         Ok(())
+    }
+
+    /// A session that crashed leaves entries in the `-wal` file. Loading them must not
+    /// fold them into the database, which is what a connection that could write does
+    /// when it closes.
+    #[test]
+    fn read_only_history_does_not_checkpoint_a_leftover_wal() -> crate::Result<()> {
+        let live = tempfile::tempdir().unwrap();
+        let mut writer =
+            SqliteBackedHistory::with_file(live.path().join("history.sqlite3"), None, None)?;
+        writer.save(HistoryItem::from_command_line("ls"))?;
+
+        // The files as a crash would leave them: copied while the writer is still open.
+        let crashed = tempfile::tempdir().unwrap();
+        for entry in std::fs::read_dir(live.path()).unwrap() {
+            let entry = entry.unwrap();
+            std::fs::copy(entry.path(), crashed.path().join(entry.file_name())).unwrap();
+        }
+        let histfile = crashed.path().join("history.sqlite3");
+        let wal = crashed.path().join("history.sqlite3-wal");
+        let before = (
+            std::fs::read(&histfile).unwrap(),
+            std::fs::read(&wal).unwrap(),
+        );
+
+        let mut reader = SqliteBackedHistory::with_file_read_only(histfile.clone(), None, None)?;
+        assert_eq!(reader.count_all()?, 1);
+        reader.save(HistoryItem::from_command_line("pwd"))?;
+        drop(reader);
+
+        let after = (
+            std::fs::read(&histfile).unwrap(),
+            std::fs::read(&wal).unwrap(),
+        );
+        assert!(before == after, "the database or its WAL changed");
+        Ok(())
+    }
+
+    /// A full filesystem cannot size the `-shm` file, which SQLite reports as an I/O
+    /// error rather than as a read-only database.
+    #[test]
+    fn shared_memory_errors_fall_back_to_immutable() {
+        use rusqlite::ffi::{Error, SQLITE_IOERR_READ, SQLITE_IOERR_SHMSIZE, SQLITE_READONLY};
+        assert!(cannot_set_up_shared_memory(&Error::new(
+            SQLITE_IOERR_SHMSIZE
+        )));
+        assert!(cannot_set_up_shared_memory(&Error::new(SQLITE_READONLY)));
+        assert!(!cannot_set_up_shared_memory(&Error::new(SQLITE_IOERR_READ)));
     }
 
     #[test]

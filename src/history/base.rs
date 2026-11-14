@@ -499,6 +499,15 @@ mod test {
         std::fs::set_permissions(dir, std::fs::Permissions::from_mode(dir_mode)).unwrap();
     }
 
+    /// The file `backend` keeps its history in, as [`TestBackend::in_dir`] names it.
+    fn history_file(backend: TestBackend, dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join(match backend {
+            TestBackend::File => "history.txt",
+            #[cfg(feature = "_sqlite")]
+            TestBackend::Sqlite => "history.db",
+        })
+    }
+
     #[rstest]
     #[case::file(TestBackend::File)]
     #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
@@ -511,7 +520,15 @@ mod test {
 
         #[cfg(unix)]
         set_read_only(tmp.path(), true);
+        // Permissions do not hold back root, and on other platforms the directory stays
+        // writable. SQLite may then put its companion files next to the database.
+        let probe = tmp.path().join("probe");
+        let writable = std::fs::write(&probe, "").is_ok();
+        if writable {
+            std::fs::remove_file(&probe).unwrap();
+        }
         let before = dir_contents(tmp.path());
+        let file_before = std::fs::read(history_file(backend, tmp.path())).unwrap();
 
         let mut history = backend.read_only_in_dir(tmp.path());
         assert_eq!(history.count_all()?, 2);
@@ -520,12 +537,45 @@ mod test {
         let _ = history.sync();
         drop(history);
 
-        assert_eq!(dir_contents(tmp.path()), before);
+        let file_after = std::fs::read(history_file(backend, tmp.path())).unwrap();
+        assert!(file_before == file_after, "the history file changed");
+        if !writable {
+            assert_eq!(dir_contents(tmp.path()), before);
+        }
         #[cfg(unix)]
         set_read_only(tmp.path(), false);
 
         // The entry saved while read-only lived in memory only.
         assert_eq!(backend.in_dir(tmp.path()).count_all()?, 2);
+        Ok(())
+    }
+
+    /// In a directory that can be written nothing stops a stray write, so this is the
+    /// test that tells "did not write" from "was not allowed to".
+    #[rstest]
+    #[case::file(TestBackend::File)]
+    #[cfg_attr(feature = "_sqlite", case::sqlite(TestBackend::Sqlite))]
+    fn read_only_history_leaves_a_writable_file_alone(#[case] backend: TestBackend) -> Result<()> {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut history = backend.in_dir(tmp.path());
+        history.save(create_item(1, "/home/me", "cd ~/Downloads", 0))?;
+        drop(history);
+        let file = history_file(backend, tmp.path());
+        let before = dir_contents(tmp.path());
+        let file_before = std::fs::read(&file).unwrap();
+
+        let mut history = backend.read_only_in_dir(tmp.path());
+        assert_eq!(history.count_all()?, 1);
+        history.save(create_item(1, "/home/me", "ls", 0))?;
+        let _ = history.sync();
+        assert!(file_before == std::fs::read(&file).unwrap());
+        drop(history);
+
+        assert!(file_before == std::fs::read(&file).unwrap());
+        // SQLite may leave its `-wal` and `-shm` files next to the database.
+        if backend == TestBackend::File {
+            assert_eq!(dir_contents(tmp.path()), before);
+        }
         Ok(())
     }
 
