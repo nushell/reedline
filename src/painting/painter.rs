@@ -8,7 +8,7 @@ use crate::painting::test_screen::TestScreen;
 use {
     super::utils::{
         advance_grapheme, certain_line_width, coerce_crlf, deferred_wrap_row, escape_control,
-        line_width, plain_menu_text, resolve_wrap, wrap_position,
+        line_width, plain_menu_text, resolve_wrap, sgr_len, wrap_position,
     },
     crate::{
         menu::{Menu, ReedlineMenu},
@@ -1623,8 +1623,6 @@ impl Painter {
     ) -> Result<Option<u16>> {
         let screen_width = self.screen_width();
         let screen_height = self.screen_height();
-        let cursor_distance = lines.distance_from_prompt(screen_width);
-        let remaining_lines = screen_height.saturating_sub(cursor_distance);
 
         let extra_rows = layout.extra_rows;
         let extra_rows_after_prompt = layout.extra_rows_after_prompt;
@@ -1705,18 +1703,46 @@ impl Painter {
                 self.stdout.queue(Print(&lines.after_cursor))?;
             }
             self.print_menu(menu, use_ansi_coloring, layout)?;
+        } else if screen_height == 0 {
+            // Until the height is known, keep the first logical line as before.
+            for text in [&*lines.after_cursor, &lines.hint] {
+                self.stdout
+                    .queue(Print(skip_buffer_lines(text, 0, Some(0))))?;
+            }
         } else {
-            // Selecting lines for the hint
-            // The -1 subtraction is done because the remaining lines consider the line where the
-            // cursor is located as a remaining line. That has to be removed to get the correct offset
-            // for the after-cursor and hint lines
-            let offset = remaining_lines.saturating_sub(1) as usize;
-            // Selecting lines after the cursor
-            let after_cursor_skipped = skip_buffer_lines(&lines.after_cursor, 0, Some(offset));
-            self.stdout.queue(Print(after_cursor_skipped))?;
-            // Hint lines
-            let hint_skipped = skip_buffer_lines(&lines.hint, 0, Some(offset));
-            self.stdout.queue(Print(hint_skipped))?;
+            let (mut column, mut row) = wrap_position(
+                [prompt_skipped, indicator_skipped, before_cursor_skipped],
+                screen_width,
+            )
+            .unwrap_or_default();
+            // The tail shares the remaining screen space, including soft wraps.
+            for text in [&*lines.after_cursor, &lines.hint] {
+                let mut end = 0;
+                while end < text.len() {
+                    let rest = &text[end..];
+                    if let Some(len) = sgr_len(rest) {
+                        end += len;
+                        continue;
+                    }
+                    let Some(grapheme) = rest.graphemes(true).next() else {
+                        break;
+                    };
+                    let drawn = if grapheme == "\r\n" { "\n" } else { grapheme };
+                    let ((next_row, next_column), width) =
+                        advance_grapheme((row, column), drawn, screen_width);
+                    if next_row >= screen_height {
+                        break;
+                    }
+                    row = next_row;
+                    column = next_column.saturating_add(width);
+                    end += grapheme.len();
+                }
+                self.stdout.queue(Print(&text[..end]))?;
+                if end < text.len() {
+                    self.stdout.queue(SetAttribute(Attribute::Reset))?;
+                    break;
+                }
+            }
         }
 
         Ok(cursor_row)
@@ -3572,6 +3598,20 @@ mod tests {
             "n={n}: cursor depends on how DECSC treats the pending-wrap flag; \
              emitted {out:?}"
         );
+    }
+
+    #[test]
+    fn a_wrapped_hint_keeps_the_prompt_visible() {
+        let mut lines = make_lines("prompt", "> ", "", "{", "");
+        lines.hint = Cow::Owned("long ".repeat(80));
+        let (out, _, large) = capture_repaint(&lines, 0);
+        assert!(large);
+
+        let mut screen = TestScreen::new(20, 10);
+        screen.feed(out.as_bytes());
+        assert!(screen.row(0).starts_with("prompt> {"));
+        assert_eq!(screen.cursor(), (9, 0));
+        assert_eq!(screen.scrolled(), 0);
     }
 
     /// Regression: `skip_buffer_lines` trimmed the prompt's trailing newline, so
