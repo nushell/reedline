@@ -101,6 +101,21 @@ impl TestScreen {
         (column, row)
     }
 
+    /// Resize the terminal, as a window manager would. Rows keep their
+    /// content clipped or padded; `vt100` does not reflow.
+    pub(crate) fn resize(&mut self, width: u16, height: u16) {
+        self.parser.screen_mut().set_size(height, width);
+    }
+
+    /// The foreground color of the cell at `(column, row)`.
+    pub(crate) fn fg(&self, column: u16, row: u16) -> vt100::Color {
+        self.parser
+            .screen()
+            .cell(row, column)
+            .unwrap_or_else(|| panic!("({column}, {row}) is off the screen"))
+            .fgcolor()
+    }
+
     /// The cursor as a terminal reports it to a position query: a pending
     /// wrap reads as the last column, since the report has no column past it.
     pub(crate) fn reported_cursor(&self) -> (u16, u16) {

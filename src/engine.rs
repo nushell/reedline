@@ -2470,13 +2470,29 @@ impl Reedline {
     }
 
     fn handle_mouse_click(&mut self, column: u16, row: u16) -> Result<()> {
+        if self.input_mode != InputMode::Regular {
+            return Ok(());
+        }
+        // The frame painter knows which buffer grapheme sits in each cell, so
+        // a click on the buffer is a lookup rather than a reverse layout. Menu
+        // clicks still need the snapshot, which the frame does not record.
+        if !self.menus.iter().any(|m| m.is_active()) {
+            if let Some(index) = self.painter.frame_grapheme_at(column, row) {
+                use unicode_segmentation::UnicodeSegmentation;
+                let buffer = self.editor.get_buffer();
+                if let Some((offset, _)) = buffer.grapheme_indices(true).nth(index) {
+                    self.editor.edit_buffer(
+                        |buf| buf.set_insertion_point(offset),
+                        UndoBehavior::MoveCursor,
+                    );
+                }
+                return Ok(());
+            }
+        }
         let snapshot = match &self.last_render_snapshot {
             Some(snapshot) => snapshot,
             None => return Ok(()),
         };
-        if self.input_mode != InputMode::Regular {
-            return Ok(());
-        }
 
         // Try to select the entry under the pointer if a menu is active
         if snapshot.menu_active {

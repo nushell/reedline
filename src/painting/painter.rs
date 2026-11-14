@@ -6,6 +6,7 @@ use crate::{CursorConfig, PromptEditMode};
 use crate::painting::test_screen::TestScreen;
 
 use {
+    super::frame::{self, CellStyle, Frame, Mark, MarkKind, Row},
     super::utils::{
         advance_grapheme, coerce_crlf, deferred_wrap_row, escape_control, line_width,
         plain_menu_text, resolve_wrap, wrap_position,
@@ -478,12 +479,52 @@ pub struct Painter {
     /// Rows a menu can take below the reserved status line while the whole
     /// block stays on the screen. Meaningless while `status_rows` is 0.
     menu_room: u16,
+    /// Paint through [`frame`] instead of the streaming path below. Set from
+    /// `REEDLINE_FRAME_PAINTER` while the frame painter is a prototype.
+    frame_mode: bool,
+    /// What the last frame paint left on screen, for the next one to diff
+    /// against. `None` whenever something else may have drawn since.
+    last_frame: Option<PaintedFrame>,
+}
+
+/// A [`Frame`] as it was committed: which of its rows reached the screen and
+/// where.
+struct PaintedFrame {
+    /// Screen row of the first visible frame row.
+    anchor: u16,
+    /// First frame row shown; the rows above it did not fit.
+    top: u16,
+    /// Rows shown.
+    visible: u16,
+    frame: Frame,
+}
+
+impl PaintedFrame {
+    fn rows(&self) -> &[Row] {
+        let start = self.top as usize;
+        let end = (start + self.visible as usize).min(self.frame.rows.len());
+        &self.frame.rows[start..end]
+    }
+
+    /// Whether this paint sent `mark`, at the same place.
+    fn showed(&self, mark: &Mark) -> bool {
+        (self.top..self.top.saturating_add(self.visible)).contains(&mark.row)
+            && self.frame.marks.contains(mark)
+    }
+
+    /// The frame row drawn on screen row `row`, if any.
+    fn frame_row(&self, row: u16) -> Option<u16> {
+        let offset = row.checked_sub(self.anchor)?;
+        (offset < self.visible).then(|| self.top.saturating_add(offset))
+    }
 }
 
 impl Painter {
     pub(crate) fn new(stdout: W) -> Self {
         let term = var_os("TERM");
         let term_is_dumb = term_is_dumb(term.as_deref());
+        let frame_mode =
+            var_os("REEDLINE_FRAME_PAINTER").is_some_and(|value| !value.is_empty() && value != "0");
         Painter {
             stdout,
             prompt_start_row: PromptStartRow::Unverified,
@@ -500,7 +541,30 @@ impl Painter {
             bottom_confirmed_at: None,
             status_rows: 0,
             menu_room: 0,
+            frame_mode,
+            last_frame: None,
         }
+    }
+
+    /// Forget the last committed frame: something other than
+    /// `repaint_frame` has moved the anchor or drawn on the screen, so the
+    /// next paint redraws every row.
+    fn forget_frame(&mut self) {
+        self.last_frame = None;
+    }
+
+    /// The buffer grapheme the last frame paint drew at screen `(column,
+    /// row)`, for click mapping. `None` when the streaming painter drew, or
+    /// nothing from the buffer is there.
+    pub(crate) fn frame_grapheme_at(&self, column: u16, row: u16) -> Option<usize> {
+        let painted = self.last_frame.as_ref()?;
+        let frame_row = painted.frame_row(row)?;
+        painted.frame.index_at(column, frame_row)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn use_frame_painter_for_test(&mut self) {
+        self.frame_mode = true;
     }
 
     /// Height of the current terminal window.
@@ -834,6 +898,8 @@ impl Painter {
     /// Establishes the prompt's start row for a new line editor invocation by
     /// asking the terminal where the cursor is.
     fn anchor_prompt(&mut self, suspended_state: Option<&PainterSuspendedState>) -> Result<()> {
+        // A new prompt, wherever it lands: the host printed since the last one.
+        self.forget_frame();
         // Hide before asking, not only before painting. The exit path leaves
         // the cursor shown at column 0 of the row the next prompt lands on,
         // and the wait for the query's reply is the longest stretch
@@ -911,6 +977,7 @@ impl Painter {
     /// cursor (e.g. `$EDITOR`).
     pub(crate) fn invalidate_prompt_start_row(&mut self) {
         self.prompt_start_row.invalidate();
+        self.forget_frame();
     }
 
     /// Main painter for the prompt and buffer
@@ -937,6 +1004,18 @@ impl Painter {
         // Taken first, so a paint that reserves none, as history search's
         // does, never inherits the rows of the one before.
         let reserved_status_rows = std::mem::take(&mut self.status_rows);
+
+        if self.frame_mode && !self.term_is_dumb {
+            return self.repaint_frame(
+                prompt,
+                lines,
+                prompt_mode,
+                menu,
+                use_ansi_coloring,
+                cursor_config,
+                reserved_status_rows,
+            );
+        }
 
         // Reset any ANSI styling that may have been left by external commands
         // This ensures the prompt is not affected by previous output styling
@@ -1062,6 +1141,292 @@ impl Painter {
         })();
         let ended = self.end_frame().and_then(|()| self.stdout.flush());
         painted.and(ended)
+    }
+
+    /// Paint through a [`Frame`]: lay everything out first, then rewrite only
+    /// the cells that changed since the last paint, each row placed absolutely
+    /// from the anchor. The prelude and the synchronized-update bracket are
+    /// [`Painter::repaint_buffer`]'s; only the drawing differs. See [`frame`].
+    ///
+    /// `reserved_status_rows` is what the engine set aside for the status
+    /// line through [`Painter::reserve_status_rows`]; 0 draws none.
+    #[allow(clippy::too_many_arguments)]
+    fn repaint_frame(
+        &mut self,
+        prompt: &dyn Prompt,
+        lines: &PromptLines,
+        prompt_mode: PromptEditMode,
+        menu: Option<&ReedlineMenu>,
+        use_ansi_coloring: bool,
+        cursor_config: &Option<CursorConfig>,
+        reserved_status_rows: u16,
+    ) -> Result<()> {
+        self.stdout.queue(SetAttribute(Attribute::Reset))?;
+        self.hide_cursor()?;
+
+        let width = self.screen_width();
+        let colors = use_ansi_coloring.then(|| frame::Colors {
+            prompt: prompt.get_prompt_color().prefix().to_string(),
+            indicator: prompt.get_indicator_color().prefix().to_string(),
+            right: prompt.get_prompt_right_color().prefix().to_string(),
+        });
+        let markers = self
+            .semantic_markers
+            .as_ref()
+            .map(|markers| frame::Markers {
+                prompt_start: markers.prompt_start(PromptKind::Primary).into_owned(),
+                input_start: markers.command_input_start().into_owned(),
+                right_start: markers.prompt_start(PromptKind::Right).into_owned(),
+            });
+        let mut input = frame::LayoutInput {
+            prompt_left: &lines.prompt_str_left,
+            prompt_indicator: &lines.prompt_indicator,
+            prompt_right: &lines.prompt_str_right,
+            right_prompt_on_last_line: lines.right_prompt_on_last_line,
+            before_cursor: &lines.before_cursor,
+            after_cursor: &lines.after_cursor,
+            hint: &lines.hint,
+            colors,
+            markers,
+            menu: None,
+            status: if reserved_status_rows > 0 {
+                &lines.status
+            } else {
+                ""
+            },
+            width,
+        };
+        let mut frame = frame::layout(&input);
+
+        // The rows before the cursor do not depend on the status line or the
+        // menu, so the anchor can be settled from this first layout.
+        self.prompt_height = frame.prompt_rows;
+        let lines_before_cursor = frame.cursor.1.saturating_add(1);
+        // The diff is only valid against rows this painter drew and nothing has
+        // moved since. Any anchor state but `Verified` says something did.
+        if !matches!(self.prompt_start_row, PromptStartRow::Verified(_)) {
+            self.forget_frame();
+        }
+        // Calibrate prompt start position for multi-line prompt/content before cursor. Check issue #841/#848/#930
+        self.prompt_start_row.resolve_resize(lines_before_cursor);
+        self.reconcile_stale_anchor();
+        // Unreachable in normal flow (initialize_prompt_position runs first);
+        // in release, home to row 0 rather than draw over the content there.
+        let anchor_uninitialized = self.prompt_start_row == PromptStartRow::Unverified;
+        debug_assert!(
+            !anchor_uninitialized,
+            "repaint_buffer reached before initialize_prompt_position"
+        );
+
+        let height = self.screen_height();
+        // The status line gives way to the buffer: a block that only fits on
+        // the screen without it is drawn without it, as `status_room` demands.
+        if frame.status_rows > 0 && frame.height() >= height {
+            input.status = "";
+            frame = frame::layout(&input);
+        }
+        let menu_text;
+        if let Some(menu) = menu {
+            // Rows below the cursor's row and the status line once the paint
+            // has scrolled to make room, which it can up to the top of the
+            // screen, so the anchor does not enter into it. Fewer than the
+            // menu's minimum, and the viewport scrolls the top off instead.
+            let available = height
+                .saturating_sub(frame.cursor.1.saturating_add(1))
+                .saturating_sub(frame.status_rows)
+                .max(menu.min_rows());
+            menu_text = menu.menu_string(available, use_ansi_coloring);
+            input.menu = Some(menu_text.trim_end_matches('\n'));
+            frame = frame::layout(&input);
+            // A menu that could not shrink enough takes the status rows back.
+            if frame.status_rows > 0 && frame.height() >= height {
+                input.status = "";
+                frame = frame::layout(&input);
+            }
+        }
+
+        let total = frame.height();
+        let top = frame.viewport_top(height);
+        let visible = total.saturating_sub(top).min(height);
+        let anchor_before = if anchor_uninitialized {
+            0
+        } else {
+            self.prompt_start_row.last_known_row()
+        };
+
+        // Cursor queries above must finish before the frame begins. End the frame even if
+        // drawing fails, so a recoverable write error cannot leave updates suspended.
+        self.begin_frame()?;
+        let painted = (|| -> Result<()> {
+            let last = self
+                .last_frame
+                .take()
+                .filter(|painted| painted.anchor == anchor_before);
+
+            // Make room below the anchor. The scroll moves the old rows up by
+            // as much as the anchor, so they stay aligned with the new ones.
+            let mut anchor = anchor_before;
+            let overflow = anchor.saturating_add(visible).saturating_sub(height);
+            if overflow > 0 {
+                self.queue_universal_scroll(overflow)?;
+                anchor = anchor.saturating_sub(overflow);
+            }
+            self.prompt_start_row.mark_verified(anchor);
+
+            let last_rows: &[Row] = last.as_ref().map(PaintedFrame::rows).unwrap_or(&[]);
+            let new_rows = &frame.rows[top as usize..(top + visible) as usize];
+            // A mark goes out once, for a prompt or a position it has not been
+            // sent for, and only if the row it belongs on is showing.
+            let showing = top..top.saturating_add(visible);
+            let mut due: Vec<&Mark> = frame
+                .marks
+                .iter()
+                .filter(|mark| {
+                    showing.contains(&mark.row)
+                        && !last.as_ref().is_some_and(|painted| painted.showed(mark))
+                })
+                .collect();
+            due.sort_by_key(|mark| (mark.row, mark.col));
+
+            for (i, row) in new_rows.iter().enumerate() {
+                let screen_row = anchor.saturating_add(i as u16);
+                let from = match last_rows.get(i) {
+                    None => Some(0),
+                    Some(old) => {
+                        let same = row.common_prefix(old);
+                        (same < row.cells.len() || same < old.cells.len()).then_some(same)
+                    }
+                };
+                // Marks on cells this paint leaves alone are sent on their own;
+                // the rest go out in order with the cells they precede.
+                let start_col = from.map_or(u16::MAX, |from| row.column_of(from));
+                let (behind, inline): (Vec<&Mark>, Vec<&Mark>) = due
+                    .iter()
+                    .filter(|mark| mark.row == top.saturating_add(i as u16))
+                    .partition(|mark| mark.col < start_col);
+                for mark in behind {
+                    self.stdout
+                        .queue(MoveTo(mark.col, screen_row))?
+                        .queue(Print(&mark.sequence))?;
+                }
+                if let Some(from) = from {
+                    self.draw_row_from(screen_row, row, from, &inline)?;
+                }
+            }
+            // The right prompt is drawn after the start of the input on the
+            // same row, so its mark would be the last the terminal saw. Text
+            // typed later belongs to the input.
+            if due.iter().any(|mark| mark.kind == MarkKind::RightPrompt) {
+                if let Some(mark) = frame
+                    .marks
+                    .iter()
+                    .find(|mark| mark.kind == MarkKind::Input && showing.contains(&mark.row))
+                {
+                    self.stdout
+                        .queue(MoveTo(mark.col, anchor.saturating_add(mark.row - top)))?
+                        .queue(Print(&mark.sequence))?;
+                }
+            }
+            // Below the frame: rows a taller last frame left, or whatever is
+            // there on a first paint. Never from row 0, since the frame holds
+            // the cursor row at least (tmux's `scroll-on-clear`, #1062).
+            let below = anchor.saturating_add(visible);
+            if (last.is_none() || last_rows.len() > new_rows.len()) && below < height {
+                self.stdout
+                    .queue(MoveTo(0, below))?
+                    .queue(Clear(ClearType::FromCursorDown))?;
+            }
+
+            // What the exit path needs, as `repaint_buffer` records it.
+            let after_cursor = lines
+                .exit_after_cursor
+                .as_ref()
+                .unwrap_or(&lines.after_cursor);
+            self.after_cursor_lines = (!after_cursor.is_empty()).then(|| after_cursor.to_string());
+            self.exit_right_prompt = frame.right_prompt.and_then(|rp| {
+                let row = rp.row.checked_sub(top)?;
+                (row < visible).then(|| {
+                    let text = coerce_crlf(&lines.prompt_str_right);
+                    let text = if use_ansi_coloring {
+                        format!("{}{}", prompt.get_prompt_right_color().prefix(), text)
+                    } else {
+                        text.into_owned()
+                    };
+                    let bounds = RightPromptBounds {
+                        row: anchor.saturating_add(row),
+                        start_col: rp.start_col,
+                        end_col: rp.end_col,
+                    };
+                    (text, bounds)
+                })
+            });
+            self.last_required_lines = total;
+            self.large_buffer = total > height;
+            // Click mapping reads the frame instead.
+            self.last_layout = None;
+
+            let (col, row) = frame.cursor;
+            self.stdout
+                .queue(MoveTo(col, anchor.saturating_add(row.saturating_sub(top))))?;
+
+            let shape = cursor_config
+                .as_ref()
+                .and_then(|shapes| shapes.shape_for(&prompt_mode));
+            if let Some(shape) = shape {
+                self.stdout.queue(shape)?;
+            }
+            self.stdout.queue(cursor::Show)?;
+            self.cursor_hidden = false;
+
+            self.last_frame = Some(PaintedFrame {
+                anchor,
+                top,
+                visible,
+                frame,
+            });
+            Ok(())
+        })();
+        let ended = self.end_frame().and_then(|()| self.stdout.flush());
+        painted.and(ended)
+    }
+
+    /// Draw `row` on `screen_row` from its cell `from` to the end, replacing
+    /// whatever was there. Every row ends with the style cleared, so the
+    /// first cell drawn only has to say what it wants.
+    fn draw_row_from(
+        &mut self,
+        screen_row: u16,
+        row: &Row,
+        from: usize,
+        marks: &[&Mark],
+    ) -> Result<()> {
+        let mut text = String::new();
+        let mut drawn = CellStyle::default();
+        let mut column = row.column_of(from);
+        let mut marks = marks.iter().peekable();
+        for cell in row.cells.iter().skip(from) {
+            while let Some(mark) = marks.next_if(|mark| mark.col <= column) {
+                text.push_str(&mark.sequence);
+            }
+            drawn.write_change_to(&cell.style, &mut text);
+            drawn = cell.style.clone();
+            text.push_str(&cell.grapheme);
+            column = column.saturating_add(cell.width);
+        }
+        for mark in marks {
+            text.push_str(&mark.sequence);
+        }
+        drawn.write_change_to(&CellStyle::default(), &mut text);
+        self.stdout
+            .queue(MoveTo(row.column_of(from), screen_row))?
+            .queue(Print(text))?;
+        // A row filling the width leaves the terminal's wrap pending with the
+        // cursor still on the last cell, and an erase from there takes that
+        // cell with it. Nothing is left to erase on such a row anyway.
+        if row.width() < self.screen_width() {
+            self.stdout.queue(Clear(ClearType::UntilNewLine))?;
+        }
+        Ok(())
     }
 
     /// Captures the current screen layout into a [`RenderSnapshot`] that records
@@ -1596,6 +1961,8 @@ impl Painter {
     /// Updates prompt origin and offset to handle a screen resize event
     pub(crate) fn handle_resize(&mut self, width: u16, height: u16) {
         self.terminal_size = (width, height);
+        // Rows rewrap at the new width; the old frame says nothing about them.
+        self.forget_frame();
         let term = var_os("TERM");
         self.term_is_dumb = term_is_dumb(term.as_deref());
 
@@ -1719,6 +2086,7 @@ impl Painter {
     /// cursor survives, leaving a rejected command on screen as the record of
     /// what was aborted (#1143).
     pub(crate) fn move_cursor_to_end(&mut self) -> Result<()> {
+        self.forget_frame();
         self.stdout.queue(Clear(ClearType::FromCursorDown))?;
         if let Some(after_cursor) = &self.after_cursor_lines {
             self.stdout.queue(Print(after_cursor))?;
@@ -1772,6 +2140,7 @@ impl Painter {
     /// Each message is split at its newlines here, since every line needs
     /// its own `\r\n` and row count, whatever the source handed over.
     pub(crate) fn print_external_message(&mut self, messages: Vec<String>) -> Result<()> {
+        self.forget_frame();
         // An idle callback leaves the anchor `Stale` on every poll. Check it
         // the way the repaint after this will, so the messages start where
         // that repaint draws the block, and before the frame opens.
@@ -3636,6 +4005,10 @@ mod tests {
     pub(super) struct TestMenu {
         contents: String,
         settings: MenuSettings,
+        /// `Some`: draw one `m<n>` row per available line instead of
+        /// `contents`, with this as the minimum, so a test can see how much
+        /// room the painter offered.
+        fills: Option<u16>,
     }
 
     impl TestMenu {
@@ -3643,6 +4016,16 @@ mod tests {
             Self {
                 contents: contents.to_string(),
                 settings: MenuSettings::default(),
+                fills: None,
+            }
+        }
+
+        /// A menu that fills whatever room it is given, `min_rows` at least.
+        pub(super) fn filling(min_rows: u16) -> Self {
+            Self {
+                contents: String::new(),
+                settings: MenuSettings::default(),
+                fills: Some(min_rows),
             }
         }
     }
@@ -3651,8 +4034,11 @@ mod tests {
         fn settings(&self) -> &MenuSettings {
             &self.settings
         }
-        fn menu_string(&self, _available_lines: u16, _use_ansi_coloring: bool) -> String {
-            self.contents.clone()
+        fn menu_string(&self, available_lines: u16, _use_ansi_coloring: bool) -> String {
+            match self.fills {
+                Some(_) => (1..=available_lines).map(|n| format!("m{n}\n")).collect(),
+                None => self.contents.clone(),
+            }
         }
         fn is_active(&self) -> bool {
             true
@@ -3694,7 +4080,8 @@ mod tests {
             self.contents.lines().count() as u16
         }
         fn min_rows(&self) -> u16 {
-            unimplemented!()
+            self.fills
+                .unwrap_or_else(|| self.contents.lines().count() as u16)
         }
         fn get_values(&self) -> &[Suggestion] {
             unimplemented!()
