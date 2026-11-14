@@ -1582,7 +1582,11 @@ impl Reedline {
     /// input loop so it is reachable from tests, which cannot drive the loop itself.
     fn settle_completions(&mut self, prompt: &dyn Prompt) -> Result<()> {
         let Some(menu_index) = self.menus.iter().position(|menu| menu.is_active()) else {
-            // No menu to answer to, so nothing can still be owed.
+            // No menu to answer to, so nothing can still be owed. The request still ran,
+            // though: its menu closed while it did, and as host code it may have scrolled
+            // the terminal just as it may under an open menu (below), so the next paint
+            // must not trust the cached row either.
+            self.painter.invalidate_prompt_start_row();
             self.deferred_menu_completion = None;
             return Ok(());
         };
@@ -10111,5 +10115,61 @@ mod tests {
         assert!(!output.contains(hint));
         assert!(output.contains("ls27"));
         assert!(!output.contains("ls28"));
+    }
+
+    /// The case settling has to cover with no menu open: the menu that asked for
+    /// completions closed while the request ran, and the background work ran a
+    /// picker that scrolled the screen up to make room below the prompt, as
+    /// `fzf --height` does, and put the cursor back on the prompt (#1130). The
+    /// next keystroke has to find the prompt where it moved to, not draw a second
+    /// one at the row it left.
+    #[test]
+    fn a_picker_scrolling_after_the_menu_closed_moves_the_prompt() {
+        let mut reedline = Reedline::create()
+            .with_ansi_colors(false)
+            .with_completer(Box::new(DeferredCompleter::pending(&["crates"])))
+            .with_menu(ReedlineMenu::EngineCompleter(Box::new(
+                ColumnarMenu::default().with_name("completion_menu"),
+            )));
+        reedline.painter = Painter::new(W::screen(30, 6));
+        reedline.painter.handle_resize(30, 6);
+        let prompt = DefaultPrompt::new(
+            crate::DefaultPromptSegment::Basic(String::from("p")),
+            crate::DefaultPromptSegment::Empty,
+        );
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("c"))]);
+        reedline.painter.force_prompt_anchored_for_test(4);
+        reedline
+            .handle_event(
+                &prompt,
+                ReedlineEvent::Menu(String::from("completion_menu")),
+            )
+            .unwrap();
+        reedline.repaint(&prompt).unwrap();
+        reedline.handle_event(&prompt, ReedlineEvent::Esc).unwrap();
+        reedline.painter.force_prompt_anchored_for_test(4);
+        reedline.repaint(&prompt).unwrap();
+        assert!(!menu_is_active(&reedline));
+
+        // Three rows of room made at the bottom, the cursor back on the prompt.
+        reedline
+            .painter
+            .host_output_for_test(b"\x1b[6;1H\n\n\n\x1b[2;5H");
+        reedline.settle_completions(&prompt).unwrap();
+        reedline
+            .handle_event(
+                &prompt,
+                ReedlineEvent::Edit(vec![EditCommand::InsertChar('r')]),
+            )
+            .unwrap();
+        reedline.repaint(&prompt).unwrap();
+
+        let rows = reedline.painter.screen_rows_for_test();
+        assert_eq!(rows[1], "p> cr", "{rows:?}");
+        assert_eq!(
+            rows.iter().filter(|row| row.starts_with("p> ")).count(),
+            1,
+            "{rows:?}"
+        );
     }
 }
