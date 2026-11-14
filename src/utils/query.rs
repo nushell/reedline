@@ -140,3 +140,101 @@ fn get_keybinding_strings(
 
     data
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn keycodes_are_listed_by_name() {
+        assert_eq!(
+            get_reedline_keycodes(),
+            [
+                "Backspace",
+                "Enter",
+                "Left",
+                "Right",
+                "Up",
+                "Down",
+                "Home",
+                "End",
+                "PageUp",
+                "PageDown",
+                "Tab",
+                "BackTab",
+                "Delete",
+                "Insert",
+                "F<number>",
+                "Space",
+                "Char_<letter>",
+                "Null",
+                "Esc",
+            ]
+        );
+    }
+
+    #[test]
+    fn modifiers_are_listed_by_name() {
+        assert_eq!(
+            get_reedline_keybinding_modifiers(),
+            [
+                "Alt",
+                "Control",
+                "Shift",
+                "None",
+                "Shift_Alt",
+                "Alt_Shift",
+                "Control_Shift",
+                "Shift_Control",
+                "Control_Alt",
+                "Alt_Control",
+                "Control_Alt_Shift",
+                "Control_Shift_Alt",
+            ]
+        );
+    }
+
+    #[test]
+    fn default_keybindings_cover_every_mode() {
+        let bindings = get_reedline_default_keybindings();
+        let modes: HashSet<_> = bindings.iter().map(|(mode, ..)| mode.as_str()).collect();
+        assert_eq!(
+            modes,
+            HashSet::from([
+                "emacs",
+                "vi_normal",
+                "vi_insert",
+                "helix_normal",
+                "helix_insert"
+            ])
+        );
+    }
+
+    #[test]
+    fn default_keybindings_are_sorted_within_each_mode() {
+        let bindings = get_reedline_default_keybindings();
+        for mode in [
+            "emacs",
+            "vi_normal",
+            "vi_insert",
+            "helix_normal",
+            "helix_insert",
+        ] {
+            let rows: Vec<_> = bindings.iter().filter(|(m, ..)| m == mode).collect();
+            assert!(!rows.is_empty(), "no bindings for {mode}");
+            assert!(rows.is_sorted(), "{mode} bindings are not sorted");
+        }
+    }
+
+    #[test]
+    fn emacs_ctrl_c_is_listed_as_strings() {
+        let bindings = get_reedline_default_keybindings();
+        assert!(bindings
+            .iter()
+            .any(|(mode, modifier, key, event)| mode == "emacs"
+                && modifier == "KeyModifiers(CONTROL)"
+                && key == "Char('c')"
+                && event == "CtrlC"));
+    }
+}
