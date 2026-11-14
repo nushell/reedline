@@ -328,6 +328,18 @@ fn message_lines(message: &str) -> impl Iterator<Item = &str> {
         .map(|line| line.strip_suffix('\r').unwrap_or(line))
 }
 
+/// The status and footer rows that fit in `room`, as `(status, footer)`. The
+/// footer gives way first; a status line that does not fit alone gets none.
+fn fit_status_rows(status_rows: u16, footer_rows: u16, room: u16) -> (u16, u16) {
+    if status_rows.saturating_add(footer_rows) <= room {
+        (status_rows, footer_rows)
+    } else if status_rows <= room {
+        (status_rows, 0)
+    } else {
+        (0, 0)
+    }
+}
+
 // Selects the row where the next prompt should start on, taking into account whether it should
 // re-use a previous prompt.
 fn select_prompt_row(
@@ -366,6 +378,10 @@ pub(crate) struct PromptLayout {
     /// the buffer and its hint, or, with a menu open, below the cursor's row
     /// and above the menu.
     status_start_row: Option<u16>,
+
+    /// Whether the rows from `status_start_row` end with the prompt footer.
+    /// False when the footer gave its rows to a menu, or there is none.
+    status_with_footer: bool,
 
     /// Buffer start column on first visible line.
     first_buffer_col: u16,
@@ -478,8 +494,12 @@ pub struct Painter {
     /// the menus size themselves so they leave those rows free. That paint
     /// takes them, so none outlive it. See [`Painter::reserve_status_rows`].
     status_rows: u16,
-    /// Rows a menu can take below the reserved status line while the whole
-    /// block stays on the screen. Meaningless while `status_rows` is 0.
+    /// Rows set aside for the prompt footer below the status line, the same
+    /// way as `status_rows`. A menu that needs rows takes these back first.
+    footer_rows: u16,
+    /// Rows a menu can take below the reserved status line and footer while
+    /// the whole block stays on the screen. Meaningless while neither has
+    /// rows.
     menu_room: u16,
 }
 
@@ -503,6 +523,7 @@ impl Painter {
             frame_open: false,
             bottom_confirmed_at: None,
             status_rows: 0,
+            footer_rows: 0,
             menu_room: 0,
         }
     }
@@ -603,25 +624,51 @@ impl Painter {
     /// `room`, from [`Painter::status_room`], so a menu sizing itself from
     /// [`Painter::remaining_lines`] leaves them free. A status line that does
     /// not fit gives way to the buffer and gets none.
+    #[cfg(test)]
     pub(crate) fn reserve_status_rows(&mut self, rows: u16, room: u16) {
-        self.status_rows = if rows <= room { rows } else { 0 };
-        self.menu_room = room.saturating_sub(self.status_rows);
+        self.reserve_status_and_footer_rows(rows, 0, room);
     }
 
-    /// Rows set aside for the status line of the paint being prepared.
+    /// [`Painter::reserve_status_rows`] with the prompt footer's `footer_rows`
+    /// below the status line. The footer gives way first: it gets none when
+    /// both do not fit in `room`, and the status line still gets its rows.
+    pub(crate) fn reserve_status_and_footer_rows(
+        &mut self,
+        status_rows: u16,
+        footer_rows: u16,
+        room: u16,
+    ) {
+        (self.status_rows, self.footer_rows) = fit_status_rows(status_rows, footer_rows, room);
+        self.menu_room = room
+            .saturating_sub(self.status_rows)
+            .saturating_sub(self.footer_rows);
+    }
+
+    /// Rows set aside below the buffer for the paint being prepared: the
+    /// status line and the footer.
     pub(crate) fn reserved_status_rows(&self) -> u16 {
-        self.status_rows
+        self.status_rows.saturating_add(self.footer_rows)
     }
 
-    /// Rows a menu can be cut to below the status line set aside for this
-    /// paint, so the whole block stays on the screen, when that still shows
-    /// `min_rows` of it.
+    /// Rows a menu can be cut to below the status line and footer set aside
+    /// for this paint, so the whole block stays on the screen, when that still
+    /// shows `min_rows` of it.
     ///
-    /// `None` without a status line, where a menu taller than the screen takes
-    /// the large-buffer path, and when it would be cut shorter than
-    /// `min_rows`: the menu keeps its height and takes the status rows back.
+    /// A menu that would be cut shorter than `min_rows` gets the footer's rows
+    /// as well when that is enough, and the paint then drops the footer. `None`
+    /// with nothing set aside, where a menu taller than the screen takes the
+    /// large-buffer path, and when even that is too short: the menu keeps its
+    /// height and takes the status rows back.
     pub(crate) fn menu_room_below_status(&self, min_rows: u16) -> Option<u16> {
-        (self.status_rows > 0 && self.menu_room >= min_rows).then_some(self.menu_room)
+        if self.reserved_status_rows() == 0 {
+            return None;
+        }
+        [
+            self.menu_room,
+            self.menu_room.saturating_add(self.footer_rows),
+        ]
+        .into_iter()
+        .find(|&room| room >= min_rows)
     }
 
     /// Returns the empty lines below the prompt once it is scrolled to the top.
@@ -634,14 +681,15 @@ impl Painter {
     }
 
     /// Returns the number of lines that are available or can be made available by
-    /// stripping the prompt, less the rows set aside for the status line.
+    /// stripping the prompt, less the rows set aside for the status line and
+    /// the footer.
     ///
     /// If you want the number of empty lines below the prompt,
     /// use [`Painter::remaining_lines_real`] instead.
     pub fn remaining_lines(&self) -> u16 {
         self.screen_height()
             .saturating_sub(self.prompt_start_row.last_known_row())
-            .saturating_sub(self.status_rows)
+            .saturating_sub(self.reserved_status_rows())
     }
 
     /// Computes layout values shared between rendering and snapshot creation.
@@ -740,6 +788,7 @@ impl Painter {
             right_prompt,
             menu_start_row,
             status_start_row,
+            status_with_footer: false,
             first_buffer_col,
         }
     }
@@ -941,6 +990,7 @@ impl Painter {
         // Taken first, so a paint that reserves none, as history search's
         // does, never inherits the rows of the one before.
         let reserved_status_rows = std::mem::take(&mut self.status_rows);
+        let reserved_footer_rows = std::mem::take(&mut self.footer_rows);
 
         // Reset any ANSI styling that may have been left by external commands
         // This ensures the prompt is not affected by previous output styling
@@ -977,13 +1027,14 @@ impl Painter {
         let remaining_lines = screen_height.saturating_sub(self.prompt_start_row.last_known_row());
         let block_rows = lines.required_lines(screen_width, false, menu);
         // The rows were set aside before the menu sized itself. One that could
-        // not shrink enough to leave them free takes them back, which keeps
-        // the status line out of the large-buffer path.
-        let status_rows = if reserved_status_rows <= self.status_room(block_rows) {
-            reserved_status_rows
-        } else {
-            0
-        };
+        // not shrink enough to leave them free takes them back, the footer's
+        // first, which keeps the status line out of the large-buffer path.
+        let (status_rows, footer_rows) = fit_status_rows(
+            reserved_status_rows,
+            reserved_footer_rows,
+            self.status_room(block_rows),
+        );
+        let status_rows = status_rows + footer_rows;
         let required_lines = block_rows + status_rows;
 
         // No frame of its own: a paint normally fits the writer's buffer and
@@ -1013,7 +1064,8 @@ impl Painter {
             }
 
             let anchor_row = self.prompt_start_row.last_known_row();
-            let layout = self.compute_layout(lines, menu, block_rows, status_rows);
+            let mut layout = self.compute_layout(lines, menu, block_rows, status_rows);
+            layout.status_with_footer = footer_rows > 0;
 
             // Moving the cursor to the start of the prompt
             // from this position everything will be printed
@@ -1604,7 +1656,8 @@ impl Painter {
             return Ok(());
         };
         self.clear_from_anchor(row)?;
-        self.stdout.queue(Print(&lines.status))?;
+        self.stdout
+            .queue(Print(lines.status_block(layout.status_with_footer)))?;
         if use_ansi_coloring {
             self.stdout
                 .queue(SetAttribute(Attribute::Reset))?
@@ -3170,6 +3223,7 @@ mod tests {
             right_prompt_on_last_line: false,
             exit_after_cursor: None,
             status: Cow::Borrowed(""),
+            footer: Cow::Borrowed(""),
         }
     }
 
@@ -3856,6 +3910,7 @@ mod tests {
             right_prompt: None,
             menu_start_row,
             status_start_row: None,
+            status_with_footer: false,
             first_buffer_col: 0,
         };
         p.print_menu(menu, false, &layout)
