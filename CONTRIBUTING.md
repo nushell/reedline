@@ -38,7 +38,7 @@ RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 
 Things that are easy to miss:
 
-- **Feature sets.** CI repeats these commands for each of `bashisms`, `sqlite`, `bashisms,sqlite` and `system_clipboard`. If your change touches code behind a feature, run them again with `--features <name>`.
+- **Feature sets.** CI repeats these commands for the default features and for `bashisms`, `sqlite`, `bashisms,sqlite`, `system_clipboard` and the no-op `external_printer`. If your change touches code behind a feature, run them again with `--features <name>`.
 - **Doctests.** nextest does not run them, which is why `cargo test --doc` is a separate step.
 - **Doc comments.** Every public item needs one, and a missing one fails the clippy step.
 - **Lockfile.** `Cargo.lock` has to match `Cargo.toml`; `cargo check --locked` tells you.

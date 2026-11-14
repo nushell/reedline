@@ -1,6 +1,6 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./assets/wordmark-dark.svg">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/nushell/reedline/main/assets/wordmark-dark.svg">
     <img src="./assets/wordmark-light.svg" alt="reedline" width="320">
   </picture>
 </p>
@@ -72,7 +72,7 @@ loop {
 
 All off by default.
 
-- `system_clipboard`: use the system clipboard.
+- `system_clipboard`: cut, copy and paste to the system clipboard, beside reedline's own cut buffer.
 - `bashisms`: history expansion such as `!!` and `!$`.
 - `sqlite`: `SqliteBackedHistory`, with SQLite linked statically.
 - `sqlite-dynlib`: the same, linked dynamically. Requires `sqlite >= 3.45.3`.

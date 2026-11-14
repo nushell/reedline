@@ -232,7 +232,7 @@
 //!
 //! All features are off by default.
 //!
-//! - `system_clipboard`: cut and paste through the system clipboard instead of reedline's own cut buffer.
+//! - `system_clipboard`: cut, copy and paste to the system clipboard, beside reedline's own cut buffer.
 //! - `bashisms`: history expansion such as `!!` and `!$`.
 //! - `sqlite`: adds `SqliteBackedHistory`, which stores richer information about each entry. Statically links SQLite.
 //! - `sqlite-dynlib`: the same, linked dynamically. Requires `sqlite >= 3.45.3`.
