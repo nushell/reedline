@@ -471,6 +471,9 @@ impl Menu for DescriptionMenu {
         if let Some(values) = completer.complete(&input, pos).into_shared() {
             self.values = escape_suggestions(values);
             self.reset_position();
+            // Not every answer comes with an event to refresh them on: the
+            // engine hands over a finished background completion directly.
+            self.update_examples();
         }
     }
 
@@ -487,6 +490,7 @@ impl Menu for DescriptionMenu {
                 MenuEvent::Activate(_) => {
                     self.reset_position();
                     self.update_values(editor, completer);
+                    self.update_examples();
                 }
                 MenuEvent::Deactivate => self.active = false,
                 MenuEvent::Edit(_) => {
@@ -1129,5 +1133,94 @@ mod tests {
     fn empty_menu_asks_for_input(#[case] use_ansi_coloring: bool, #[case] msg: String) {
         let menu = DescriptionMenu::default();
         assert_eq!(menu.menu_string(10, use_ansi_coloring), msg);
+    }
+
+    /// The first entry is selected on activation, so its examples show
+    /// right away, and none chosen in an earlier session stays chosen.
+    #[test]
+    fn activation_loads_the_first_entry_examples() {
+        let mut menu = DescriptionMenu {
+            examples: vec!["stale".to_string()],
+            example_index: Some(0),
+            ..Default::default()
+        };
+
+        setup_menu(
+            &mut menu,
+            &mut Editor::default(),
+            &mut ExampleCompleter,
+            (100, 100),
+        );
+
+        assert_eq!(menu.examples, ["alpha example"]);
+        assert_eq!(menu.example_index, None);
+    }
+
+    /// Hands out its answers in order, like a completer working in the
+    /// background does over several requests.
+    struct Answers(std::collections::VecDeque<crate::CompletionResult>);
+
+    impl Completer for Answers {
+        fn complete(&mut self, _line: &str, _pos: usize) -> crate::CompletionResult {
+            self.0.pop_front().expect("an answer per request")
+        }
+    }
+
+    fn with_examples(values: &[&str]) -> Vec<Suggestion> {
+        values
+            .iter()
+            .map(|value| Suggestion {
+                value: value.to_string(),
+                extra: Some(vec![format!("{value} example")]),
+                ..Default::default()
+            })
+            .collect()
+    }
+
+    /// The engine hands a finished background completion to `update_values`
+    /// without an event, so the examples have to follow the values there.
+    #[test]
+    fn values_arriving_after_activation_bring_their_examples() {
+        let mut menu = DescriptionMenu::default();
+        let mut editor = Editor::default();
+        let mut completer = Answers(
+            [
+                crate::CompletionResult::Pending,
+                crate::CompletionResult::fresh(with_examples(&["alpha", "beta"])),
+            ]
+            .into(),
+        );
+        setup_menu(&mut menu, &mut editor, &mut completer, (100, 100));
+        assert!(menu.examples.is_empty());
+
+        menu.update_values(&mut editor, &mut completer);
+
+        assert_eq!(menu.examples, ["alpha example"]);
+    }
+
+    /// An example chosen among stale values belongs to an entry the fresh
+    /// values may not have, so Enter must not insert it.
+    #[test]
+    fn fresh_values_drop_the_example_chosen_among_stale_ones() {
+        let mut menu = DescriptionMenu::default();
+        let mut editor = Editor::default();
+        let mut completer = Answers(
+            [
+                crate::CompletionResult::stale_or_pending(
+                    with_examples(&["old"]).into(),
+                    crate::CompletionOrigin::default(),
+                ),
+                crate::CompletionResult::fresh(with_examples(&["alpha", "beta"])),
+            ]
+            .into(),
+        );
+        setup_menu(&mut menu, &mut editor, &mut completer, (100, 100));
+        assert_eq!(menu.examples, ["old example"]);
+        menu.example_index = Some(0);
+
+        menu.update_values(&mut editor, &mut completer);
+
+        assert_eq!(menu.examples, ["alpha example"]);
+        assert_eq!(menu.example_index, None);
     }
 }
