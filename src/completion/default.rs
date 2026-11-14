@@ -123,6 +123,11 @@ impl Completer for DefaultCompleter {
         completions.dedup();
         CompletionResult::fresh(completions)
     }
+
+    /// Completes from its own word list, never touching the terminal.
+    fn wrote_to_terminal(&mut self) -> bool {
+        false
+    }
 }
 
 impl DefaultCompleter {

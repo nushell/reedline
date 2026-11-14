@@ -252,6 +252,32 @@ pub trait Completer {
         (suggestions.len(), page)
     }
 
+    /// Whether the calls made since the engine last asked wrote to the terminal or moved
+    /// its cursor, as shelling out to an interactive picker does.
+    ///
+    /// The engine asks after the keystrokes that query an open menu, again before it
+    /// paints them, and after background work
+    /// [`poll_completion`](Self::poll_completion) reported
+    /// [`Ready`](CompletionStatus::Ready). On `true` it measures the prompt's position
+    /// again, a cursor query, and redraws everything below the prompt. A menu may also
+    /// call its completer on a move that is not counted as a query, as a paging menu
+    /// fetching the next page at its edge does; such a call is reported at the next
+    /// time the engine asks.
+    ///
+    /// The default answers `true`, since any completer may shell out. One that hands
+    /// only some lines to an external program can note when it did and answer per call,
+    /// clearing the note once asked. One that only computes suggestions answers `false`
+    /// and skips the query on every keystroke.
+    ///
+    /// Answering `false` after writing leaves the screen out of step with the painter:
+    /// later paints draw at the stale row until something else measures the prompt's
+    /// position, and menu rows kept with
+    /// [`Reedline::with_kept_menu_rows`](crate::Reedline::with_kept_menu_rows) are left
+    /// where the write put them, so a row can be lost.
+    fn wrote_to_terminal(&mut self) -> bool {
+        true
+    }
+
     /// Poll the completer's background work.
     ///
     /// Called once per event-loop iteration by the engine. Synchronous
