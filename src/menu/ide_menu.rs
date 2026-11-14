@@ -9,6 +9,8 @@ use crate::{
     Completer, Suggestion,
 };
 use nu_ansi_term::ansi::RESET;
+use std::borrow::Cow;
+use std::sync::atomic::{AtomicBool, Ordering};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -154,6 +156,10 @@ pub struct IdeMenu {
     event: Option<MenuEvent>,
     /// String collected after the menu is activated
     input: Option<String>,
+    /// Whether the last paint moved the completion box one column to the
+    /// right for the plain selection marker. Only the paint is told whether
+    /// it is colored, and a click has to land on the box as it was drawn.
+    marker_shifted_box: AtomicBool,
 }
 
 impl Default for IdeMenu {
@@ -169,6 +175,7 @@ impl Default for IdeMenu {
             skip_values: 0,
             event: None,
             input: None,
+            marker_shifted_box: AtomicBool::new(false),
         }
     }
 }
@@ -287,6 +294,50 @@ impl IdeMenu {
         self.default_details.correct_cursor_pos = correct_cursor_pos;
         self
     }
+}
+
+/// Marks the selected row where color cannot.
+const PLAIN_MARKER: &str = ">";
+
+/// Narrowest width `truncate_with_ansi` can cut to, the width of its ellipsis.
+const TRUNCATION_MIN_WIDTH: usize = 3;
+
+/// Where the plain selection marker finds its column.
+#[derive(Clone, Copy, PartialEq)]
+enum MarkerColumn {
+    /// The last of the free columns left of the completion box.
+    Gap,
+    /// A column made by moving the box one to the right.
+    Shift,
+    /// A column of the selected value, as nothing else is to spare.
+    Value,
+}
+
+impl MarkerColumn {
+    /// `gap` is the free columns directly left of the completion box and
+    /// `space_right` those between the menu and the right edge.
+    fn new(gap: u16, space_right: u16) -> Self {
+        if gap > 0 {
+            Self::Gap
+        } else if space_right > 0 {
+            Self::Shift
+        } else {
+            Self::Value
+        }
+    }
+}
+
+/// The longest prefix of `value` at most `width` columns wide, without its
+/// ANSI escapes and without an ellipsis.
+fn cut_to_width(value: &str, width: usize) -> String {
+    let mut cut = String::new();
+    for grapheme in strip_ansi_escapes::strip_str(value).graphemes(true) {
+        if cut.width() + grapheme.width() > width {
+            break;
+        }
+        cut.push_str(grapheme);
+    }
+    cut
 }
 
 // Menu functionality
@@ -493,6 +544,7 @@ impl IdeMenu {
         index: usize,
         use_ansi_coloring: bool,
         padding: usize,
+        marker_in_value: bool,
     ) -> String {
         let border_width = if self.default_details.border.is_some() {
             2
@@ -558,22 +610,33 @@ impl IdeMenu {
                 RESET,
                 vertical_border,
             )
-        } else {
-            // The marker has no column of its own in the box, so it takes one
-            // from the padding, or from the value when that already fills it.
-            let marker = if index == self.index() { ">" } else { "" };
-            let string = truncate_with_ansi(
-                display_value,
-                max_string_width.saturating_sub(marker.width()),
+        } else if marker_in_value && index == self.index() {
+            // The marker takes its column from the padding right of the
+            // value, or from the value when that already fills the row.
+            let value_width = max_string_width.saturating_sub(PLAIN_MARKER.width());
+            let string = if value_width >= TRUNCATION_MIN_WIDTH {
+                truncate_with_ansi(display_value, value_width)
+            } else {
+                Cow::Owned(cut_to_width(display_value, value_width))
+            };
+            let padding_right = (self.working_details.completion_width as usize).saturating_sub(
+                line_width(&string) + PLAIN_MARKER.width() + border_width + padding,
             );
-            let padding_right = (self.working_details.completion_width as usize)
-                .saturating_sub(line_width(&string) + marker.width() + border_width + padding);
 
             format!(
                 "{}{}{}{}{}{}",
                 vertical_border,
                 " ".repeat(padding),
-                marker,
+                PLAIN_MARKER,
+                string,
+                " ".repeat(padding_right),
+                vertical_border,
+            )
+        } else {
+            format!(
+                "{}{}{}{}{}",
+                vertical_border,
+                " ".repeat(padding),
                 string,
                 " ".repeat(padding_right),
                 vertical_border,
@@ -890,7 +953,8 @@ impl Menu for IdeMenu {
         } else {
             details.description_width + details.description_offset
         };
-        let menu_left = details.space_left + description_left;
+        let shift = self.marker_shifted_box.load(Ordering::Relaxed) as u16;
+        let menu_left = details.space_left + description_left + shift;
         let menu_right = menu_left + self.working_details.completion_width;
         if column < menu_left + border || column + border >= menu_right {
             return None;
@@ -942,6 +1006,21 @@ impl Menu for IdeMenu {
                 self.no_records_msg(use_ansi_coloring)
             }
         } else {
+            // Without color a `>` marks the selection, in the column left of
+            // the completion box. That is the menu's indentation, or the gap
+            // after a description on the left.
+            let details = &self.working_details;
+            let description_left = !details.description_is_right && details.description_width > 0;
+            let marker_gap = if description_left {
+                details.description_offset
+            } else {
+                details.space_left
+            };
+            let marker_column =
+                (!use_ansi_coloring).then(|| MarkerColumn::new(marker_gap, details.space_right));
+            let shift = usize::from(marker_column == Some(MarkerColumn::Shift));
+            self.marker_shifted_box.store(shift == 1, Ordering::Relaxed);
+
             let border_width = if self.default_details.border.is_some() {
                 2
             } else {
@@ -974,6 +1053,7 @@ impl Menu for IdeMenu {
                         index,
                         use_ansi_coloring,
                         corrected_padding,
+                        marker_column == Some(MarkerColumn::Value),
                     )
                 })
                 .collect::<Vec<String>>();
@@ -1018,6 +1098,26 @@ impl Menu for IdeMenu {
 
             let distance_left = &" ".repeat(self.working_details.space_left as usize);
 
+            // The `columns` free ones left of the completion box on `row`,
+            // with the marker in the last of them, or in one more.
+            let selected_row = self
+                .index()
+                .checked_sub(skip_values)
+                .map(|row| row + border_width as usize / 2);
+            let left_of_box = |row: usize, columns: u16| {
+                let columns = columns as usize;
+                let marker = if selected_row == Some(row) {
+                    PLAIN_MARKER
+                } else {
+                    " "
+                };
+                match marker_column {
+                    Some(MarkerColumn::Gap) => " ".repeat(columns.saturating_sub(1)) + marker,
+                    Some(MarkerColumn::Shift) => " ".repeat(columns) + marker,
+                    Some(MarkerColumn::Value) | None => " ".repeat(columns),
+                }
+            };
+
             let rows = strings.len().max(description_lines.len());
 
             // Horizontally join the description lines with the suggestion lines
@@ -1027,14 +1127,15 @@ impl Menu for IdeMenu {
                         (Some(_), Some(desc)) => {
                             strings[i] = format!(
                                 "{}{}{}{}",
-                                distance_left,
+                                left_of_box(i, self.working_details.space_left),
                                 strings[i],
                                 " ".repeat(self.working_details.description_offset as usize),
                                 desc,
                             )
                         }
                         (Some(sug), None) => {
-                            strings[i] = format!("{distance_left}{sug}");
+                            strings[i] =
+                                format!("{}{sug}", left_of_box(i, self.working_details.space_left));
                         }
                         (None, Some(desc)) => strings.push(format!(
                             "{}{}",
@@ -1042,13 +1143,14 @@ impl Menu for IdeMenu {
                                 (self.working_details.completion_width
                                     + self.working_details.description_offset)
                                     as usize
+                                    + shift
                             ) + distance_left,
                             desc,
                         )),
                         (None, None) => {}
                     }
                 }
-            } else {
+            } else if description_left {
                 for i in 0..rows {
                     match (strings.get(i), description_lines.get(i)) {
                         (Some(sug), Some(desc)) => {
@@ -1056,24 +1158,26 @@ impl Menu for IdeMenu {
                                 "{}{}{}{}",
                                 distance_left,
                                 desc,
-                                " ".repeat(self.working_details.description_offset as usize),
+                                left_of_box(i, self.working_details.description_offset),
                                 sug,
                             )
                         }
                         (Some(sug), None) => {
                             strings[i] = format!(
-                                "{}{}",
-                                " ".repeat(
-                                    (self.working_details.description_width
-                                        + self.working_details.description_offset)
-                                        as usize
-                                ) + distance_left,
+                                "{}{}{}",
+                                " ".repeat(self.working_details.description_width as usize)
+                                    + distance_left,
+                                left_of_box(i, self.working_details.description_offset),
                                 sug,
                             );
                         }
                         (None, Some(desc)) => strings.push(format!("{distance_left}{desc}",)),
                         (None, None) => {}
                     }
+                }
+            } else {
+                for (i, sug) in strings.iter_mut().enumerate() {
+                    *sug = format!("{}{sug}", left_of_box(i, self.working_details.space_left));
                 }
             }
             strings.join("\r\n")
@@ -1908,14 +2012,240 @@ mod tests {
     }
 
     /// The `>` marking the selection without color takes its column from the
-    /// row, so every row stays as wide as the border around it.
+    /// One layout drawn without and with color, the colored rows without
+    /// their escapes, so the two can be compared column by column.
+    struct Renderings {
+        menu: IdeMenu,
+        plain: Vec<String>,
+        colored: Vec<String>,
+    }
+
+    fn renderings(
+        menu: IdeMenu,
+        completer: &mut dyn Completer,
+        cursor_col: u16,
+        terminal_width: u16,
+    ) -> Renderings {
+        let mut menu = menu;
+        menu.set_cursor_pos((cursor_col, 0));
+        setup_menu(
+            &mut menu,
+            &mut Editor::default(),
+            completer,
+            (terminal_width, 20),
+        );
+        let rows = |use_ansi_coloring| {
+            menu.menu_string(20, use_ansi_coloring)
+                .split("\r\n")
+                .map(strip_ansi_escapes::strip_str)
+                .collect::<Vec<_>>()
+        };
+        let colored = rows(true);
+        let plain = rows(false);
+        Renderings {
+            menu,
+            plain,
+            colored,
+        }
+    }
+
+    /// `row` with `cell` put in at `column`, or over what is there.
+    fn with_cell(row: &str, column: usize, cell: char, insert: bool) -> String {
+        let mut cells: Vec<char> = row.chars().collect();
+        if insert {
+            cells.insert(column, cell);
+        } else {
+            cells[column] = cell;
+        }
+        cells.into_iter().collect()
+    }
+
+    /// The column the marker is in, when exactly one row has one.
+    fn marker_column(rows: &[String]) -> Option<usize> {
+        let mut columns = rows
+            .iter()
+            .filter_map(|row| row.chars().position(|cell| cell == '>'));
+        let column = columns.next();
+        column.filter(|_| columns.next().is_none())
+    }
+
+    fn bordered(menu: IdeMenu, border: bool) -> IdeMenu {
+        if border {
+            menu.with_default_border()
+        } else {
+            menu
+        }
+    }
+
+    /// Under a cursor away from the left edge the menu is indented, and the
+    /// `>` marking the selection without color takes the last column of that
+    /// indentation. The box is the colored one, value and all.
     #[rstest]
-    #[case::room_to_spare(&["ab", "cd"], "│>ab│")]
-    #[case::longest_selected(&["abcdef", "gh"], "│>ab...│")]
-    fn plain_selected_row_keeps_the_box_width(#[case] values: &[&str], #[case] selected: &str) {
-        let rows = rendered_rows(IdeMenu::default().with_default_border(), values, false);
-        let box_width = rows[0].width();
-        assert!(rows.iter().all(|row| row.width() == box_width), "{rows:?}");
-        assert_eq!(rows[1], selected);
+    fn plain_marker_sits_left_of_an_indented_box(
+        #[values(false, true)] border: bool,
+        #[values(0, 1)] padding: u16,
+        #[values(&["abc", "de"], &["abcd", "x"], &["abcde", "x"], &["git"])] values: &[&str],
+    ) {
+        let menu = bordered(IdeMenu::default().with_padding(padding), border);
+        let drawn = renderings(menu, &mut FakeCompleter::new(values), 10, 100);
+        let box_left = drawn.menu.working_details.space_left as usize;
+        assert!(box_left > 0);
+
+        assert_eq!(marker_column(&drawn.plain), Some(box_left - 1));
+        let unmarked: Vec<_> = drawn
+            .plain
+            .iter()
+            .map(|row| with_cell(row, box_left - 1, ' ', false))
+            .collect();
+        assert_eq!(unmarked, drawn.colored);
+    }
+
+    /// A box at the left edge has no column to its left, so the whole menu
+    /// moves one to the right to make it.
+    #[rstest]
+    fn plain_marker_shifts_a_box_at_the_left_edge(
+        #[values(false, true)] border: bool,
+        #[values(0, 1)] padding: u16,
+        #[values(&["abc", "de"], &["abcd", "x"], &["abcde", "x"], &["git"])] values: &[&str],
+    ) {
+        let menu = bordered(IdeMenu::default().with_padding(padding), border);
+        let drawn = renderings(menu, &mut FakeCompleter::new(values), 0, 100);
+
+        assert_eq!(marker_column(&drawn.plain), Some(0));
+        let unmarked: Vec<_> = drawn
+            .plain
+            .iter()
+            .map(|row| row.chars().skip(1).collect::<String>())
+            .collect();
+        assert_eq!(unmarked, drawn.colored);
+    }
+
+    /// The box clicked on is the one drawn, also when it was moved.
+    #[test]
+    fn clicks_follow_a_box_shifted_for_the_marker() {
+        let drawn = renderings(
+            IdeMenu::default(),
+            &mut FakeCompleter::new(&["abc", "de"]),
+            0,
+            100,
+        );
+        assert_eq!(drawn.plain, [">abc", " de "]);
+
+        assert_eq!(drawn.menu.selection_at(0, 0, 100, 20), None);
+        assert_eq!(drawn.menu.selection_at(1, 1, 100, 20), Some(1));
+        assert_eq!(drawn.menu.selection_at(3, 0, 100, 20), Some(0));
+        assert_eq!(drawn.menu.selection_at(4, 0, 100, 20), None);
+    }
+
+    /// A box as wide as the terminal can neither spare a column nor move, so
+    /// only then the marker takes a column from the selected value.
+    #[rstest]
+    #[case::value_fits(false, &["ab", "c"], &[">ab", "c  "])]
+    #[case::no_room_for_an_ellipsis(true, &["abc", "de"], &["╭───╮", "│>ab│", "│de │", "╰───╯"])]
+    #[case::ellipsis(false, &["abcdef", "gh"], &[">ab...", "gh    "])]
+    fn plain_marker_takes_from_the_value_at_full_width(
+        #[case] border: bool,
+        #[case] values: &[&str],
+        #[case] expected: &[&str],
+    ) {
+        let terminal_width = expected[0].width() as u16;
+        let menu = bordered(IdeMenu::default(), border);
+        let drawn = renderings(menu, &mut FakeCompleter::new(values), 0, terminal_width);
+        assert_eq!(drawn.plain, expected);
+    }
+
+    fn description_left(offset: u16) -> IdeMenu {
+        IdeMenu::default()
+            .with_default_border()
+            .with_description_mode(DescriptionMode::Left)
+            .with_description_offset(offset)
+    }
+
+    /// With the description on the left the marker column is the gap
+    /// between the two boxes.
+    #[test]
+    fn plain_marker_uses_the_gap_after_a_left_description() {
+        let drawn = renderings(description_left(1), &mut DescribedCompleter, 50, 100);
+        let details = &drawn.menu.working_details;
+        assert_eq!(details.description_offset, 1);
+        let box_left = (details.space_left + details.description_width) as usize + 1;
+
+        assert_eq!(marker_column(&drawn.plain), Some(box_left - 1));
+        let unmarked: Vec<_> = drawn
+            .plain
+            .iter()
+            .map(|row| with_cell(row, box_left - 1, ' ', false))
+            .collect();
+        assert_eq!(unmarked, drawn.colored);
+    }
+
+    /// Without a gap the completion box moves one column away from the
+    /// description, which stays where it is and whole.
+    #[test]
+    fn plain_marker_parts_a_left_description_from_its_box() {
+        let drawn = renderings(description_left(0), &mut DescribedCompleter, 50, 100);
+        let details = &drawn.menu.working_details;
+        let box_left = (details.space_left + details.description_width) as usize;
+
+        assert_eq!(marker_column(&drawn.plain), Some(box_left));
+        let boxes = details.completion_width as usize + box_left;
+        let unmarked: Vec<_> = drawn
+            .plain
+            .iter()
+            .zip(&drawn.colored)
+            .map(|(_, colored)| {
+                if colored.chars().count() > box_left && colored.chars().count() <= boxes {
+                    with_cell(colored, box_left, ' ', true)
+                } else {
+                    colored.clone()
+                }
+            })
+            .collect();
+        let plain: Vec<_> = drawn
+            .plain
+            .iter()
+            .map(|row| row.replace('>', " "))
+            .collect();
+        assert_eq!(plain, unmarked);
+        assert_eq!(
+            drawn.menu.selection_at(box_left as u16 + 2, 1, 100, 20),
+            Some(0)
+        );
+        assert_eq!(
+            drawn.menu.selection_at(box_left as u16 + 1, 1, 100, 20),
+            None
+        );
+    }
+
+    /// Against the right edge that move has no room either, so the marker
+    /// takes its column from the value and no row grows past the terminal.
+    #[test]
+    fn plain_marker_never_widens_a_menu_at_the_right_edge() {
+        let drawn = renderings(description_left(0), &mut DescribedCompleter, 99, 100);
+        assert_eq!(drawn.menu.working_details.space_right, 0);
+
+        assert!(marker_column(&drawn.plain).is_some(), "{:?}", drawn.plain);
+        let widths = |rows: &[String]| rows.iter().map(|row| row.width()).collect::<Vec<_>>();
+        assert_eq!(widths(&drawn.plain), widths(&drawn.colored));
+        assert!(widths(&drawn.plain).iter().all(|width| *width <= 100));
+    }
+
+    /// The colored rows do not know about the marker.
+    #[test]
+    fn colored_rows_are_unchanged() {
+        let mut menu = IdeMenu::default().with_default_border();
+        setup_menu(
+            &mut menu,
+            &mut Editor::default(),
+            &mut FakeCompleter::new(&["abc", "de"]),
+            (100, 20),
+        );
+        assert_eq!(
+            menu.menu_string(20, true),
+            "╭───╮\r\n\
+             │\u{1b}[90m\u{1b}[0m\u{1b}[1;7;32mabc\u{1b}[0m│\r\n\
+             │\u{1b}[90m\u{1b}[0m\u{1b}[90mde \u{1b}[0m│\r\n\
+             ╰───╯"
+        );
     }
 }
