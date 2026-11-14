@@ -328,6 +328,37 @@ impl FileBackedHistory {
         Ok(hist)
     }
 
+    /// Loads a history file without ever writing to it.
+    ///
+    /// Use this when [`FileBackedHistory::with_file`] fails because the file cannot be
+    /// written, for example on a read-only or full filesystem. The returned history keeps
+    /// the newest `capacity` entries of the file in memory, takes new entries as usual,
+    /// and never writes them back: they are gone once the history is dropped.
+    ///
+    /// The history file is never modified, created, truncated or locked, and no other
+    /// file is written. This holds on a full filesystem as well.
+    ///
+    /// A missing file loads as an empty history.
+    pub fn with_file_read_only(capacity: usize, file: PathBuf) -> Result<Self> {
+        let mut hist = Self::new(capacity)?;
+        let file = match std::fs::File::open(file) {
+            Ok(file) => file,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(hist),
+            Err(err) => return Err(err.into()),
+        };
+        for line in BufReader::new(file).lines() {
+            let line = line?;
+            if hist.entries.len() == capacity {
+                if capacity == 0 {
+                    break;
+                }
+                hist.entries.pop_front();
+            }
+            hist.entries.push_back(decode_entry(&line));
+        }
+        Ok(hist)
+    }
+
     // this history doesn't store any info except command line
     fn construct_entry(id: Option<HistoryItemId>, command_line: String) -> HistoryItem {
         HistoryItem {
