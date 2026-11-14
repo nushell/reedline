@@ -14,22 +14,28 @@ pub(crate) struct TtyModeGuard {
     termios: rustix::termios::Termios,
 }
 
+/// The terminal crossterm switches into raw mode: stdin if it is a terminal,
+/// else `/dev/tty`
+#[cfg(unix)]
+pub(super) fn tty() -> Option<std::os::fd::OwnedFd> {
+    use std::os::fd::AsFd;
+    let stdin = std::io::stdin();
+    if rustix::termios::isatty(&stdin) {
+        stdin.as_fd().try_clone_to_owned().ok()
+    } else {
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("/dev/tty")
+            .ok()
+            .map(Into::into)
+    }
+}
+
 #[cfg(unix)]
 impl TtyModeGuard {
     pub fn save() -> Option<Self> {
-        use std::os::fd::AsFd;
-        // Stdin if it is a terminal, else /dev/tty, the same choice crossterm makes
-        let stdin = std::io::stdin();
-        let tty = if rustix::termios::isatty(&stdin) {
-            stdin.as_fd().try_clone_to_owned().ok()?
-        } else {
-            std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open("/dev/tty")
-                .ok()?
-                .into()
-        };
+        let tty = tty()?;
         let termios = rustix::termios::tcgetattr(&tty).ok()?;
         Some(Self { tty, termios })
     }

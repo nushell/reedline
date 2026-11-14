@@ -44,11 +44,7 @@ impl Highlighter for ContextAwareHighlighter {
         // Same-quote containment only applies when both halves of the
         // pair are the same character (i.e. a quote, not a bracket).
         let (open, close) = context.pair();
-        if open == close && is_inside_unclosed_quote(buffer, insertion_point, open) {
-            return false;
-        }
-
-        true
+        !(open == close && is_inside_unclosed_quote(buffer, insertion_point, open))
     }
 }
 
@@ -107,7 +103,7 @@ fn main() -> io::Result<()> {
             Signal::Success(buffer) => {
                 println!("We processed: {buffer}");
             }
-            Signal::CtrlD | Signal::CtrlC => {
+            Signal::CtrlD | Signal::CtrlC(_) => {
                 println!("\nAborted!");
                 break Ok(());
             }

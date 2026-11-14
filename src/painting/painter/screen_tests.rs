@@ -16,6 +16,7 @@ struct FixedPrompt {
     indicator: &'static str,
     right: &'static str,
     right_on_last_line: bool,
+    multiline: &'static str,
 }
 
 impl FixedPrompt {
@@ -25,6 +26,11 @@ impl FixedPrompt {
             indicator,
             ..Self::default()
         }
+    }
+
+    fn with_multiline(mut self, indicator: &'static str) -> Self {
+        self.multiline = indicator;
+        self
     }
 
     fn with_right(mut self, right: &'static str, on_last_line: bool) -> Self {
@@ -48,7 +54,7 @@ impl Prompt for FixedPrompt {
     }
 
     fn render_prompt_multiline_indicator(&self) -> Cow<'_, str> {
-        "".into()
+        self.multiline.into()
     }
 
     fn render_prompt_history_search_indicator(
@@ -441,6 +447,27 @@ fn status_line_follows_the_hint_and_a_wrapped_buffer() {
     assert_eq!(session.screen.cursor(), (0, 1));
 }
 
+// A hint running onto more lines gets the multiline indicator on each, as the
+// buffer's own lines do, and leaves the cursor where the buffer ends (#530).
+#[test]
+fn a_multi_line_hint_gets_the_multiline_indicator() {
+    let prompt = FixedPrompt::new("> ", "").with_multiline("::: ");
+    let hint = nu_ansi_term::Style::new()
+        .dimmed()
+        .paint("\n  foo: S,\n}")
+        .to_string();
+    let hint = crate::painting::continue_hint_lines(hint, &prompt, true, None);
+    let mut session = Session::new(20, 6, 0);
+
+    session.paint_with(&prompt, "struct E {", &hint, "", None);
+
+    assert_eq!(
+        session.screen.rows()[..4],
+        ["> struct E {", ":::   foo: S,", "::: }", ""]
+    );
+    assert_eq!(session.screen.cursor(), (12, 0));
+}
+
 // The rows are reserved like any others, so a prompt on the last row scrolls
 // up far enough for a wrapped status line to land on screen.
 #[test]
@@ -615,4 +642,167 @@ fn click_on_the_status_line_above_a_menu_lands_nowhere() {
         session.painter.screen_to_buffer_offset(&snapshot, 0, 2),
         None
     );
+}
+
+/// One paint, for the tests that draw one over another.
+type Paint<'a> = &'a dyn Fn(&mut Session);
+
+/// Drawing `second` over `first` must leave what `second` leaves on a blank
+/// screen: a paint that no longer erases first has to remove whatever of the
+/// old one it does not cover, or it stays for good.
+fn assert_nothing_left_over(size: (u16, u16), first: Paint, second: Paint) {
+    let mut over = Session::new(size.0, size.1, 1);
+    first(&mut over);
+    second(&mut over);
+    let mut blank = Session::new(size.0, size.1, 1);
+    second(&mut blank);
+
+    assert_eq!(over.screen.rows(), blank.screen.rows());
+    assert_eq!(over.screen.cursor(), blank.screen.cursor());
+    assert!(over.screen.cursor_visible());
+}
+
+/// A terminal may draw after any byte of a paint (#1302). Whenever it does,
+/// every cell must hold what it held before `second` or what it holds after:
+/// cut anywhere, the screen shows text that was there or is about to be,
+/// never a blank where both had some.
+///
+/// The cursor is not part of this. It is hidden for the length of a paint, so
+/// a screen drawn halfway still lacks it.
+fn assert_no_tear(size: (u16, u16), first: Paint, second: Paint) {
+    let mut session = Session::new(size.0, size.1, 1);
+    first(&mut session);
+    let old = session.screen.cells();
+    let start = session.painter.stdout.captured().len();
+    second(&mut session);
+    let new = session.screen.cells();
+    let captured = session.painter.stdout.captured().to_vec();
+
+    let mut replay = TestScreen::new(size.0, size.1);
+    replay.feed(&captured[..start]);
+    for end in start..captured.len() {
+        replay.feed(&captured[end..=end]);
+        for (row, cells) in replay.cells().iter().enumerate() {
+            for (col, cell) in cells.iter().enumerate() {
+                assert!(
+                    *cell == old[row][col] || *cell == new[row][col],
+                    "after {:?} cell ({col}, {row}) holds {cell:?}, was {:?}, becomes {:?}",
+                    String::from_utf8_lossy(&captured[start..=end]),
+                    old[row][col],
+                    new[row][col],
+                );
+            }
+        }
+    }
+}
+
+/// Both of the above, for a pair of paints the painter draws in place.
+fn assert_drawn_in_place(size: (u16, u16), first: Paint, second: Paint) {
+    assert_nothing_left_over(size, first, second);
+    assert_no_tear(size, first, second);
+}
+
+#[test]
+fn typing_draws_in_place() {
+    let prompt = FixedPrompt::new("> ", "");
+    assert_drawn_in_place((20, 6), &|s| s.paint(&prompt, "ab", ""), &|s| {
+        s.paint(&prompt, "abc", "")
+    });
+}
+
+// The prompt of the recording in #1302: two rows, the buffer on the second.
+#[test]
+fn typing_under_a_two_row_prompt_draws_in_place() {
+    let prompt = FixedPrompt::new("⬢ ~\n", "$ ");
+    assert_drawn_in_place((20, 6), &|s| s.paint(&prompt, "jfa", ""), &|s| {
+        s.paint(&prompt, "jfav", "")
+    });
+}
+
+#[test]
+fn a_shorter_line_draws_in_place() {
+    let prompt = FixedPrompt::new("> ", "");
+    assert_drawn_in_place((20, 6), &|s| s.paint(&prompt, "a longer line", ""), &|s| {
+        s.paint(&prompt, "short", "")
+    });
+}
+
+#[test]
+fn fewer_lines_draw_in_place() {
+    let prompt = FixedPrompt::new("> ", "").with_multiline("::: ");
+    assert_drawn_in_place(
+        (20, 8),
+        &|s| s.paint(&prompt, "first\nsecond line\nthird", ""),
+        &|s| s.paint(&prompt, "one", "\ntwo"),
+    );
+}
+
+#[test]
+fn a_hint_going_away_draws_in_place() {
+    let prompt = FixedPrompt::new("> ", "");
+    assert_drawn_in_place(
+        (20, 6),
+        &|s| s.paint_with(&prompt, "gi", "t status\n--short", "", None),
+        &|s| s.paint_with(&prompt, "gix", "", "", None),
+    );
+}
+
+#[test]
+fn a_closed_menu_draws_in_place() {
+    let prompt = FixedPrompt::new("> ", "");
+    let menu = ReedlineMenu::EngineCompleter(Box::new(super::tests::TestMenu::new("m1\r\nm2")));
+    assert_drawn_in_place(
+        (20, 8),
+        &|s| s.paint_with(&prompt, "pw", "", "", Some(&menu)),
+        &|s| s.paint_with(&prompt, "pwd", "", "", None),
+    );
+}
+
+#[rstest::rstest]
+#[case::on_the_first_row(false)]
+#[case::on_the_last_row(true)]
+fn a_right_prompt_draws_in_place(#[case] on_last_line: bool) {
+    let prompt = FixedPrompt::new("abc\n", "> ").with_right("RIGHT", on_last_line);
+    assert_drawn_in_place((20, 6), &|s| s.paint(&prompt, "longer", ""), &|s| {
+        s.paint(&prompt, "hi", "")
+    });
+}
+
+// The buffer reaching the right prompt hides it, and a shorter one brings it
+// back: its cells change hands between the two.
+#[rstest::rstest]
+#[case::hidden("hi", "0123456789abcd")]
+#[case::shown_again("0123456789abcd", "hi")]
+fn a_right_prompt_hidden_and_shown_draws_in_place(#[case] first: &str, #[case] second: &str) {
+    let prompt = FixedPrompt::new("> ", "").with_right("RIGHT", false);
+    assert_drawn_in_place((20, 6), &|s| s.paint(&prompt, first, ""), &|s| {
+        s.paint(&prompt, second, "")
+    });
+}
+
+// Not drawn in place, since the painter cannot be sure where the text ends:
+// a line reaching the right margin leaves the wrap pending, where an erase
+// takes the last cell on some terminals, and terminals disagree on how wide
+// an ambiguous-width character is. The right prompt counts too: it is placed
+// by its width and nothing is erased behind it. Such a paint erases first as
+// before, and still has to leave nothing behind.
+#[rstest::rstest]
+#[case::a_line_reaching_the_margin("", "abcdefgh")]
+#[case::an_ambiguous_width("", "\u{a7} 1")]
+#[case::an_uncertain_right_prompt("\u{e0a0}", "hi")]
+fn a_paint_that_erases_first_leaves_nothing_behind(
+    #[case] right: &'static str,
+    #[case] second: &str,
+) {
+    let prompt = FixedPrompt::new("> ", "").with_right(right, false);
+    let first: Paint = &|s| s.paint(&prompt, "one\ntwo\nthree", "");
+    let second: Paint = &|s| s.paint(&prompt, second, "");
+    assert_nothing_left_over((10, 6), first, second);
+
+    let mut session = Session::new(10, 6, 1);
+    first(&mut session);
+    let start = session.painter.stdout.captured().len();
+    second(&mut session);
+    let paint = String::from_utf8_lossy(&session.painter.stdout.captured()[start..]).into_owned();
+    assert!(paint.contains("\x1b[2;1H\x1b[J"), "{paint:?}");
 }

@@ -27,14 +27,15 @@ use {
             HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchQuery,
         },
         painting::{
-            escape_control, escape_control_keep_sgr, Painter, PainterSuspendedState, PromptLines,
-            RenderSnapshot, W,
+            continue_hint_lines, escape_control, escape_control_keep_sgr, Painter,
+            PainterSuspendedState, PromptLines, RenderSnapshot, W,
         },
         prompt::{PromptEditMode, PromptHistorySearchStatus},
         result::{ReedlineError, ReedlineErrorVariants},
         terminal_extensions::{
             bracketed_paste::BracketedPasteGuard,
             kitty::KittyProtocolGuard,
+            raw_mode,
             semantic_prompt::{Osc133ClickEventsMarkers, SemanticPromptMarkers},
             tty_mode::TtyModeGuard,
         },
@@ -57,7 +58,7 @@ use {
         io::Write,
         process::Command,
         sync::{
-            atomic::{AtomicBool, Ordering},
+            atomic::{fence, AtomicBool, Ordering},
             Arc,
         },
         time::Duration,
@@ -80,6 +81,15 @@ const EVENTS_THRESHOLD: usize = 10;
 /// for features that require periodic processing (e.g., external printer,
 /// idle callback).
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Where history navigation leaves the cursor in the entry it shows.
+#[derive(Debug, Clone, Copy)]
+enum HistoryLanding {
+    /// End of the first line, so the next Up keeps walking history.
+    FirstLineEnd,
+    /// End of the buffer, so the next Down keeps walking history.
+    End,
+}
 
 /// Determines if inputs should be used to extend the regular line buffer,
 /// traverse the history in the standard prompt or edit the search string in the
@@ -459,7 +469,7 @@ impl RepaintSignal {
 impl Drop for Reedline {
     fn drop(&mut self) {
         if self.cursor_shapes.is_some() {
-            let _ignore = terminal::enable_raw_mode();
+            let _ignore = raw_mode::enable();
             let mut stdout = std::io::stdout();
             let _ignore = stdout.queue(SetCursorStyle::DefaultUserShape);
             let _ignore = stdout.flush();
@@ -530,7 +540,8 @@ fn is_pasted_newline(event: &Event) -> bool {
 }
 
 impl Reedline {
-    /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file.
+    /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file:
+    /// a [`FileBackedHistory`] without a file, kept in memory only.
     #[must_use]
     pub fn create() -> Self {
         let history = Box::<FileBackedHistory>::default();
@@ -916,6 +927,9 @@ impl Reedline {
     }
 
     /// A builder which configures the history for your instance of the Reedline engine
+    ///
+    /// To keep no history, pass a [`FileBackedHistory`] without a file and with a capacity
+    /// of 0, `FileBackedHistory::new(0)`, which saves nothing.
     /// # Example
     /// ```rust,no_run
     /// // Create a reedline object with history support, including history size limits
@@ -1076,10 +1090,22 @@ impl Reedline {
         self
     }
 
-    /// A builder that appends a menu to the engine
+    /// A builder that adds a menu to the engine
+    ///
+    /// Menus are looked up by name (see [`ReedlineEvent::Menu`]), so a menu
+    /// whose name is already taken replaces that menu, keeping its place in
+    /// the order. The last menu added under a name wins, the same as for a
+    /// key bound twice in [`crate::Keybindings`].
     #[must_use]
     pub fn with_menu(mut self, menu: ReedlineMenu) -> Self {
-        self.menus.push(menu);
+        match self
+            .menus
+            .iter_mut()
+            .find(|existing| existing.name() == menu.name())
+        {
+            Some(existing) => *existing = menu,
+            None => self.menus.push(menu),
+        }
         self
     }
 
@@ -1264,7 +1290,7 @@ impl Reedline {
     /// Returns a [`std::io::Result`] in which the `Err` type is [`std::io::Result`]
     /// and the `Ok` variant wraps a [`Signal`] which handles user inputs.
     pub fn read_line(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
-        terminal::enable_raw_mode()?;
+        raw_mode::enable()?;
         self.bracketed_paste.enter();
         self.kitty_protocol.enter();
 
@@ -1326,20 +1352,16 @@ impl Reedline {
     /// indefinitely, so external triggers (break signal, repaint signal,
     /// external printer, idle callback) are noticed while waiting for input.
     fn input_needs_polling(&self) -> bool {
-        #[allow(unused_mut)] // Dependent on feature flags
-        let mut poll = self.break_signal.is_some()
+        self.break_signal.is_some()
             || self
                 .repaint_signal
                 .as_ref()
-                .is_some_and(|sig| Arc::strong_count(&sig.flag) > 1);
-
-        {
-            poll |= self.external_printer.is_some();
-        }
-
-        poll |= self.idle_callback.is_some();
-
-        poll
+                .is_some_and(|sig| Arc::strong_count(&sig.flag) > 1)
+            || self
+                .external_printer
+                .as_ref()
+                .is_some_and(|printer| printer.needs_polling())
+            || self.idle_callback.is_some()
     }
 
     /// Reset the per-call state at the start of a `read_line`, before anything
@@ -1396,6 +1418,18 @@ impl Reedline {
                 }
             }
 
+            // Decide whether to poll before taking the repaint request. Nothing
+            // wakes a blocked read, so a request must not land between the take
+            // and the block. A handle count of 1 means every outside handle was
+            // dropped before this read, so none can request after the take. A
+            // higher count makes the loop poll and catch a later request on the
+            // next pass.
+            let needs_polling = self.input_needs_polling();
+            // `Arc::strong_count` is a relaxed load and dropping an `Arc` is a
+            // release decrement, so this fence makes a dropped handle's
+            // `request_repaint` visible to the take below.
+            fence(Ordering::Acquire);
+
             if self.take_repaint_request() {
                 self.repaint(prompt)?;
             }
@@ -1408,9 +1442,8 @@ impl Reedline {
                 }
             }
 
-            // Determine if we need to poll (non-blocking) or can block on input.
-            // We need polling if external_printer or idle_callback is configured,
-            // using the shared poll_interval for the timeout.
+            // A completion still in flight also forces polling, on top of
+            // `needs_polling`, so its result is picked up without a key press.
             let status = self.completer.poll_completion();
             // Anything BUT idle means work is in flight. We need to keep polling.
             let completer_pending = status != CompletionStatus::Idle;
@@ -1422,7 +1455,7 @@ impl Reedline {
             let mut events: Vec<Event> = vec![];
 
             if !self.immediately_accept {
-                if self.input_needs_polling() || completer_pending {
+                if needs_polling || completer_pending {
                     if event::poll(self.poll_interval)? {
                         events.push(crossterm::event::read()?);
                     }
@@ -1848,7 +1881,12 @@ impl Reedline {
             }
             ReedlineEvent::CtrlC => {
                 self.input_mode = InputMode::Regular;
-                Ok(EventStatus::Exits(Signal::CtrlC))
+                // The line from before the search, not the search query. It is
+                // abandoned like any other, so the next read starts empty.
+                let buffer = self.editor.get_buffer().to_string();
+                self.run_edit_commands(&[EditCommand::Clear]);
+                self.editor.reset_undo_stack();
+                Ok(EventStatus::Exits(Signal::CtrlC(buffer)))
             }
             ReedlineEvent::ClearScreen => {
                 self.painter.clear_screen()?;
@@ -1919,6 +1957,8 @@ impl Reedline {
             | ReedlineEvent::Left
             | ReedlineEvent::ToStart
             | ReedlineEvent::ToEnd
+            | ReedlineEvent::FirstHistory
+            | ReedlineEvent::LeaveHistory
             | ReedlineEvent::Multiple(_)
             | ReedlineEvent::None
             | ReedlineEvent::HistoryHintWordComplete
@@ -2081,9 +2121,17 @@ impl Reedline {
             ReedlineEvent::HistoryHintComplete => Ok(self.accept_history_hint(true)),
             ReedlineEvent::HistoryHintWordComplete => Ok(self.accept_history_hint(false)),
             ReedlineEvent::Esc => {
+                // Nothing to cancel is reported as such, so a binding like
+                // `UntilFound([Esc, ExecuteHostCommand(..)])` can fall through.
+                let had_menu = self.active_menu().is_some();
+                let had_selection = self.editor.cursor_is_a_selection();
                 self.deactivate_menus();
                 self.editor.clear_selection();
-                Ok(EventStatus::Handled)
+                Ok(if had_menu || had_selection {
+                    EventStatus::Handled
+                } else {
+                    EventStatus::Inapplicable
+                })
             }
             ReedlineEvent::CtrlD => {
                 if self.editor.is_empty() {
@@ -2096,9 +2144,10 @@ impl Reedline {
             }
             ReedlineEvent::CtrlC => {
                 self.deactivate_menus();
+                let buffer = self.editor.get_buffer().to_string();
                 self.run_edit_commands(&[EditCommand::Clear]);
                 self.editor.reset_undo_stack();
-                Ok(EventStatus::Exits(Signal::CtrlC))
+                Ok(EventStatus::Exits(Signal::CtrlC(buffer)))
             }
             ReedlineEvent::ClearScreen => {
                 self.deactivate_menus();
@@ -2287,6 +2336,8 @@ impl Reedline {
                 self.next_history()?;
                 Ok(EventStatus::Handled)
             }
+            ReedlineEvent::FirstHistory => self.first_history(),
+            ReedlineEvent::LeaveHistory => Ok(self.leave_history()),
             ReedlineEvent::Up => self.up_command(),
             ReedlineEvent::Down => self.down_command(),
             ReedlineEvent::Left | ReedlineEvent::Right => {
@@ -2509,15 +2560,55 @@ impl Reedline {
             // On `Err` the next press retries on the fresh cursor; no rollback.
             self.history_cursor.back(self.history.as_ref())?;
         }
+        self.show_history_entry(HistoryLanding::FirstLineEnd);
+        Ok(())
+    }
+
+    /// Puts the history cursor's entry (or the draft past the newest one) in
+    /// the buffer, with the cursor where `landing` says.
+    fn show_history_entry(&mut self, landing: HistoryLanding) {
         self.update_buffer_from_history();
-        self.editor.move_to_start(false);
-        self.editor.move_to_line_end(false);
+        match landing {
+            HistoryLanding::FirstLineEnd => {
+                self.editor.move_to_start(false);
+                self.editor.move_to_line_end(false);
+            }
+            HistoryLanding::End => self.editor.move_to_end(false),
+        }
         // History navigation positions the cursor outside the command path, so
         // settle it under the rest policy (vi-normal must not rest past the line).
         self.editor.commit_cursor();
         self.editor
             .update_undo_state(UndoBehavior::HistoryNavigation);
-        Ok(())
+    }
+
+    fn first_history(&mut self) -> io::Result<EventStatus> {
+        if self.input_mode != InputMode::HistoryTraversal {
+            self.history_cursor = HistoryCursor::new(
+                self.get_history_navigation_based_on_line_buffer(),
+                self.get_history_session_id(),
+            );
+        }
+        if !self.history_cursor.jump_to_oldest(self.history.as_ref())? {
+            return Ok(EventStatus::Inapplicable);
+        }
+
+        self.input_mode = InputMode::HistoryTraversal;
+        self.history_last_run.set_recalled(false);
+        self.show_history_entry(HistoryLanding::FirstLineEnd);
+        Ok(EventStatus::Handled)
+    }
+
+    fn leave_history(&mut self) -> EventStatus {
+        if self.input_mode != InputMode::HistoryTraversal {
+            return EventStatus::Inapplicable;
+        }
+
+        self.history_cursor.past_newest();
+        self.history_last_run.set_recalled(false);
+        self.input_mode = InputMode::Regular;
+        self.show_history_entry(HistoryLanding::End);
+        EventStatus::Handled
     }
 
     fn next_history(&mut self) -> io::Result<()> {
@@ -2547,12 +2638,7 @@ impl Reedline {
         {
             self.input_mode = InputMode::Regular;
         }
-        self.update_buffer_from_history();
-        self.editor.move_to_end(false);
-        // See `previous_history`: settle the out-of-band cursor under the policy.
-        self.editor.commit_cursor();
-        self.editor
-            .update_undo_state(UndoBehavior::HistoryNavigation);
+        self.show_history_entry(HistoryLanding::End);
         Ok(())
     }
 
@@ -3354,6 +3440,12 @@ impl Reedline {
                 } else {
                     escape_control(&hint).into_owned()
                 };
+                let hint = continue_hint_lines(
+                    hint,
+                    prompt,
+                    use_ansi_coloring,
+                    self.painter.semantic_markers(),
+                );
                 let Some(closers) = trailing_closers.as_deref() else {
                     return hint;
                 };
@@ -3507,6 +3599,10 @@ impl Reedline {
     }
 
     /// Adds an external printer
+    ///
+    /// While [`read_line`](Self::read_line) waits for input it checks the
+    /// printer for text every [poll interval](Self::with_poll_interval), for as
+    /// long as [`ExternalOutput::needs_polling`] returns `true`.
     pub fn with_external_printer(mut self, printer: impl ExternalOutput + 'static) -> Self {
         self.external_printer = Some(Box::new(printer));
         self
@@ -3520,8 +3616,10 @@ impl Reedline {
     ///
     /// Common values are 33ms (~30fps) for UI updates or 100ms for less frequent tasks.
     ///
-    /// Note: This setting only takes effect when an external printer or idle callback
-    /// is configured. Without these features, Reedline blocks until input is received.
+    /// Note: This setting only takes effect while something needs polling: an
+    /// idle callback, a break signal, a live repaint handle, or an external
+    /// printer whose [`ExternalOutput::needs_polling`] returns `true`. Otherwise
+    /// Reedline blocks until input is received.
     ///
     /// # Example
     /// ```no_run
@@ -4250,11 +4348,7 @@ mod tests {
             let buffer = context.buffer();
             let point = context.insertion_point();
 
-            if open == close && Self::inside_unclosed_quote(buffer, point, open) {
-                return false;
-            }
-
-            true
+            !(open == close && Self::inside_unclosed_quote(buffer, point, open))
         }
     }
 
@@ -5200,6 +5294,45 @@ mod tests {
         assert_eq!(active_menu_values(&rl), 1, "narrowed to \"carpet\"");
     }
 
+    /// Menus are found by name, so adding a second menu under a taken name
+    /// replaces the first (in its place) instead of hiding behind it.
+    #[test]
+    fn with_menu_replaces_a_menu_of_the_same_name() {
+        let menu = |name: &str, marker: &str| {
+            ReedlineMenu::EngineCompleter(Box::new(
+                ColumnarMenu::default().with_name(name).with_marker(marker),
+            ))
+        };
+        let mut rl = Reedline::create()
+            .with_completer(Box::new(DefaultCompleter::new_with_wordlen(
+                vec![String::from("carpet")],
+                1,
+            )))
+            .with_menu(menu("completion_menu", "first> "))
+            .with_menu(menu("history_menu", "history> "))
+            .with_menu(menu("completion_menu", "second> "));
+
+        let names: Vec<&str> = rl.menus.iter().map(|menu| menu.name()).collect();
+        assert_eq!(
+            names,
+            ["completion_menu", "history_menu"],
+            "the replacement keeps the original's place"
+        );
+
+        rl.run_edit_commands(&[EditCommand::InsertString(String::from("ca"))]);
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::Menu(String::from("completion_menu")),
+        )
+        .expect("menu opens");
+        let opened = rl
+            .menus
+            .iter()
+            .find(|menu| menu.is_active())
+            .expect("a menu is open");
+        assert_eq!(opened.indicator(), "second> ", "the later menu answers");
+    }
+
     #[test]
     fn paste_burst_resolve_burst_inserts_placeholder() {
         // When the hook's `resolve_burst` reference-ifies the coalesced burst
@@ -5636,7 +5769,7 @@ mod tests {
         let signal = drive_until_signal(&mut rl, keys).expect("the read exits");
         let name = match signal {
             Signal::HostCommand(_) => "HostCommand",
-            Signal::CtrlC => "CtrlC",
+            Signal::CtrlC(_) => "CtrlC",
             Signal::Success(ref s) if s.is_empty() => "Success",
             ref other => panic!("unexpected {other:?}"),
         };
@@ -5778,7 +5911,7 @@ mod tests {
     // show the cursor itself. The re-anchor stands in for the clear, whose
     // `terminal::size()` needs a tty.
     #[rstest]
-    #[case::ctrl_c('c', "CtrlC")]
+    #[case::ctrl_c('c', r#"CtrlC("")"#)]
     #[case::ctrl_d('d', "CtrlD")]
     fn exit_before_the_next_paint_shows_the_cursor(#[case] key: char, #[case] expected: &str) {
         let mut rl = Reedline::create();
@@ -6889,6 +7022,65 @@ mod tests {
             reedline.input_needs_polling(),
             "a repaint handle must switch the loop to polling so requests are noticed"
         );
+    }
+
+    /// An external printer whose `needs_polling` answer the test sets.
+    struct SwitchablePrinter(Arc<AtomicBool>);
+
+    impl ExternalOutput for SwitchablePrinter {
+        fn drain(&mut self) -> io::Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+
+        fn needs_polling(&self) -> bool {
+            self.0.load(Ordering::Relaxed)
+        }
+    }
+
+    #[test]
+    fn external_printer_polls_only_while_it_expects_text() {
+        let expects_text = Arc::new(AtomicBool::new(false));
+        let reedline =
+            Reedline::create().with_external_printer(SwitchablePrinter(Arc::clone(&expects_text)));
+        assert!(
+            !reedline.input_needs_polling(),
+            "a printer that expects no text must let the loop block on input"
+        );
+
+        expects_text.store(true, Ordering::Relaxed);
+        assert!(
+            reedline.input_needs_polling(),
+            "a printer that expects text must switch the loop to polling"
+        );
+    }
+
+    #[test]
+    fn channel_printer_keeps_polling() {
+        let reedline =
+            Reedline::create().with_external_printer(crate::ExternalPrinter::<String>::default());
+        assert!(
+            reedline.input_needs_polling(),
+            "a printer without its own answer must keep the loop polling"
+        );
+    }
+
+    #[test]
+    fn request_survives_the_last_handle_being_dropped() {
+        // The input loop reads the handle count, then takes the request, then
+        // blocks if the count was 1. This checks the state that order relies
+        // on: once the last handle has requested a repaint and dropped, the
+        // loop chooses to block and the request is still there to take. It
+        // does not drive the loop or exercise the race itself.
+        let mut reedline = Reedline::create();
+        let signal = reedline.repaint_signal();
+
+        std::thread::spawn(move || signal.request_repaint())
+            .join()
+            .expect("worker thread panicked");
+
+        assert!(!reedline.input_needs_polling());
+        assert!(reedline.take_repaint_request());
+        assert!(!reedline.take_repaint_request());
     }
 
     #[test]
@@ -8548,6 +8740,105 @@ mod tests {
         }
     }
 
+    fn history_jump_engine() -> Reedline {
+        let mut reedline = Reedline::create();
+        for entry in ["echo hi", "git status", "ls", "git log"] {
+            reedline
+                .history
+                .save(HistoryItem::from_command_line(entry))
+                .unwrap();
+        }
+        reedline
+    }
+
+    #[test]
+    fn first_history_jumps_to_the_oldest_entry() {
+        let mut reedline = history_jump_engine();
+
+        assert!(matches!(
+            send(&mut reedline, ReedlineEvent::FirstHistory),
+            EventStatus::Handled
+        ));
+        assert_eq!(reedline.current_buffer_contents(), "echo hi");
+        assert!(matches!(
+            send(&mut reedline, ReedlineEvent::FirstHistory),
+            EventStatus::Inapplicable
+        ));
+        assert_eq!(reedline.current_buffer_contents(), "echo hi");
+
+        send(&mut reedline, ReedlineEvent::NextHistory);
+        assert_eq!(reedline.current_buffer_contents(), "git status");
+    }
+
+    #[test]
+    fn first_history_honors_the_typed_prefix_and_leave_history_restores_it() {
+        let mut reedline = history_jump_engine();
+        reedline.run_edit_commands(&[EditCommand::InsertString("git".into())]);
+
+        send(&mut reedline, ReedlineEvent::FirstHistory);
+        assert_eq!(reedline.current_buffer_contents(), "git status");
+
+        assert!(matches!(
+            send(&mut reedline, ReedlineEvent::LeaveHistory),
+            EventStatus::Handled
+        ));
+        assert_eq!(reedline.current_buffer_contents(), "git");
+        assert!(matches!(
+            send(&mut reedline, ReedlineEvent::LeaveHistory),
+            EventStatus::Inapplicable
+        ));
+    }
+
+    #[test]
+    fn leave_history_restores_the_draft_after_walking_back() {
+        let mut reedline = history_jump_engine();
+        reedline.run_edit_commands(&[
+            EditCommand::InsertString("draft".into()),
+            EditCommand::MoveToStart { select: false },
+        ]);
+
+        send(&mut reedline, ReedlineEvent::PreviousHistory);
+        send(&mut reedline, ReedlineEvent::PreviousHistory);
+        assert_eq!(reedline.current_buffer_contents(), "ls");
+
+        send(&mut reedline, ReedlineEvent::LeaveHistory);
+        assert_eq!(reedline.current_buffer_contents(), "draft");
+    }
+
+    #[test]
+    fn page_keys_jump_through_history_without_a_menu() {
+        let keybindings = crate::default_emacs_keybindings();
+        let page_up = keybindings
+            .find_binding(KeyModifiers::NONE, KeyCode::PageUp)
+            .unwrap();
+        let page_down = keybindings
+            .find_binding(KeyModifiers::NONE, KeyCode::PageDown)
+            .unwrap();
+        let mut reedline = history_jump_engine();
+        reedline.run_edit_commands(&[EditCommand::InsertString("git".into())]);
+
+        send(&mut reedline, page_up);
+        assert_eq!(reedline.current_buffer_contents(), "git status");
+        send(&mut reedline, page_down);
+        assert_eq!(reedline.current_buffer_contents(), "git");
+    }
+
+    #[test]
+    fn first_history_without_a_match_leaves_the_line_alone() {
+        let mut reedline = history_jump_engine();
+        reedline.run_edit_commands(&[EditCommand::InsertString("zzz".into())]);
+
+        assert!(matches!(
+            send(&mut reedline, ReedlineEvent::FirstHistory),
+            EventStatus::Inapplicable
+        ));
+        assert_eq!(reedline.current_buffer_contents(), "zzz");
+        assert!(matches!(
+            send(&mut reedline, ReedlineEvent::LeaveHistory),
+            EventStatus::Inapplicable
+        ));
+    }
+
     #[test]
     fn until_found_noop_move_that_clears_selection_is_applied() {
         let mut reedline = Reedline::create();
@@ -8611,7 +8902,7 @@ mod tests {
         if with_selection {
             assert!(matches!(status, EventStatus::Handled));
         } else {
-            assert!(matches!(status, EventStatus::Exits(Signal::CtrlC)));
+            assert!(matches!(status, EventStatus::Exits(Signal::CtrlC(_))));
         }
     }
 
@@ -8692,6 +8983,39 @@ mod tests {
         reedline
             .handle_event(&DefaultPrompt::default(), event)
             .unwrap()
+    }
+
+    #[test]
+    fn ctrl_c_hands_back_the_buffer_and_clears_it() {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[EditCommand::InsertString("half typed".into())]);
+
+        let status = send(&mut reedline, ReedlineEvent::CtrlC);
+
+        let EventStatus::Exits(Signal::CtrlC(buffer)) = status else {
+            panic!("Ctrl+C did not exit with CtrlC");
+        };
+        assert_eq!(buffer, "half typed");
+        assert_eq!(reedline.current_buffer_contents(), "");
+    }
+
+    #[test]
+    fn ctrl_c_in_history_search_hands_back_the_line_not_the_query() {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[EditCommand::InsertString("the line".into())]);
+        send(&mut reedline, ReedlineEvent::SearchHistory);
+        send(
+            &mut reedline,
+            ReedlineEvent::Edit(vec![EditCommand::InsertChar('q')]),
+        );
+
+        let status = send(&mut reedline, ReedlineEvent::CtrlC);
+
+        let EventStatus::Exits(Signal::CtrlC(buffer)) = status else {
+            panic!("Ctrl+C did not exit with CtrlC");
+        };
+        assert_eq!(buffer, "the line");
+        assert_eq!(reedline.current_buffer_contents(), "");
     }
 
     /// Engine with a completion menu opened over "th" by a completer that has no
@@ -8850,6 +9174,63 @@ mod tests {
         assert_eq!(reedline.current_buffer_contents(), "th ");
     }
 
+    #[test]
+    fn esc_closing_a_menu_is_handled() {
+        let mut reedline = engine_with_active_menu(true, false);
+
+        let status = send(&mut reedline, ReedlineEvent::Esc);
+
+        assert!(matches!(status, EventStatus::Handled));
+        assert!(!menu_is_active(&reedline));
+    }
+
+    #[test]
+    fn esc_clearing_a_selection_is_handled() {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[
+            EditCommand::InsertString(String::from("th")),
+            EditCommand::SelectAll,
+        ]);
+
+        let status = send(&mut reedline, ReedlineEvent::Esc);
+
+        assert!(matches!(status, EventStatus::Handled));
+        assert_eq!(reedline.current_selection(), None);
+    }
+
+    #[test]
+    fn esc_with_nothing_to_cancel_is_inapplicable() {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("th"))]);
+
+        let status = send(&mut reedline, ReedlineEvent::Esc);
+
+        assert!(matches!(status, EventStatus::Inapplicable));
+        assert_eq!(reedline.current_buffer_contents(), "th");
+    }
+
+    /// Esc can fall back to a custom action: it closes an open menu, and only
+    /// with nothing to cancel does the chain move on to the next event.
+    #[test]
+    fn esc_under_until_found_yields_to_the_next_event_only_when_inapplicable() {
+        let esc_binding = || {
+            ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::Esc,
+                ReedlineEvent::Edit(vec![EditCommand::Clear]),
+            ])
+        };
+
+        let mut reedline = engine_with_active_menu(true, false);
+        send(&mut reedline, esc_binding());
+        assert!(!menu_is_active(&reedline));
+        assert_eq!(reedline.current_buffer_contents(), "th");
+
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("th"))]);
+        send(&mut reedline, esc_binding());
+        assert_eq!(reedline.current_buffer_contents(), "");
+    }
+
     /// A hinter that always offers a fixed suggestion, so the completion flow can
     /// be driven without the paint cycle that normally refreshes the hint.
     struct FixedHinter(&'static str);
@@ -8905,6 +9286,26 @@ mod tests {
             "hint not shown: {painted:?}"
         );
         assert!(!painted.contains("\x1b[8m"), "sent a conceal: {painted:?}");
+    }
+
+    /// Each line a hint continues onto starts with the multiline indicator, as
+    /// the buffer's own lines do (#530), and accepting it inserts the hint raw.
+    #[test]
+    fn a_multi_line_hint_paints_the_multiline_indicator() {
+        let mut rl = Reedline::create()
+            .with_ansi_colors(false)
+            .with_hinter(Box::new(FixedHinter("a\nb")));
+        rl.painter = Painter::new(W::capture());
+        // Sized, or the painter takes every buffer for one too tall to show.
+        rl.painter.handle_resize(40, 10);
+        rl.painter.force_prompt_anchored_for_test(0);
+        rl.run_edit_commands(&[EditCommand::InsertString("echo ".into())]);
+        rl.repaint(&DefaultPrompt::default()).unwrap();
+        let painted = String::from_utf8_lossy(rl.painter.captured_for_test()).into_owned();
+        assert!(painted.contains("a\r\n::: b"), "no indicator: {painted:?}");
+
+        send(&mut rl, ReedlineEvent::HistoryHintComplete);
+        assert_eq!(rl.current_buffer_contents(), "echo a\nb");
     }
 
     fn vi_with_hint(hint: &'static str) -> Reedline {

@@ -880,7 +880,8 @@ pub fn style_suggestion(
 }
 
 /// If `match_indices` is given, then returns that. Otherwise, tries to find `typed_text`
-/// inside `value`, then returns the indices for that substring.
+/// inside `value`, then returns the indices of the original graphemes that overlap
+/// that case-insensitive substring match.
 pub fn get_match_indices<'a>(
     value: &str,
     match_indices: &'a Option<Vec<usize>>,
@@ -889,12 +890,36 @@ pub fn get_match_indices<'a>(
     if let Some(inds) = match_indices {
         Cow::Borrowed(inds)
     } else {
-        let Some(match_pos) = value.to_lowercase().find(&typed_text.to_lowercase()) else {
-            // Don't highlight anything if no match
+        let typed_text = typed_text.to_lowercase();
+        if typed_text.is_empty() {
+            return Cow::Owned(vec![]);
+        }
+        let Some(match_start) = value.to_lowercase().find(&typed_text) else {
+            // Don't highlight anything if no match.
             return Cow::Owned(vec![]);
         };
-        let match_len = typed_text.graphemes(true).count();
-        Cow::Owned((match_pos..match_pos + match_len).collect())
+        let match_end = match_start + typed_text.len();
+        let mut folded_end = 0;
+        let mut indices = Vec::new();
+        // Search offsets are bytes in the lowercased string, but the menu styles
+        // graphemes in the original string. Lowercasing can change byte lengths
+        // (for example, İ becomes i plus a combining dot), so map overlapping
+        // lowercased byte ranges back to the original graphemes.
+        for (index, grapheme) in value.graphemes(true).enumerate() {
+            let folded_start = folded_end;
+            folded_end += grapheme
+                .chars()
+                .flat_map(char::to_lowercase)
+                .map(char::len_utf8)
+                .sum::<usize>();
+            if folded_start >= match_end {
+                break;
+            }
+            if folded_end > match_start {
+                indices.push(index);
+            }
+        }
+        Cow::Owned(indices)
     }
 }
 
@@ -1080,6 +1105,52 @@ mod tests {
         .into();
         let escaped = escape_suggestions(values.clone());
         assert!(std::sync::Arc::ptr_eq(&values, &escaped));
+    }
+
+    #[rstest]
+    #[case::ascii("foobar", "ob", vec![2, 3])]
+    #[case::accented_prefix("numéro.txt", "ro", vec![4, 5])]
+    #[case::cjk_prefix("\u{65e5}\u{672c}\u{8a9e}.txt", "txt", vec![4, 5, 6])]
+    #[case::emoji_prefix("\u{1f469}\u{200d}\u{1f4bb}report", "re", vec![1, 2])]
+    #[case::combining_prefix("e\u{301}report", "re", vec![1, 2])]
+    #[case::combining_match("e\u{301}report", "\u{301}", vec![0])]
+    #[case::crlf_prefix("a\r\nb", "b", vec![2])]
+    #[case::lowercase_expansion_prefix("İx", "x", vec![1])]
+    #[case::lowercase_expansion_match("İx", "i", vec![0])]
+    #[case::lowercase_expansion_suffix("İx", "\u{307}x", vec![0, 1])]
+    #[case::lowercase_contraction("Kx", "X", vec![1])]
+    #[case::contextual_lowercase("ΟΣ", "ς", vec![1])]
+    #[case::multi_grapheme("aé\u{4e2d}b", "É\u{4e2d}", vec![1, 2])]
+    #[case::no_match("numéro", "z", vec![])]
+    #[case::empty_query("numéro", "", vec![])]
+    #[case::empty_value("", "a", vec![])]
+    fn fallback_match_indices_are_original_graphemes(
+        #[case] value: &str,
+        #[case] typed: &str,
+        #[case] expected: Vec<usize>,
+    ) {
+        assert_eq!(*get_match_indices(value, &None, typed), expected);
+    }
+
+    #[test]
+    fn fallback_highlighting_underlines_the_matching_graphemes() {
+        let indices = get_match_indices("numéro.txt", &None, "ro");
+        let rendered = style_suggestion(
+            "numéro.txt",
+            &indices,
+            &Style::new(),
+            &Style::new().underline(),
+            None,
+        );
+        assert_eq!(rendered, "\x1b[0mnumé\x1b[0m\x1b[4mro\x1b[0m.txt");
+    }
+
+    #[test]
+    fn provided_match_indices_are_borrowed_unchanged() {
+        let provided = Some(vec![1, 3]);
+        let result = get_match_indices("numéro", &provided, "not a substring");
+        assert!(matches!(result, Cow::Borrowed(_)));
+        assert_eq!(*result, vec![1, 3]);
     }
 
     /// A caret cursor rests on the last grapheme of the word, so completion must

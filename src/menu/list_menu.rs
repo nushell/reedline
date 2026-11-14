@@ -394,8 +394,6 @@ impl Menu for ListMenu {
         }
 
         if parsed.remainder.is_empty() {
-            self.query_size = Some(completer.total_completions(parsed.remainder, pos));
-
             let skip = self
                 .pages
                 .iter()
@@ -408,7 +406,9 @@ impl Menu for ListMenu {
                 .get(self.page)
                 .map_or(self.page_size, |page| page.size);
 
-            self.values = escape_suggestions(completer.partial_complete(&input, pos, skip, take));
+            let (total, page) = completer.paged_completions(&input, pos, skip, take);
+            self.query_size = Some(total);
+            self.values = escape_suggestions(page);
         } else {
             self.query_size = None;
 
@@ -522,8 +522,20 @@ impl Menu for ListMenu {
 
                     if let Some(page) = self.pages.get(self.page) {
                         if new_pos >= page.size as u16 {
+                            let page_before = self.page;
                             self.event = Some(MenuEvent::NextPage);
                             self.update_working_details(editor, completer, painter);
+
+                            // A page that grew instead of turning holds the
+                            // next entry now, so select it.
+                            let grown = self.page == page_before
+                                && self
+                                    .pages
+                                    .get(self.page)
+                                    .is_some_and(|page| (new_pos as usize) < page.size);
+                            if grown {
+                                self.row_position = new_pos;
+                            }
                         } else {
                             self.row_position = new_pos;
                         }
@@ -548,6 +560,8 @@ impl Menu for ListMenu {
                     }
                 }
                 MenuEvent::NextPage => {
+                    let page_before = self.page;
+                    let size_before = self.pages.get(self.page).map(|page| page.size);
                     if self.values_until_current_page() <= self.total_values().saturating_sub(1) {
                         if let Some(page) = self.pages.get_mut(self.page) {
                             if page.full {
@@ -566,6 +580,18 @@ impl Menu for ListMenu {
 
                         self.update_values(editor, completer);
                         self.set_actual_page_size(self.printable_entries(painter));
+
+                        // Growing a page the screen has no room for only
+                        // finds out that it is full, so turn it after all.
+                        let filled_up = self.page == page_before
+                            && self
+                                .pages
+                                .get(self.page)
+                                .is_some_and(|page| page.full && Some(page.size) <= size_before);
+                        if filled_up {
+                            self.event = Some(MenuEvent::NextPage);
+                            self.update_working_details(editor, completer, painter);
+                        }
                     } else {
                         self.row_position = 0;
                         self.page = 0;
@@ -700,9 +726,10 @@ fn count_digits(mut n: usize) -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use crate::{painting::W, Span};
+    use crate::{painting::W, CompletionResult, Span};
 
     use super::*;
+    use rstest::rstest;
 
     // A status line takes its rows between the prompt and the menu, so the
     // menu fits fewer entries on the screen.
@@ -814,6 +841,37 @@ mod tests {
         );
     }
 
+    /// Counts `complete` calls, which a menu `source` closure or an external
+    /// completer feels as one evaluation each.
+    #[derive(Default)]
+    struct CountingCompleter {
+        complete_calls: usize,
+    }
+
+    impl Completer for CountingCompleter {
+        fn complete(&mut self, _line: &str, _pos: usize) -> CompletionResult {
+            self.complete_calls += 1;
+            CompletionResult::fresh(Vec::new())
+        }
+    }
+
+    /// An empty query asks the completer once per refresh, on activation and
+    /// on an edit alike (nushell/nushell#19134 ran it twice).
+    #[test]
+    fn empty_query_completes_once_per_refresh() {
+        let mut menu = ListMenu::default();
+        let mut editor = Editor::default();
+        let mut completer = CountingCompleter::default();
+
+        menu.menu_event(MenuEvent::Activate(false));
+        menu.update_values(&mut editor, &mut completer);
+        assert_eq!(completer.complete_calls, 1);
+
+        menu.menu_event(MenuEvent::Edit(false));
+        menu.update_values(&mut editor, &mut completer);
+        assert_eq!(completer.complete_calls, 2);
+    }
+
     struct FakeCompleter {
         completions: Vec<String>,
     }
@@ -839,6 +897,23 @@ mod tests {
                     .collect::<Vec<_>>(),
             )
         }
+    }
+
+    /// The deprecated defaults answer from `paged_completions`, so a completer
+    /// overriding only that still serves callers on the old methods.
+    #[test]
+    #[allow(deprecated)]
+    fn deprecated_paging_defaults_follow_paged_completions() {
+        let mut completer = FakeCompleter {
+            completions: vec!["a".into(), "b".into(), "c".into()],
+        };
+
+        assert_eq!(completer.total_completions("", 0), 3);
+        let page = completer.partial_complete("", 0, 1, 1);
+        assert_eq!(
+            page.iter().map(|s| s.value.as_str()).collect::<Vec<_>>(),
+            ["b"]
+        );
     }
 
     fn setup_menu(
@@ -908,5 +983,127 @@ mod tests {
         assert_eq!(menu.selection_at(0, 7, 100, 100), None);
         assert_eq!(menu.page, 0);
         assert_eq!(page.size, 4);
+    }
+
+    /// Sends `event` on a 5-row terminal, where a page holds two entries,
+    /// until the selection has moved `moves` times, and returns the selected
+    /// value after each move. Counting moves rather than presses keeps the
+    /// tests off the press that only finds out a page is full.
+    fn walk(menu: &mut ListMenu, event: fn() -> MenuEvent, moves: usize) -> Vec<String> {
+        let mut editor = Editor::default();
+        let mut completer = FakeCompleter::new(&["a", "b", "c", "d", "e"]);
+        let mut painter = Painter::new(W::sink());
+        painter.handle_resize(40, 5);
+        if menu.pages.is_empty() {
+            menu.menu_event(MenuEvent::Activate(false));
+            menu.update_working_details(&mut editor, &mut completer, &painter);
+        }
+
+        let mut last = menu.get_value().map(|s| s.value).unwrap_or_default();
+        let mut seen: Vec<String> = Vec::new();
+        for _ in 0..4 * moves {
+            if seen.len() == moves {
+                break;
+            }
+            menu.menu_event(event());
+            menu.update_working_details(&mut editor, &mut completer, &painter);
+            let value = menu.get_value().map(|s| s.value).unwrap_or_default();
+            if value != last {
+                seen.push(value.clone());
+                last = value;
+            }
+        }
+        seen
+    }
+
+    #[test]
+    fn next_walks_every_page_in_order() {
+        let mut menu = ListMenu::default().with_page_size(2);
+        assert_eq!(
+            walk(&mut menu, || MenuEvent::NextElement, 4),
+            ["b", "c", "d", "e"]
+        );
+        assert!(menu
+            .menu_string(5, false)
+            .starts_with("4: >E\r\nPage 3: records 4 - 4  total: 5"));
+    }
+
+    #[test]
+    fn previous_walks_back_and_wraps_to_the_last_page() {
+        let mut menu = ListMenu::default().with_page_size(2);
+        walk(&mut menu, || MenuEvent::NextElement, 4);
+        assert_eq!(
+            walk(&mut menu, || MenuEvent::PreviousElement, 6),
+            ["d", "c", "b", "a", "e", "d"]
+        );
+        assert_eq!(
+            menu.menu_string(5, false),
+            "2: c\r\n3: >D\r\nPage 2: records 2 - 3  total: 5  [FULL]"
+        );
+    }
+
+    #[rstest]
+    #[case::continued("x\ny", 5, "0: >X\r\n:::Y\r\n")]
+    #[case::cut_at_max_lines("x\ny\nz", 2, "0: >X\r\n:::Y\r\n:::...\r\n")]
+    fn multiline_entries_continue_behind_the_marker(
+        #[case] value: &str,
+        #[case] max_lines: u16,
+        #[case] entry: &str,
+    ) {
+        let mut menu = ListMenu::default().with_max_entry_lines(max_lines);
+        setup_menu(
+            &mut menu,
+            &mut Editor::default(),
+            &mut FakeCompleter::new(&[value]),
+            (40, 20),
+        );
+        assert_eq!(
+            menu.menu_string(20, false),
+            format!("{entry}Page 1: records 0 - 0  total: 1  ")
+        );
+    }
+
+    #[rstest]
+    #[case::plain(false, "PAGE NOT FOUND".to_string())]
+    #[case::colored(true, format!(
+        "{}PAGE NOT FOUND{RESET}",
+        MenuSettings::default().color.selected_text_style.prefix()
+    ))]
+    fn inactive_menu_has_no_page(#[case] use_ansi_coloring: bool, #[case] msg: String) {
+        assert_eq!(ListMenu::default().menu_string(10, use_ansi_coloring), msg);
+    }
+
+    /// Selected value after each `event`, on a terminal `rows` high with
+    /// pages of two entries over `a` to `e`.
+    fn selections(rows: u16, event: fn() -> MenuEvent, presses: usize) -> Vec<String> {
+        let mut menu = ListMenu::default().with_page_size(2);
+        let mut editor = Editor::default();
+        let mut completer = FakeCompleter::new(&["a", "b", "c", "d", "e"]);
+        let painter = setup_menu(&mut menu, &mut editor, &mut completer, (40, rows));
+
+        (0..presses)
+            .map(|_| {
+                menu.menu_event(event());
+                menu.update_working_details(&mut editor, &mut completer, &painter);
+                menu.get_value().map(|s| s.value).unwrap_or_default()
+            })
+            .collect()
+    }
+
+    /// Every press moves the selection, also the first one past the end of
+    /// a page, whether the page then fills the screen or grows on it.
+    #[rstest]
+    #[case::page_fills_the_screen(5)]
+    #[case::page_grows_on_the_screen(20)]
+    fn every_next_press_moves_the_selection(#[case] rows: u16) {
+        assert_eq!(
+            selections(rows, || MenuEvent::NextElement, 5),
+            ["b", "c", "d", "e", "a"]
+        );
+    }
+
+    #[test]
+    fn next_page_press_moves_to_the_next_page() {
+        assert_eq!(selections(5, || MenuEvent::NextPage, 2), ["c", "e"]);
     }
 }

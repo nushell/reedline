@@ -54,7 +54,8 @@ tables.
 | --- | --- |
 | `Up`, `Ctrl-p` | Move up in an open menu, otherwise move one line up, walking history backwards from the first line |
 | `Down`, `Ctrl-n` | Move down in an open menu, otherwise move one line down, walking history forwards from the last line |
-| `PageUp`, `PageDown` | Move one page up or down in an open menu, stopping at the first or last entry |
+| `PageUp` | Move one page up in an open menu, otherwise jump to the oldest history entry |
+| `PageDown` | Move one page down in an open menu, otherwise leave the history for the line being typed |
 | `Left` | Move left in an open menu, otherwise move one grapheme left |
 | `Right` | Accept a history hint, otherwise move right in an open menu, otherwise move one grapheme right |
 | `Ctrl-Left` | Move one word left |
@@ -68,6 +69,10 @@ tables.
 
 `Shift-Alt-,` and `Shift-Alt-.` are alternative spellings of `Alt-<` and
 `Alt->` for terminals speaking the Kitty keyboard protocol.
+
+`PageUp` honors the prefix the history walk searches for: with `git` typed, it
+jumps to the oldest entry starting with `git`. A menu page stops at the first
+or last entry.
 
 ### Editing
 
@@ -133,7 +138,12 @@ Reedline's default when no edit mode is configured. All four
 | `Ctrl-g` | Redo |
 | `Alt-u` | Uppercase the whole word under the cursor |
 | `Alt-l` | Lowercase the whole word under the cursor |
-| `Alt-c` | Capitalize the grapheme under the cursor |
+| `Alt-c` | Capitalize the whole word under the cursor |
+
+`Alt-u`, `Alt-l` and `Alt-c` act on the whole word even with the cursor in the
+middle of it or right after it. Emacs and readline change case from the cursor
+forward instead, so on `hELLO` with the cursor on `E` they give `hEllo` where
+reedline gives `Hello`.
 
 ## Vi mode
 

@@ -21,7 +21,7 @@ use {
 /// external-editor (`edit-command-line`) round-trip, and completer-supplied text
 /// can all introduce `\r` (e.g. a `\r\n` from a Windows editor). Line, word, and
 /// cursor logic therefore treats `\r`/`\r\n` as a terminator throughout (see
-/// [`core_editor::line`], [`word`], and the rest policies). Do not drop those
+/// the `line` and `word` modules and the rest policies). Do not drop those
 /// guards on the assumption that the buffer is CR-free.
 #[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub struct LineBuffer {
@@ -524,25 +524,43 @@ impl LineBuffer {
     }
 
     /// Range over the current line (the one the cursor head is on). See
-    /// [`line_range_at`](Self::line_range_at).
+    /// `line_range_at`.
     pub fn current_line_range(&self) -> Range<usize> {
         self.line_range_at(self.cursor.head())
     }
 
+    /// Replaces the whole word under the cursor with `change` of it and moves
+    /// the insertion point past it.
+    fn map_current_word(&mut self, change: impl FnOnce(&str) -> String) {
+        let change_range = self.current_word_range();
+        let changed = change(&self.get_buffer()[change_range.clone()]);
+        self.replace_range(change_range, &changed);
+        self.set_head(self.word_boundary(WordKind::Unicode, WordEdge::End, Direction::Forward));
+    }
+
     /// Uppercases the current word
     pub fn uppercase_word(&mut self) {
-        let change_range = self.current_word_range();
-        let uppercased = self.get_buffer()[change_range.clone()].to_uppercase();
-        self.replace_range(change_range, &uppercased);
-        self.set_head(self.word_boundary(WordKind::Unicode, WordEdge::End, Direction::Forward));
+        self.map_current_word(str::to_uppercase);
     }
 
     /// Lowercases the current word
     pub fn lowercase_word(&mut self) {
-        let change_range = self.current_word_range();
-        let uppercased = self.get_buffer()[change_range.clone()].to_lowercase();
-        self.replace_range(change_range, &uppercased);
-        self.set_head(self.word_boundary(WordKind::Unicode, WordEdge::End, Direction::Forward));
+        self.map_current_word(str::to_lowercase);
+    }
+
+    /// Capitalizes the current word: upper cases its first character and
+    /// lower cases the rest. Like [`Self::uppercase_word`] it acts on the
+    /// whole word under the cursor and moves the insertion point past it.
+    pub fn capitalize_word(&mut self) {
+        self.map_current_word(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                Some(first) => {
+                    first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
+                }
+                None => String::new(),
+            }
+        });
     }
 
     /// Switches the ASCII case of the current char
@@ -1263,6 +1281,32 @@ mod test {
         let mut line_buffer = buffer_with(input);
         line_buffer.set_insertion_point(in_location);
         line_buffer.uppercase_word();
+
+        let mut expected = buffer_with(output);
+        expected.set_insertion_point(out_location);
+
+        assert_eq!(expected, line_buffer);
+        line_buffer.assert_valid();
+    }
+
+    #[rstest]
+    #[case("This is a test", 13, "This is a Test", 14)]
+    #[case("This is a test", 10, "This is a Test", 14)]
+    #[case("", 0, "", 0)]
+    #[case("this", 0, "This", 4)]
+    #[case("this", 4, "This", 4)]
+    #[case("ALREADY", 0, "Already", 7)]
+    #[case("hELLO world", 0, "Hello world", 5)]
+    #[case("ärger", 0, "Ärger", 6)]
+    fn capitalize_word_works(
+        #[case] input: &str,
+        #[case] in_location: usize,
+        #[case] output: &str,
+        #[case] out_location: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(in_location);
+        line_buffer.capitalize_word();
 
         let mut expected = buffer_with(output);
         expected.set_insertion_point(out_location);

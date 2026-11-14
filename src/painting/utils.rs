@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 /// Ensures input uses CRLF line endings.
 ///
@@ -184,6 +184,56 @@ pub(crate) fn estimate_single_line_wraps(line: &str, terminal_columns: u16) -> u
 /// Compute the line width for ANSI escaped text
 pub(crate) fn line_width(line: &str) -> usize {
     strip_ansi(line).width()
+}
+
+/// The columns `line` takes, when every terminal agrees on them and the line
+/// stays clear of the right margin. `None` otherwise.
+///
+/// [`line_width`] is an estimate: a terminal may draw an ambiguous-width
+/// character, a joined emoji or a bare combining mark wider or narrower than
+/// counted. That is good enough to lay text out, but not to erase behind it,
+/// where a column short takes the last glyph and a column long leaves one of
+/// the previous paint. So this answers only for what leaves no room to
+/// disagree: graphemes of a single character that is not a control, is not
+/// zero-width, and has the same width under both East Asian conventions.
+///
+/// One gap is known and accepted: `unicode-width` counts the letters of the
+/// East Asian Ambiguous class (accented Latin, Greek, Cyrillic) as narrow
+/// under both conventions, so they pass. On a terminal set to draw ambiguous
+/// characters wide, a row holding one is measured a column short and the
+/// erase takes the end of its text. Refusing them would need the East Asian
+/// Width table itself, and would send most non-English text back to erasing
+/// first.
+///
+/// A line reaching the margin is refused as well: the wrap is pending there,
+/// and an erase with it pending takes the last cell on some terminals.
+///
+/// `line` is one row's text without its line break. SGR takes no columns.
+/// Any other escape sequence is refused, as every control is: it may move the
+/// cursor, which [`strip_ansi`] would hide by dropping it.
+pub(crate) fn certain_line_width(line: &str, terminal_columns: u16) -> Option<u16> {
+    let mut columns = 0u16;
+    let mut rest = line;
+    while !rest.is_empty() {
+        if let Some(len) = sgr_len(rest) {
+            rest = &rest[len..];
+            continue;
+        }
+        let grapheme = rest.graphemes(true).next()?;
+        let mut chars = grapheme.chars();
+        let (Some(char), None) = (chars.next(), chars.next()) else {
+            return None;
+        };
+        // `None` for a control, which covers `ESC` and so every sequence
+        // that is not SGR.
+        let width = char.width().filter(|width| *width > 0)?;
+        if char.width_cjk() != Some(width) {
+            return None;
+        }
+        columns = columns.checked_add(u16::try_from(width).ok()?)?;
+        rest = &rest[grapheme.len()..];
+    }
+    (columns < terminal_columns).then_some(columns)
 }
 
 /// Columns from one tab stop to the next, the terminal default.
@@ -448,6 +498,38 @@ mod test {
         #[case] expected: Option<u16>,
     ) {
         assert_eq!(deferred_wrap_row([printed], columns), expected);
+    }
+
+    #[rstest]
+    #[case::empty("", Some(0))]
+    #[case::ascii("> hello", Some(7))]
+    #[case::sgr_takes_no_columns("\x1b[31m> \x1b[0mhi", Some(4))]
+    #[case::wide("日本", Some(4))]
+    #[case::one_column_short_of_the_margin("123456789", Some(9))]
+    // Refused: the wrap is pending on the margin.
+    #[case::on_the_margin("1234567890", None)]
+    #[case::past_the_margin("12345678901", None)]
+    // Refused: terminals do not agree on these.
+    #[case::ambiguous_width("\u{a7} 1", None)]
+    #[case::private_use("\u{e0a0} main", None)]
+    #[case::combining_mark("e\u{301}", None)]
+    #[case::joined_emoji("\u{1f468}\u{200d}\u{1f469}", None)]
+    #[case::emoji_presentation("\u{2764}\u{fe0f}", None)]
+    #[case::zero_width("a\u{200b}b", None)]
+    // Accepted although ambiguous: the known gap, letters count as narrow.
+    #[case::accented_latin("caf\u{e9}", Some(4))]
+    #[case::greek("\u{3bb}", Some(1))]
+    #[case::cyrillic("\u{43f}\u{440}", Some(2))]
+    // Refused: moves the cursor instead of taking columns.
+    #[case::tab("a\tb", None)]
+    #[case::carriage_return("a\rb", None)]
+    #[case::cursor_forward("a\x1b[5Cb", None)]
+    #[case::hyperlink("\x1b]8;;http://x\x1b\\a\x1b]8;;\x1b\\", None)]
+    fn certain_line_width_answers_only_when_terminals_agree(
+        #[case] line: &str,
+        #[case] expected: Option<u16>,
+    ) {
+        assert_eq!(certain_line_width(line, 10), expected);
     }
 
     /// ANSI is stripped before layout, and a combining mark joins the grapheme

@@ -6,8 +6,6 @@ use crate::{
     HistorySessionId, Result,
 };
 
-#[cfg(target_os = "android")]
-use std::ops::{Deref, DerefMut};
 use std::{
     collections::VecDeque,
     fs::OpenOptions,
@@ -25,6 +23,8 @@ pub const NEWLINE_ESCAPE: &str = "<\\n>";
 /// Similar to bash's behavior without HISTTIMEFORMAT.
 /// (See <https://www.gnu.org/software/bash/manual/html_node/Bash-History-Facilities.html>)
 /// If the history is associated to a file all new changes within a given history capacity will be written to disk when History is dropped.
+/// Each write takes an exclusive lock on the file so concurrent sessions do not interleave.
+/// On a filesystem that cannot lock, such as NFS without a lock daemon, the write goes ahead unlocked.
 #[derive(Debug)]
 pub struct FileBackedHistory {
     capacity: usize,
@@ -218,22 +218,21 @@ impl History for FileBackedHistory {
             let mut opts = OpenOptions::new();
             opts.create(true).write(true).read(true).truncate(false);
 
+            let file = opts.open(fname)?;
+            // Any lock error falls through to an unlocked write (#502): a
+            // filesystem that cannot lock cannot keep sessions apart anyway.
             cfg_select! {
                 target_os = "android" => {
-                    let mut f_lock = fd_lock::RwLock::new(opts.open(fname)?);
-                    let mut writer_guard = f_lock.write()?;
+                    let mut f_lock = fd_lock::RwLock::new(&file);
+                    let _guard = f_lock.write().ok();
                 },
                 _ => {
-                    let mut file = opts.open(fname)?;
-                    file.lock()?;
+                    let _ = file.lock();
                 }
             }
 
             let (mut foreign_entries, truncate) = {
-                let reader = cfg_select! {
-                    target_os = "android" => BufReader::new(writer_guard.deref()),
-                    _ => BufReader::new(&file)
-                };
+                let reader = BufReader::new(&file);
 
                 let mut from_file = reader
                     .lines()
@@ -252,10 +251,7 @@ impl History for FileBackedHistory {
             };
 
             {
-                let mut writer = cfg_select! {
-                    target_os = "android" => BufWriter::new(writer_guard.deref_mut()),
-                    _ => BufWriter::new(&file)
-                };
+                let mut writer = BufWriter::new(&file);
 
                 if truncate {
                     writer.rewind()?;
@@ -274,9 +270,7 @@ impl History for FileBackedHistory {
                 writer.flush()?;
             }
             if truncate {
-                #[cfg(target_os = "android")]
-                let file = writer_guard.deref_mut();
-                let file_len = file.stream_position()?;
+                let file_len = (&file).stream_position()?;
                 file.set_len(file_len)?;
             }
 
@@ -297,6 +291,7 @@ impl History for FileBackedHistory {
 impl FileBackedHistory {
     /// Creates a new in-memory history that remembers `n <= capacity` elements
     ///
+    /// A capacity of 0 remembers nothing, which disables history.
     pub fn new(capacity: usize) -> Result<Self> {
         if capacity == usize::MAX {
             return Err(ReedlineError(ReedlineErrorVariants::OtherHistoryError(
@@ -318,6 +313,8 @@ impl FileBackedHistory {
     /// History file format: commands separated by new lines.
     /// If file exists file will be read otherwise empty file will be created.
     ///
+    /// Loading trims the file to `capacity` entries, so a capacity of 0 empties an
+    /// existing file. To keep no history, use [`FileBackedHistory::new`] instead.
     ///
     /// **Side effects:** creates all nested directories to the file
     ///
@@ -328,6 +325,37 @@ impl FileBackedHistory {
         }
         hist.file = Some(file);
         hist.sync()?;
+        Ok(hist)
+    }
+
+    /// Loads a history file without ever writing to it.
+    ///
+    /// Use this when [`FileBackedHistory::with_file`] fails because the file cannot be
+    /// written, for example on a read-only or full filesystem. The returned history keeps
+    /// the newest `capacity` entries of the file in memory, takes new entries as usual,
+    /// and never writes them back: they are gone once the history is dropped.
+    ///
+    /// The history file is never modified, created, truncated or locked, and no other
+    /// file is written. This holds on a full filesystem as well.
+    ///
+    /// A missing file loads as an empty history.
+    pub fn with_file_read_only(capacity: usize, file: PathBuf) -> Result<Self> {
+        let mut hist = Self::new(capacity)?;
+        let file = match std::fs::File::open(file) {
+            Ok(file) => file,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(hist),
+            Err(err) => return Err(err.into()),
+        };
+        for line in BufReader::new(file).lines() {
+            let line = line?;
+            if hist.entries.len() == capacity {
+                if capacity == 0 {
+                    break;
+                }
+                hist.entries.pop_front();
+            }
+            hist.entries.push_back(decode_entry(&line));
+        }
         Ok(hist)
     }
 
