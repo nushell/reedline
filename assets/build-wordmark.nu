@@ -23,6 +23,13 @@ def build [theme: string, ink: string, fonts?: path] {
     let svg = open --raw $out
         | str replace $cursor_fill $'($cursor_fill) class="cursor"'
         | str replace --regex '(<svg[^>]*>)' ('${1}' + $style)
+    # A Typst release that writes the fill or the root tag differently would
+    # otherwise give a wordmark that silently no longer blinks.
+    let tagged = $svg | str contains 'class="cursor"'
+    let styled = $svg | str contains '<style>'
+    if not ($tagged and $styled) {
+        error make {msg: $"($out): cursor or root tag not found, the blink was not added"}
+    }
     $svg | save --force $out
     print $out
 }
