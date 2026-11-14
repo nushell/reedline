@@ -16,8 +16,8 @@ use reedline::{
 use std::{borrow::Cow, io};
 
 /// [`DefaultPrompt`] with a footer. For custom footers, implement
-/// [`Prompt::render_prompt_footer`]: reedline asks for it on every repaint and
-/// draws each `\n`-separated line on its own row.
+/// [`Prompt::render_prompt_footer`]: reedline asks for it on every repaint with
+/// the screen width and draws each `\n`-separated line on its own row.
 struct FooterPrompt {
     prompt: DefaultPrompt,
     entered: usize,
@@ -48,11 +48,17 @@ impl Prompt for FooterPrompt {
             .render_prompt_history_search_indicator(history_search)
     }
 
-    fn render_prompt_footer(&self) -> Cow<'_, str> {
+    fn render_prompt_footer(&self, screen_width: u16) -> Cow<'_, str> {
         let entered = Style::new()
             .fg(Color::Cyan)
             .paint(format!("{} lines entered", self.entered));
-        let help = Style::new().dimmed().paint("Ctrl-D to exit");
+        // The width lets the help sit on the right edge. One column short of
+        // it, since a line reaching the margin wraps on some terminals.
+        let help = "Ctrl-D to exit";
+        let pad = usize::from(screen_width)
+            .saturating_sub(help.len())
+            .saturating_sub(1);
+        let help = Style::new().dimmed().paint(format!("{:pad$}{help}", ""));
         format!("{entered}\n{help}").into()
     }
 }
