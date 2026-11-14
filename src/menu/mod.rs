@@ -757,4 +757,71 @@ mod tests {
         }
         assert_eq!(settings.effective_input_mode(), expected);
     }
+
+    /// Answers every query with one suggestion naming where it came from.
+    struct Source(&'static str);
+
+    impl Completer for Source {
+        fn complete(&mut self, _line: &str, pos: usize) -> crate::CompletionResult {
+            crate::CompletionResult::fresh(vec![Suggestion {
+                value: self.0.to_string(),
+                span: crate::Span { start: 0, end: pos },
+                ..Default::default()
+            }])
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum Refresh {
+        Values,
+        WorkingDetails,
+        PartialCompletion,
+    }
+
+    /// Each variant asks its own source: the engine's completer, the history,
+    /// or the completer it was built with. That holds for every way the engine
+    /// refreshes a menu.
+    #[rstest]
+    fn each_variant_completes_from_its_own_source(
+        #[values(Refresh::Values, Refresh::WorkingDetails, Refresh::PartialCompletion)]
+        refresh: Refresh,
+    ) {
+        use crate::{FileBackedHistory, HistoryItem, Painter, UndoBehavior};
+
+        let mut history = FileBackedHistory::new(4).unwrap();
+        history
+            .save(HistoryItem::from_command_line("from history"))
+            .unwrap();
+        let menu = || Box::new(ColumnarMenu::default()) as Box<dyn Menu>;
+
+        for (mut menu, source) in [
+            (ReedlineMenu::EngineCompleter(menu()), "from engine"),
+            (ReedlineMenu::HistoryMenu(menu()), "from history"),
+            (
+                ReedlineMenu::WithCompleter {
+                    menu: menu(),
+                    completer: Box::new(Source("from own")),
+                },
+                "from own",
+            ),
+        ] {
+            let mut editor = Editor::default();
+            editor.set_buffer("from".to_string(), UndoBehavior::CreateUndoPoint);
+            let mut engine = Source("from engine");
+            match refresh {
+                Refresh::Values => menu.update_values(&mut editor, &mut engine, &history),
+                Refresh::WorkingDetails => {
+                    let mut painter = Painter::new(crate::painting::W::sink());
+                    painter.handle_resize(40, 10);
+                    menu.menu_event(MenuEvent::Activate(false));
+                    menu.update_working_details(&mut editor, &mut engine, &history, &painter);
+                }
+                Refresh::PartialCompletion => {
+                    menu.can_partially_complete(false, &mut editor, &mut engine, &history);
+                }
+            }
+            let values: Vec<_> = menu.get_values().iter().map(|s| s.value.as_str()).collect();
+            assert_eq!(values, [source]);
+        }
+    }
 }

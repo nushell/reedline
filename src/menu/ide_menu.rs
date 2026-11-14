@@ -2248,4 +2248,141 @@ mod tests {
              ╰───╯"
         );
     }
+
+    /// Completions with a description that wraps to three lines at width 5.
+    struct ThreeLineDescription(&'static [&'static str]);
+
+    impl Completer for ThreeLineDescription {
+        fn complete(&mut self, _line: &str, pos: usize) -> crate::CompletionResult {
+            crate::CompletionResult::fresh(
+                self.0
+                    .iter()
+                    .map(|name| Suggestion {
+                        description: Some("one two seven".to_string()),
+                        ..fake_suggestion(name, pos)
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        }
+    }
+
+    fn described_menu(menu: IdeMenu, values: &'static [&'static str]) -> IdeMenu {
+        let mut menu = menu
+            .with_min_description_width(5)
+            .with_max_description_width(5);
+        menu.set_cursor_pos((10, 0));
+        setup_menu(
+            &mut menu,
+            &mut Editor::default(),
+            &mut ThreeLineDescription(values),
+            (40, 20),
+        );
+        menu
+    }
+
+    /// The description box joins the completion box row by row on its side,
+    /// and whichever box is taller keeps the other one's column.
+    #[rstest]
+    #[case::right(
+        DescriptionMode::Right,
+        false,
+        &["ab", "cd"],
+        &["          ab  one  ", "          cd  two  ", "              seven"]
+    )]
+    #[case::right_bordered(
+        DescriptionMode::Right,
+        true,
+        &["ab", "cd"],
+        &[
+            "         ╭───╮ ╭───╮",
+            "         │ab │ │one│",
+            "         │cd │ │two│",
+            "         ╰───╯ │sev│",
+            "               │en │",
+            "               ╰───╯",
+        ]
+    )]
+    #[case::left(
+        DescriptionMode::Left,
+        false,
+        &["ab", "cd", "ef", "gh"],
+        &["    one   ab ", "    two   cd ", "    seven ef ", "          gh "]
+    )]
+    #[case::left_bordered(
+        DescriptionMode::Left,
+        true,
+        &["ab", "cd", "ef", "gh"],
+        &[
+            "   ╭───╮ ╭───╮",
+            "   │one│ │ab │",
+            "   │two│ │cd │",
+            "   │sev│ │ef │",
+            "   │en │ │gh │",
+            "   ╰───╯ ╰───╯",
+        ]
+    )]
+    fn description_is_drawn_beside_the_completions(
+        #[case] mode: DescriptionMode,
+        #[case] border: bool,
+        #[case] values: &'static [&'static str],
+        #[case] rows: &[&str],
+    ) {
+        let menu = IdeMenu::default().with_description_mode(mode);
+        let menu = if border {
+            menu.with_default_border()
+        } else {
+            menu
+        };
+        let menu = described_menu(menu, values);
+        let shown = strip_ansi_escapes::strip_str(menu.menu_string(20, true));
+        assert_eq!(shown.lines().collect::<Vec<_>>(), rows);
+    }
+
+    #[test]
+    fn description_taller_than_its_limit_ends_in_an_ellipsis() {
+        let menu = described_menu(
+            IdeMenu::default()
+                .with_description_mode(DescriptionMode::Right)
+                .with_max_description_height(2),
+            &["ab"],
+        );
+        let shown = strip_ansi_escapes::strip_str(menu.menu_string(20, true));
+        assert_eq!(
+            shown.lines().collect::<Vec<_>>(),
+            ["          ab  one  ", "              ...  "]
+        );
+    }
+
+    /// `with_correct_cursor_pos` lines the completions up with the start of
+    /// the word being completed instead of the cursor.
+    #[rstest]
+    #[case::at_cursor(false, 10)]
+    #[case::at_word_start(true, 8)]
+    fn correct_cursor_pos_moves_the_menu_to_the_word_start(
+        #[case] correct: bool,
+        #[case] space_left: u16,
+    ) {
+        let mut menu = IdeMenu::default().with_correct_cursor_pos(correct);
+        menu.set_cursor_pos((10, 0));
+        let mut editor = Editor::default();
+        editor.set_buffer("ab".to_string(), UndoBehavior::CreateUndoPoint);
+        setup_menu(
+            &mut menu,
+            &mut editor,
+            &mut FakeCompleter::new(&["abcd", "abef"]),
+            (40, 20),
+        );
+        assert_eq!(menu.working_details.space_left, space_left);
+    }
+
+    #[rstest]
+    #[case::plain(false, "NO RECORDS FOUND".to_string())]
+    #[case::colored(true, format!(
+        "{}NO RECORDS FOUND{RESET}",
+        MenuSettings::default().color.selected_text_style.prefix()
+    ))]
+    fn empty_menu_says_so(#[case] use_ansi_coloring: bool, #[case] msg: String) {
+        let menu = IdeMenu::default();
+        assert_eq!(menu.menu_string(10, use_ansi_coloring), msg);
+    }
 }
