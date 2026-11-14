@@ -1724,7 +1724,9 @@ impl Painter {
                         end += len;
                         continue;
                     }
-                    let grapheme = rest.graphemes(true).next().expect("nonempty tail");
+                    let Some(grapheme) = rest.graphemes(true).next() else {
+                        break;
+                    };
                     let drawn = if grapheme == "\r\n" { "\n" } else { grapheme };
                     let ((next_row, next_column), width) =
                         advance_grapheme((row, column), drawn, screen_width);
