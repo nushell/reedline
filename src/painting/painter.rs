@@ -986,10 +986,12 @@ impl Painter {
         };
         let required_lines = block_rows + status_rows;
 
-        // No frame of its own: a paint is far below the writer's buffer and
+        // No frame of its own: a paint normally fits the writer's buffer and
         // goes out as one write, and a multiplexer that handles the frame
         // itself redraws the pane at every end marker, which flickered on
-        // each keystroke (#1302). A frame `print_external_message` left open
+        // each keystroke (#1302). A paint larger than the `BufWriter` buffer
+        // spans several writes with no frame around them, so a terminal may
+        // draw between two of them. A frame `print_external_message` left open
         // is still ended below, even if drawing fails, so a recoverable
         // write error cannot leave updates suspended.
         let painted = (|| -> Result<()> {
