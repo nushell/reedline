@@ -1,14 +1,13 @@
 # Reedline internal developer documentation
 
-**Attention** The README files in the source folders are primarily intended to document the current implementation details and quirks as well as requirements we currently strive towards.
+**Attention** This file is primarily intended to document the current implementation details and quirks as well as requirements we currently strive towards.
 It is not intended as the public documentation for library users!
 While we try to take care that the primary documentation also shared on <https://docs.rs/reedline> stays current with the behavior of the implementation and is doctested accordingly.
-The internal documents may get out of sync more easily and require good will by contributors to stay up to date if systems are refactored.
+This document may get out of sync more easily and requires good will by contributors to stay up to date if systems are refactored.
 
 ## Design requirements
 
-Reedline is currently developed as the bundled line editor for [nushell](https://github.com/nushell/nushell) but tries to remain agnostic of the actual language implementation so it can easily be used for other projects.
-As the feedback loop for nushell project contributors is typically the shortest, we might implicitly favour optimizations or changes driven by nushell's requirements.
+Reedline is primarily developed as the interactive editor for [nushell](https://github.com/nushell/nushell) but tries to remain agnostic of the actual language implementation so it can easily be used for other projects.
 
 ### Core requirements
 

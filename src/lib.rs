@@ -1,12 +1,12 @@
 //! # reedline `\|/`
 //! # A readline replacement written in Rust
 //!
-//! Reedline is a project to create a line editor (like bash's `readline` or
-//! zsh's `zle`) that supports many of the modern conveniences of CLIs,
-//! including syntax highlighting, completions, multiline support, Unicode
-//! support, and more.  It is currently primarily developed as the interactive
-//! editor for [nushell](https://github.com/nushell/nushell) (starting with
-//! `v0.60`) striving to provide a pleasant interactive experience.
+//! Reedline is a line editor in the tradition of bash's `readline` and zsh's
+//! `zle`, built for what people expect from a modern shell: syntax
+//! highlighting, completions, interactive menus, history hints, multiline
+//! editing and more.  It is currently primarily developed as the interactive
+//! editor for [nushell](https://github.com/nushell/nushell), striving to
+//! provide a pleasant interactive experience.
 //!
 //! ## Basic example
 //!
@@ -230,42 +230,25 @@
 //!
 //! ## Crate features
 //!
-//! - `clipboard`: Enable support to use the `SystemClipboard`. Enabling this feature will return a `SystemClipboard` instead of a local clipboard when calling `get_default_clipboard()`.
-//! - `bashisms`: Enable support for special text sequences that recall components from the history. e.g. `!!` and `!$`. For use in shells like `bash` or [`nushell`](https://nushell.sh).
-//! - `sqlite`: Provides the `SqliteBackedHistory` to store richer information in the history. Statically links the required sqlite version.
-//! - `sqlite-dynlib`: Alternative to the feature `sqlite`. Will not statically link. Requires `sqlite >= 3.45.3` to link dynamically!
-//! - `external_printer`: No-op, kept for compatibility. `ExternalPrinter` is always available.
+//! All features are off by default.
 //!
-//! ## Are we prompt yet? (Development status)
+//! - `system_clipboard`: cut, copy and paste to the system clipboard, beside reedline's own cut buffer.
+//! - `bashisms`: history expansion such as `!!` and `!$`.
+//! - `sqlite`: adds `SqliteBackedHistory`, which stores richer information about each entry. Statically links SQLite.
+//! - `sqlite-dynlib`: the same, linked dynamically. Requires `sqlite >= 3.45.3`.
+//! - `libc`: makes crossterm use `libc` instead of `rustix` for its terminal calls.
 //!
-//! Reedline has now all the basic features to become the primary line editor for [nushell](https://github.com/nushell/nushell
-//! )
+//! ## Community and roadmap
 //!
-//! - General editing functionality, that should feel familiar coming from other shells (e.g. bash, fish, zsh).
-//! - Configurable keybindings (emacs-style bindings and basic vi-style).
-//! - Configurable prompt
-//! - Content-aware syntax highlighting.
-//! - Autocompletion (With graphical selection menu or simple cycling inline).
-//! - History with interactive search options (optionally persists to file, can support multiple sessions accessing the same file)
-//! - Fish-style history autosuggestion hints
-//! - Undo support.
-//! - Clipboard integration
-//! - Line completeness validation for seamless entry of multiline command sequences.
+//! Come talk to us in the `#reedline` channel of the [Nushell Discord](https://discord.gg/NtAbbGn).
 //!
-//! ### Areas for future improvements
+//! Where reedline is heading is tracked in the roadmap issues:
 //!
-//! - [ ] Support for Unicode beyond simple left-to-right scripts
-//! - [ ] Easier keybinding configuration
-//! - [ ] Support for more advanced vi commands
-//! - [ ] Visual selection
-//! - [ ] Smooth experience if completion or prompt content takes long to compute
-//! - [ ] Support for a concurrent output stream from background tasks to be displayed, while the input prompt is active. ("Full duplex" mode)
+//! - [Prompt, history, hints and the API](https://github.com/nushell/reedline/issues/1284)
+//! - [Edit modes: emacs, vi and helix](https://github.com/nushell/reedline/issues/1221)
+//! - [Completion menu: actions, insertion and display](https://github.com/nushell/reedline/issues/1283)
 //!
-//! For more ideas check out the [feature discussion](https://github.com/nushell/reedline/issues/63) or hop on the `#reedline` channel of the [nushell discord](https://discordapp.com/invite/NtAbbGn).
-//!
-//! ### Alternatives
-//!
-//! For currently more mature Rust line editing check out:
+//! ## Alternatives
 //!
 //! - [rustyline](https://crates.io/crates/rustyline)
 //!
