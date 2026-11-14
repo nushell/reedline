@@ -306,9 +306,9 @@ pub trait Prompt: Send {
     /// The footer takes the rows below the [`StatusLine`](crate::StatusLine),
     /// above any menu, and is drawn the same way: lines wrap at the screen
     /// width, control characters show escaped, SGR is kept while coloring is
-    /// on. When the screen cannot fit both the footer gives way first, and
-    /// like the status line it is hidden with the hint once the line is
-    /// submitted.
+    /// on. When the screen cannot fit both, or a menu needs the rows, the
+    /// footer gives way first. Like the status line it is hidden in history
+    /// search, and with the hint once the line is submitted.
     fn render_prompt_footer(&self) -> Cow<'_, str> {
         Cow::Borrowed("")
     }
