@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/nushell/reedline/main/assets/wordmark-dark.svg">
-    <img src="./assets/wordmark-light.svg" alt="reedline" width="320">
+    <img src="https://raw.githubusercontent.com/nushell/reedline/main/assets/wordmark-light.svg" alt="reedline" width="320">
   </picture>
 </p>
 
