@@ -303,13 +303,19 @@ pub trait Prompt: Send {
 
     /// Lines painted below the input, separated by `\n`
     ///
+    /// `screen_width` is the terminal's width in columns, for a footer that
+    /// aligns or truncates its lines, as [`StatusLine::status`] gets it.
+    ///
     /// The footer takes the rows below the [`StatusLine`](crate::StatusLine),
     /// above any menu, and is drawn the same way: lines wrap at the screen
     /// width, control characters show escaped, SGR is kept while coloring is
     /// on. When the screen cannot fit both, or a menu needs the rows, the
     /// footer gives way first. Like the status line it is hidden in history
     /// search, and with the hint once the line is submitted.
-    fn render_prompt_footer(&self) -> Cow<'_, str> {
+    ///
+    /// [`StatusLine::status`]: crate::StatusLine::status
+    fn render_prompt_footer(&self, screen_width: u16) -> Cow<'_, str> {
+        let _ = screen_width;
         Cow::Borrowed("")
     }
 }

@@ -3500,7 +3500,7 @@ impl Reedline {
         // line and the prompt footer here. Measured only with one to show,
         // since the measure walks the whole buffer.
         let screen_width = self.painter.screen_width();
-        let footer = prompt.render_prompt_footer();
+        let footer = prompt.render_prompt_footer(screen_width);
         let status_room = if (self.status_line.is_some() || !footer.is_empty()) && !self.hide_hints
         {
             // An open menu hides the hint, so measure the block the painter
@@ -10154,8 +10154,9 @@ mod tests {
         ) -> Cow<'_, str> {
             self.0.render_prompt_history_search_indicator(search)
         }
-        fn render_prompt_footer(&self) -> Cow<'_, str> {
-            self.1.into()
+        fn render_prompt_footer(&self, screen_width: u16) -> Cow<'_, str> {
+            // `{width}` stands in for the width the footer is asked with.
+            self.1.replace("{width}", &screen_width.to_string()).into()
         }
     }
 
@@ -10239,6 +10240,16 @@ mod tests {
         let status_at = output.find(STATUS_TEXT).expect("status drawn");
         let footer_at = output.find(FOOTER_TEXT).expect("footer drawn");
         assert_eq!(&output[status_at + STATUS_TEXT.len()..footer_at], "\r\n");
+    }
+
+    #[test]
+    fn footer_is_asked_with_the_screen_width() {
+        let (mut rl, _) = engine_with_status_line();
+        let prompt = FooterPrompt(DefaultPrompt::default(), "width={width}");
+
+        let output = repaint_output_with(&mut rl, &prompt, 10);
+
+        assert!(output.contains("width=80"), "{output:?}");
     }
 
     #[test]
