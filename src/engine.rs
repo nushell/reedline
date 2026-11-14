@@ -35,6 +35,7 @@ use {
         terminal_extensions::{
             bracketed_paste::BracketedPasteGuard,
             kitty::KittyProtocolGuard,
+            raw_mode,
             semantic_prompt::{Osc133ClickEventsMarkers, SemanticPromptMarkers},
             tty_mode::TtyModeGuard,
         },
@@ -468,7 +469,7 @@ impl RepaintSignal {
 impl Drop for Reedline {
     fn drop(&mut self) {
         if self.cursor_shapes.is_some() {
-            let _ignore = terminal::enable_raw_mode();
+            let _ignore = raw_mode::enable();
             let mut stdout = std::io::stdout();
             let _ignore = stdout.queue(SetCursorStyle::DefaultUserShape);
             let _ignore = stdout.flush();
@@ -1289,7 +1290,7 @@ impl Reedline {
     /// Returns a [`std::io::Result`] in which the `Err` type is [`std::io::Result`]
     /// and the `Ok` variant wraps a [`Signal`] which handles user inputs.
     pub fn read_line(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
-        terminal::enable_raw_mode()?;
+        raw_mode::enable()?;
         self.bracketed_paste.enter();
         self.kitty_protocol.enter();
 
