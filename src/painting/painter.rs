@@ -2075,6 +2075,19 @@ impl Painter {
     pub(crate) fn captured_for_test(&self) -> &[u8] {
         self.stdout.captured()
     }
+
+    /// Bytes something other than the painter writes to a [`W::screen`]
+    /// terminal, as host code running in the background can.
+    #[cfg(test)]
+    pub(crate) fn host_output_for_test(&mut self, bytes: &[u8]) {
+        self.stdout.terminal_screen().feed(bytes);
+    }
+
+    /// The rows a [`W::screen`] terminal shows.
+    #[cfg(test)]
+    pub(crate) fn screen_rows_for_test(&mut self) -> Vec<String> {
+        self.stdout.terminal_screen().rows()
+    }
 }
 
 #[cfg(test)]
