@@ -2374,7 +2374,10 @@ impl Reedline {
                             // NO OP
                         }
                         EventStatus::Exits(signal) => {
-                            exit_signal = Some(signal);
+                            // Keep the first exit; later exits are dropped so
+                            // a Submit is not overwritten by a trailing host
+                            // command.
+                            exit_signal.get_or_insert(signal);
                         }
                     }
                 }
@@ -10046,34 +10049,28 @@ mod tests {
         assert!(!output.contains("ls28"));
     }
 
-    /// A `Multiple` that contains an edit followed by CtrlC applies the edit
-    /// before returning the exit signal. Before the fix, the exit was returned
-    /// immediately and the edit was lost.
+    /// The first exit in a `Multiple` wins: a `CtrlC` is not overwritten by a
+    /// trailing `CtrlD`.
     #[test]
-    fn multiple_processes_events_before_an_exit() {
+    fn multiple_keeps_the_first_exit() {
         let mut reedline = Reedline::create();
-        reedline.run_edit_commands(&[EditCommand::InsertString("hello".into())]);
+        reedline.run_edit_commands(&[EditCommand::InsertString("echo hi".into())]);
 
         let status = send(
             &mut reedline,
-            ReedlineEvent::Multiple(vec![
-                ReedlineEvent::Edit(vec![EditCommand::InsertChar('!')]),
-                ReedlineEvent::CtrlC,
-            ]),
+            ReedlineEvent::Multiple(vec![ReedlineEvent::CtrlC, ReedlineEvent::CtrlD]),
         );
 
-        let EventStatus::Exits(Signal::CtrlC(buffer)) = status else {
-            panic!("Multiple did not exit with CtrlC");
-        };
-        // CtrlC captured the buffer after the edit was applied.
-        assert_eq!(buffer, "hello!");
+        assert!(
+            matches!(status, EventStatus::Exits(Signal::CtrlC(_))),
+            "first exit (CtrlC) should win, not CtrlD"
+        );
     }
 
-    /// A `Multiple` that contains CtrlC followed by an edit still runs the
-    /// trailing edit. The exit signal is deferred to the end so every event
-    /// in the sequence has a chance to run.
+    /// Events after an exit still run, so a `SwitchMode` placed after a host
+    /// command takes effect. This is the shape from #1070.
     #[test]
-    fn multiple_processes_events_after_an_exit() {
+    fn multiple_runs_state_changes_after_an_exit() {
         let mut reedline = Reedline::create();
         reedline.run_edit_commands(&[EditCommand::InsertString("hello".into())]);
 
@@ -10088,7 +10085,7 @@ mod tests {
         let EventStatus::Exits(Signal::CtrlC(buffer)) = status else {
             panic!("Multiple did not exit with CtrlC");
         };
-        // CtrlC grabbed "hello" before clearing; the trailing edit then ran.
+        // CtrlC grabbed "hello" before clearing; the trailing edit still ran.
         assert_eq!(buffer, "hello");
         assert_eq!(reedline.current_buffer_contents(), "!");
     }
