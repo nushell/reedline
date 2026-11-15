@@ -2372,6 +2372,7 @@ impl Reedline {
             }
             ReedlineEvent::Multiple(events) => {
                 let mut latest_signal = EventStatus::Inapplicable;
+                let mut exit_signal = None;
                 for event in events {
                     match self.handle_editor_event(prompt, event)? {
                         EventStatus::Handled => {
@@ -2381,12 +2382,16 @@ impl Reedline {
                             // NO OP
                         }
                         EventStatus::Exits(signal) => {
-                            // TODO: Check if we want to allow execution to
-                            // proceed if there are more events after the
-                            // terminating
-                            return Ok(EventStatus::Exits(signal));
+                            // Keep the first exit; later exits are dropped so
+                            // a Submit is not overwritten by a trailing host
+                            // command.
+                            exit_signal.get_or_insert(signal);
                         }
                     }
+                }
+
+                if let Some(signal) = exit_signal {
+                    return Ok(EventStatus::Exits(signal));
                 }
 
                 Ok(latest_signal)
@@ -10111,5 +10116,46 @@ mod tests {
         assert!(!output.contains(hint));
         assert!(output.contains("ls27"));
         assert!(!output.contains("ls28"));
+    }
+
+    /// The first exit in a `Multiple` wins: a `CtrlC` is not overwritten by a
+    /// trailing `CtrlD`.
+    #[test]
+    fn multiple_keeps_the_first_exit() {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[EditCommand::InsertString("echo hi".into())]);
+
+        let status = send(
+            &mut reedline,
+            ReedlineEvent::Multiple(vec![ReedlineEvent::CtrlC, ReedlineEvent::CtrlD]),
+        );
+
+        assert!(
+            matches!(status, EventStatus::Exits(Signal::CtrlC(_))),
+            "first exit (CtrlC) should win, not CtrlD"
+        );
+    }
+
+    /// Events after an exit still run, so a `SwitchMode` placed after a host
+    /// command takes effect. This is the shape from #1070.
+    #[test]
+    fn multiple_runs_state_changes_after_an_exit() {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[EditCommand::InsertString("hello".into())]);
+
+        let status = send(
+            &mut reedline,
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::CtrlC,
+                ReedlineEvent::Edit(vec![EditCommand::InsertChar('!')]),
+            ]),
+        );
+
+        let EventStatus::Exits(Signal::CtrlC(buffer)) = status else {
+            panic!("Multiple did not exit with CtrlC");
+        };
+        // CtrlC grabbed "hello" before clearing; the trailing edit still ran.
+        assert_eq!(buffer, "hello");
+        assert_eq!(reedline.current_buffer_contents(), "!");
     }
 }
