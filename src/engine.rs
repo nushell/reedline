@@ -34,6 +34,7 @@ use {
         result::{ReedlineError, ReedlineErrorVariants},
         terminal_extensions::{
             bracketed_paste::BracketedPasteGuard,
+            input,
             kitty::KittyProtocolGuard,
             raw_mode,
             semantic_prompt::{Osc133ClickEventsMarkers, SemanticPromptMarkers},
@@ -47,7 +48,6 @@ use {
     },
     crossterm::{
         cursor::SetCursorStyle,
-        event,
         event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
         terminal, QueueableCommand,
     },
@@ -1416,6 +1416,7 @@ impl Reedline {
     /// Helper implementing the logic for [`Reedline::read_line()`] to be wrapped
     /// in a `raw_mode` context.
     fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
+        input::ensure_tty_alive()?;
         let suspended_state = self.begin_read();
         self.painter
             .initialize_prompt_position(suspended_state.as_ref())?;
@@ -1480,19 +1481,19 @@ impl Reedline {
 
             if !self.immediately_accept {
                 if needs_polling || completer_pending {
-                    if event::poll(self.poll_interval)? {
-                        events.push(crossterm::event::read()?);
+                    if input::poll(self.poll_interval)? {
+                        events.push(input::read()?);
                     }
                 } else {
                     // Block until we receive an event
-                    events.push(crossterm::event::read()?);
+                    events.push(input::read()?);
                 }
 
                 // Receive all events in the queue without blocking. Will stop when
                 // a line of input is completed.
-                while !Self::line_input_completed(&events) && event::poll(Duration::from_millis(0))?
+                while !Self::line_input_completed(&events) && input::poll(Duration::from_millis(0))?
                 {
-                    events.push(crossterm::event::read()?);
+                    events.push(input::read()?);
                 }
 
                 // If we believe there's text pasting or resizing going on, batch
@@ -1500,8 +1501,8 @@ impl Reedline {
                 if events.len() > EVENTS_THRESHOLD
                     || events.iter().any(|e| matches!(e, Event::Resize(_, _)))
                 {
-                    while !Self::line_input_completed(&events) && event::poll(POLL_WAIT)? {
-                        events.push(crossterm::event::read()?);
+                    while !Self::line_input_completed(&events) && input::poll(POLL_WAIT)? {
+                        events.push(input::read()?);
                     }
                 }
 
@@ -1518,8 +1519,8 @@ impl Reedline {
                     }
                     if hook.is_burst_active() {
                         loop {
-                            if event::poll(hook.poll_timeout())? {
-                                let event = crossterm::event::read()?;
+                            if input::poll(hook.poll_timeout())? {
+                                let event = input::read()?;
                                 if let Some(c) = burst_char(&event) {
                                     hook.on_char(c);
                                 }
