@@ -461,6 +461,10 @@ pub struct Painter {
     exit_right_prompt: Option<(String, RightPromptBounds)>,
     /// Optional semantic prompt markers for terminal integration (OSC 133/633)
     semantic_markers: Option<Box<dyn SemanticPromptMarkers>>,
+    /// Whether the prompt on screen got its full prompt start marker, so the
+    /// paints after it send only the repaint marker. See
+    /// [`Painter::primary_prompt_marker`].
+    prompt_marked: bool,
     /// Layout computed during the last paint cycle.
     pub(crate) last_layout: Option<PromptLayout>,
     /// Set by `hide_cursor`, cleared by every Show. See [`Painter::show_cursor`].
@@ -506,10 +510,18 @@ impl PaintedFrame {
         &self.frame.rows[start..end]
     }
 
-    /// Whether this paint sent `mark`, at the same place.
+    /// Whether this paint sent a mark of `mark`'s kind, at the same place.
+    ///
+    /// The sequence is left out: the prompt's turns from the full start into
+    /// the repaint marker after the first paint, and the terminal already
+    /// holds the mark the first one set.
     fn showed(&self, mark: &Mark) -> bool {
         (self.top..self.top.saturating_add(self.visible)).contains(&mark.row)
-            && self.frame.marks.contains(mark)
+            && self
+                .frame
+                .marks
+                .iter()
+                .any(|shown| (shown.kind, shown.row, shown.col) == (mark.kind, mark.row, mark.col))
     }
 
     /// The frame row drawn on screen row `row`, if any.
@@ -536,6 +548,7 @@ impl Painter {
             after_cursor_lines: None,
             exit_right_prompt: None,
             semantic_markers: None,
+            prompt_marked: false,
             last_layout: None,
             cursor_hidden: false,
             bottom_confirmed_at: None,
@@ -551,6 +564,32 @@ impl Painter {
     /// next paint redraws every row.
     fn forget_frame(&mut self) {
         self.last_frame = None;
+    }
+
+    /// The marker that opens the primary prompt on this paint, if markers
+    /// are on.
+    ///
+    /// The full [`SemanticPromptMarkers::prompt_start`] goes out once per
+    /// prompt, the repaint marker every time after. Not on every paint: OSC
+    /// 133's `A` starts a fresh line, and a terminal that sees it before the
+    /// cursor reaches column 0 (ConPTY passes it ahead of the move) scrolls
+    /// one row per keystroke at the bottom of the screen. Call
+    /// [`Painter::remark_prompt`] where the prompt moved or the screen was
+    /// cleared.
+    fn primary_prompt_marker(&self) -> Option<String> {
+        let markers = self.semantic_markers.as_deref()?;
+        let marker = if self.prompt_marked {
+            markers.prompt_repaint()
+        } else {
+            markers.prompt_start(PromptKind::Primary)
+        };
+        Some(marker.into_owned())
+    }
+
+    /// Send the full prompt start marker again on the next paint, since the
+    /// prompt is new or the row its last one marked no longer holds it.
+    fn remark_prompt(&mut self) {
+        self.prompt_marked = false;
     }
 
     /// The buffer grapheme the last frame paint drew at screen `(column,
@@ -630,6 +669,10 @@ impl Painter {
                 Ok(Some((_, cursor_row))) if cursor_row + 1 < row => cursor_row,
                 _ => row,
             };
+            if anchor != row {
+                // The prompt draws on another row than the one marked.
+                self.remark_prompt();
+            }
             // The measure above grew the height to fit the row it read, but the
             // anchor kept here can be further down than that. Grow to fit the
             // one actually committed to, or `remaining_lines` reads 0 and the
@@ -900,6 +943,7 @@ impl Painter {
     fn anchor_prompt(&mut self, suspended_state: Option<&PainterSuspendedState>) -> Result<()> {
         // A new prompt, wherever it lands: the host printed since the last one.
         self.forget_frame();
+        self.remark_prompt();
         // Hide before asking, not only before painting. The exit path leaves
         // the cursor shown at column 0 of the row the next prompt lands on,
         // and the wait for the query's reply is the longest stretch
@@ -1170,14 +1214,16 @@ impl Painter {
             indicator: prompt.get_indicator_color().prefix().to_string(),
             right: prompt.get_prompt_right_color().prefix().to_string(),
         });
-        let markers = self
-            .semantic_markers
-            .as_ref()
-            .map(|markers| frame::Markers {
-                prompt_start: markers.prompt_start(PromptKind::Primary).into_owned(),
-                input_start: markers.command_input_start().into_owned(),
-                right_start: markers.prompt_start(PromptKind::Right).into_owned(),
-            });
+        let prompt_start = self.primary_prompt_marker();
+        let markers =
+            self.semantic_markers
+                .as_ref()
+                .zip(prompt_start)
+                .map(|(markers, prompt_start)| frame::Markers {
+                    prompt_start,
+                    input_start: markers.command_input_start().into_owned(),
+                    right_start: markers.prompt_start(PromptKind::Right).into_owned(),
+                });
         let mut input = frame::LayoutInput {
             prompt_left: &lines.prompt_str_left,
             prompt_indicator: &lines.prompt_indicator,
@@ -1217,6 +1263,15 @@ impl Painter {
             !anchor_uninitialized,
             "repaint_buffer reached before initialize_prompt_position"
         );
+        // A re-anchor that moved the prompt wants the full prompt start back.
+        if let (Some(markers), Some(prompt_start)) =
+            (input.markers.as_mut(), self.primary_prompt_marker())
+        {
+            if markers.prompt_start != prompt_start {
+                markers.prompt_start = prompt_start;
+                frame = frame::layout(&input);
+            }
+        }
 
         let height = self.screen_height();
         // The status line gives way to the buffer: a block that only fits on
@@ -1287,6 +1342,9 @@ impl Painter {
                 })
                 .collect();
             due.sort_by_key(|mark| (mark.row, mark.col));
+            if due.iter().any(|mark| mark.kind == MarkKind::Prompt) {
+                self.prompt_marked = true;
+            }
 
             for (i, row) in new_rows.iter().enumerate() {
                 let screen_row = anchor.saturating_add(i as u16);
@@ -1758,10 +1816,9 @@ impl Painter {
         use_ansi_coloring: bool,
         layout: &PromptLayout,
     ) -> Result<Option<u16>> {
-        // Emit prompt start marker (OSC 133;A;k=i for primary prompt)
-        if let Some(markers) = &self.semantic_markers {
-            self.stdout
-                .queue(Print(markers.prompt_start(PromptKind::Primary)))?;
+        if let Some(marker) = self.primary_prompt_marker() {
+            self.stdout.queue(Print(marker))?;
+            self.prompt_marked = true;
         }
 
         // print our prompt with color
@@ -1865,11 +1922,11 @@ impl Painter {
         let extra_rows = layout.extra_rows;
         let extra_rows_after_prompt = layout.extra_rows_after_prompt;
 
-        // Emit prompt start marker (OSC 133;A;k=i for primary prompt) only if prompt is visible
+        // Only while the start of the prompt is on screen.
         if extra_rows == 0 {
-            if let Some(markers) = &self.semantic_markers {
-                self.stdout
-                    .queue(Print(markers.prompt_start(PromptKind::Primary)))?;
+            if let Some(marker) = self.primary_prompt_marker() {
+                self.stdout.queue(Print(marker))?;
+                self.prompt_marked = true;
             }
         }
 
@@ -1963,6 +2020,8 @@ impl Painter {
         self.terminal_size = (width, height);
         // Rows rewrap at the new width; the old frame says nothing about them.
         self.forget_frame();
+        // The terminal may have reflowed or cleared the marked row.
+        self.remark_prompt();
         let term = var_os("TERM");
         self.term_is_dumb = term_is_dumb(term.as_deref());
 
@@ -2141,6 +2200,8 @@ impl Painter {
     /// its own `\r\n` and row count, whatever the source handed over.
     pub(crate) fn print_external_message(&mut self, messages: Vec<String>) -> Result<()> {
         self.forget_frame();
+        // The messages take the marked row; the prompt redraws below them.
+        self.remark_prompt();
         // An idle callback leaves the anchor `Stale` on every poll. Check it
         // the way the repaint after this will, so the messages start where
         // that repaint draws the block, and before the frame opens.

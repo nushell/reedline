@@ -879,7 +879,8 @@ fn count(haystack: &str, needle: &str) -> usize {
 }
 
 /// The marks go out with the prompt and are not repeated by the keystrokes
-/// that follow. Anything that loses the frame sends them again.
+/// that follow. Anything that loses the frame sends them again, the prompt's
+/// as the repaint marker.
 #[test]
 fn frame_marks_are_sent_once_per_prompt() {
     let mut session = Session::new(Engine::Frame, 20, 6, 1);
@@ -903,8 +904,69 @@ fn frame_marks_are_sent_once_per_prompt() {
     let before_repaint = session.emitted();
     session.paint(&prompt, "ab", "");
     let repaint = session.emitted_since(before_repaint);
-    assert_eq!(count(&repaint, "133;A"), 1);
+    assert_eq!(count(&repaint, "133;A"), 0);
+    assert_eq!(count(&repaint, "133;P;k=i"), 1);
     assert_eq!(count(&repaint, "133;B"), 1);
+}
+
+/// `A` starts a fresh line, so it goes out once per prompt: through ConPTY it
+/// can reach the terminal before the move to column 0, and on the bottom row
+/// the fresh line scrolls. Repaints mark the prompt with `P`, which does not
+/// move the cursor. A new prompt, a resize or an external message sends `A`
+/// again, for the row the prompt is on now.
+#[rstest]
+fn the_full_prompt_start_goes_out_once_per_prompt(
+    #[values(Engine::Streaming, Engine::Frame)] engine: Engine,
+) {
+    let mut session = Session::new(engine, 20, 10, 3);
+    session
+        .painter
+        .set_semantic_markers(Some(Osc133Markers::boxed()));
+    let prompt = FixedPrompt::new("> ", "");
+
+    session.paint(&prompt, "a", "");
+    assert_eq!(count(&session.emitted_since(0), "133;A"), 1);
+
+    // Keystrokes, and an idle callback that leaves the anchor to re-check.
+    let before_keystrokes = session.emitted();
+    session.paint(&prompt, "ab", "");
+    session.painter.invalidate_prompt_start_row();
+    session.paint(&prompt, "abc", "");
+    let keystrokes = session.emitted_since(before_keystrokes);
+    assert_eq!(count(&keystrokes, "133;A"), 0, "{keystrokes:?}");
+
+    // An idle callback that scrolled: the prompt redraws on another row.
+    session.host_output(b"\x1b[2S\x1b[2;1H");
+    session.painter.invalidate_prompt_start_row();
+    let before_repaint = session.emitted();
+    session.paint(&prompt, "abc", "");
+    let after_scroll = session.emitted_since(before_repaint);
+    assert_eq!(count(&after_scroll, "133;A"), 1, "{after_scroll:?}");
+    assert_eq!(
+        session.painter.prompt_start_row,
+        PromptStartRow::Verified(1)
+    );
+
+    session.commit(&["message"]);
+    let before_repaint = session.emitted();
+    session.paint(&prompt, "abc", "");
+    let after_message = session.emitted_since(before_repaint);
+    assert_eq!(count(&after_message, "133;A"), 1, "{after_message:?}");
+
+    session.painter.handle_resize(20, 10);
+    let before_repaint = session.emitted();
+    session.paint(&prompt, "abc", "");
+    let after_resize = session.emitted_since(before_repaint);
+    assert_eq!(count(&after_resize, "133;A"), 1, "{after_resize:?}");
+
+    session
+        .painter
+        .initialize_prompt_position_with_size((20, 10), None)
+        .expect("anchoring the next prompt failed");
+    let before_repaint = session.emitted();
+    session.paint(&prompt, "", "");
+    let next_prompt = session.emitted_since(before_repaint);
+    assert_eq!(count(&next_prompt, "133;A"), 1, "{next_prompt:?}");
 }
 
 /// A prompt whose width changes moves the start of the input, and only that
