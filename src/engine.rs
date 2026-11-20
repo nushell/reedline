@@ -1181,8 +1181,10 @@ impl Reedline {
     /// so it asks the terminal where the prompt is after every keystroke that runs a
     /// host completer under an open menu, a cursor-position round trip each time. Once
     /// a host has asked for the signal, reedline makes that query only after a
-    /// completer marked it. A host whose completers never touch the terminal asks for
-    /// the signal and never marks it.
+    /// completer marked it. That holds for every host completer: the engine's, and the
+    /// one each [`ReedlineMenu::WithCompleter`] menu runs, so each that can take the
+    /// terminal needs the signal. A host whose completers never touch the terminal asks
+    /// for the signal and never marks it.
     ///
     /// The handle is created on the first call; later calls return clones.
     pub fn terminal_taken_signal(&mut self) -> TerminalTakenSignal {
@@ -10348,6 +10350,25 @@ mod tests {
             1,
             "{rows:?}"
         );
+    }
+
+    /// A mark left from before a line started costs nothing: measuring the prompt's
+    /// position for the new line already reflects it.
+    #[test]
+    fn a_mark_before_the_line_starts_is_already_measured() {
+        let mut reedline = Reedline::create();
+        reedline.painter = Painter::new(W::screen(30, 6));
+        let signal = reedline.terminal_taken_signal();
+        signal.took_terminal();
+
+        reedline
+            .painter
+            .initialize_prompt_position_with_size((30, 6), None)
+            .unwrap();
+        let measured = reedline.painter.cursor_queries_for_test();
+        reedline.repaint(&DefaultPrompt::default()).unwrap();
+
+        assert_eq!(reedline.painter.cursor_queries_for_test(), measured);
     }
 
     /// Settling a request that outlived its menu trusts the anchor once the host

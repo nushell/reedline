@@ -35,7 +35,7 @@ use {
 /// screen or moved the cursor, as an interactive picker such as `fzf --height` does.
 ///
 /// Get one from [`Reedline::terminal_taken_signal`](crate::Reedline::terminal_taken_signal)
-/// and hand it to the completer. Calling
+/// and hand it to every completer the host supplies, the engine's and each menu's. Calling
 /// [`took_terminal`](TerminalTakenSignal::took_terminal) when the completer gives the
 /// terminal away makes the next paint ask the terminal where the prompt is. Otherwise
 /// reedline trusts the row it drew the prompt at.
@@ -933,6 +933,10 @@ impl Painter {
         reported_size: (u16, u16),
         suspended_state: Option<&PainterSuspendedState>,
     ) -> Result<()> {
+        // The position measured here already reflects any earlier taking of the terminal.
+        if let Some(signal) = &self.terminal_taken {
+            signal.take();
+        }
         // Update the terminal size
         self.terminal_size = {
             // if reported size is 0, 0 -
