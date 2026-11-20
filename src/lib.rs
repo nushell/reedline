@@ -270,7 +270,7 @@ pub use enums::{
 };
 
 mod painting;
-pub use painting::{Painter, StyledText};
+pub use painting::{Painter, StyledText, TerminalTakenSignal};
 
 mod engine;
 pub use engine::{EditorCommand, MouseClickMode, Reedline, RepaintSignal};

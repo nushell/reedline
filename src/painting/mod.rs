@@ -5,7 +5,7 @@ mod styled_text;
 mod test_screen;
 mod utils;
 
-pub use painter::{Painter, PainterSuspendedState, RenderSnapshot, W};
+pub use painter::{Painter, PainterSuspendedState, RenderSnapshot, TerminalTakenSignal, W};
 pub(crate) use prompt_lines::PromptLines;
 pub(crate) use styled_text::continue_hint_lines;
 pub use styled_text::StyledText;

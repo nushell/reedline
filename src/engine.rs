@@ -28,7 +28,7 @@ use {
         },
         painting::{
             continue_hint_lines, escape_control, escape_control_keep_sgr, Painter,
-            PainterSuspendedState, PromptLines, RenderSnapshot, W,
+            PainterSuspendedState, PromptLines, RenderSnapshot, TerminalTakenSignal, W,
         },
         prompt::{PromptEditMode, PromptHistorySearchStatus},
         result::{ReedlineError, ReedlineErrorVariants},
@@ -487,14 +487,19 @@ impl Drop for Reedline {
 /// [`ReedlineMenu::queries_host_completer`] for why only some completers count, and
 /// #1130 for the bug.
 ///
-/// Also skipped for a menu the same keystroke deactivated, whose queued event nothing
-/// goes on to consume.
+/// Skipped once the host holds a [`TerminalTakenSignal`]: its completers mark that
+/// when they take the terminal, and the painter reads the mark before it draws. Also
+/// skipped for a menu the same keystroke deactivated, whose queued event nothing goes
+/// on to consume.
 ///
 /// Call this from every event that reaches the completer, which is not the same set as
 /// the events that change the menu's selection: `MenuNext` splices a partial completion
 /// and queries, while `MenuPrevious` only moves and does not.
 fn invalidate_anchor_if_host_completer_runs(menu: &ReedlineMenu, painter: &mut Painter) {
-    if menu.is_active() && menu.queries_host_completer() {
+    if menu.is_active()
+        && menu.queries_host_completer()
+        && !painter.completers_report_taking_the_terminal()
+    {
         painter.invalidate_prompt_start_row();
     }
 }
@@ -1169,6 +1174,23 @@ impl Reedline {
             .clone()
     }
 
+    /// Get a [`TerminalTakenSignal`] for the host's completers to mark when they take the
+    /// terminal, as running an interactive picker does.
+    ///
+    /// Without one, reedline cannot tell which completer calls write to the terminal,
+    /// so it asks the terminal where the prompt is after every keystroke that runs a
+    /// host completer under an open menu, a cursor-position round trip each time. Once
+    /// a host has asked for the signal, reedline makes that query only after a
+    /// completer marked it. That holds for every host completer: the engine's, and the
+    /// one each [`ReedlineMenu::WithCompleter`] menu runs, so each that can take the
+    /// terminal needs the signal. A host whose completers never touch the terminal asks
+    /// for the signal and never marks it.
+    ///
+    /// The handle is created on the first call; later calls return clones.
+    pub fn terminal_taken_signal(&mut self) -> TerminalTakenSignal {
+        self.painter.terminal_taken_signal()
+    }
+
     /// Returns the corresponding expected prompt style for the given edit mode
     pub fn prompt_edit_mode(&self) -> PromptEditMode {
         self.edit_mode.edit_mode()
@@ -1585,8 +1607,10 @@ impl Reedline {
             // No menu to answer to, so nothing can still be owed. The request still ran,
             // though: its menu closed while it did, and as host code it may have scrolled
             // the terminal just as it may under an open menu (below), so the next paint
-            // must not trust the cached row either.
-            self.painter.invalidate_prompt_start_row();
+            // must not trust the cached row either, unless completers report that.
+            if !self.painter.completers_report_taking_the_terminal() {
+                self.painter.invalidate_prompt_start_row();
+            }
             self.deferred_menu_completion = None;
             return Ok(());
         };
@@ -10188,6 +10212,199 @@ mod tests {
             1,
             "{rows:?}"
         );
+    }
+
+    /// A completer over fixed words that, given a signal, marks it on every call, as a
+    /// completer running an interactive picker on each call would.
+    struct PickerCompleter {
+        words: DefaultCompleter,
+        signal: Option<TerminalTakenSignal>,
+    }
+
+    impl Completer for PickerCompleter {
+        fn complete(&mut self, line: &str, pos: usize) -> CompletionResult {
+            if let Some(signal) = &self.signal {
+                signal.took_terminal();
+            }
+            self.words.complete(line, pos)
+        }
+    }
+
+    /// How a host's completers tell reedline about the terminal in
+    /// [`typing_under_a_menu_queries_the_cursor`].
+    #[derive(Clone, Copy, Debug)]
+    enum TerminalUse {
+        /// The host never asked for a [`TerminalTakenSignal`].
+        Unreported,
+        /// The host holds a signal and its completer never marks it.
+        Untouched,
+        /// The host holds a signal and its completer marks it on every call.
+        Taken,
+    }
+
+    /// An engine on a 30x6 screen with a completion menu open over "c", its prompt
+    /// anchored at row 4, and a [`PickerCompleter`] set up for `terminal_use`.
+    fn engine_with_picker_menu(terminal_use: TerminalUse, prompt: &dyn Prompt) -> Reedline {
+        let mut reedline =
+            Reedline::create()
+                .with_ansi_colors(false)
+                .with_menu(ReedlineMenu::EngineCompleter(Box::new(
+                    ColumnarMenu::default().with_name("completion_menu"),
+                )));
+        reedline.painter = Painter::new(W::screen(30, 6));
+        reedline.painter.handle_resize(30, 6);
+        let signal = match terminal_use {
+            TerminalUse::Unreported => None,
+            TerminalUse::Untouched => {
+                let _unmarked = reedline.terminal_taken_signal();
+                None
+            }
+            TerminalUse::Taken => Some(reedline.terminal_taken_signal()),
+        };
+        let mut reedline = reedline.with_completer(Box::new(PickerCompleter {
+            words: DefaultCompleter::new_with_wordlen(
+                vec![String::from("crates"), String::from("crash")],
+                1,
+            ),
+            signal,
+        }));
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("c"))]);
+        reedline.painter.force_prompt_anchored_for_test(4);
+        // The cursor where the prompt is, for the paint that measures it.
+        reedline.painter.host_output_for_test(b"\x1b[5;1H");
+        reedline
+            .handle_event(prompt, ReedlineEvent::Menu(String::from("completion_menu")))
+            .unwrap();
+        reedline.repaint(prompt).unwrap();
+        assert!(menu_is_active(&reedline));
+        assert_eq!(reedline.painter.screen_rows_for_test()[4], "p| c");
+        reedline
+    }
+
+    fn picker_prompt() -> DefaultPrompt {
+        DefaultPrompt::new(
+            crate::DefaultPromptSegment::Basic(String::from("p")),
+            crate::DefaultPromptSegment::Empty,
+        )
+    }
+
+    /// Each keystroke under an open menu runs the completer as the menu repaints. A
+    /// host that never asked for the signal pays a cursor query for each, as reedline
+    /// cannot tell which calls wrote. A host holding the signal pays one only for a
+    /// call that marked it.
+    #[rstest]
+    #[case::unreported(TerminalUse::Unreported, 2)]
+    #[case::untouched(TerminalUse::Untouched, 0)]
+    #[case::taken(TerminalUse::Taken, 2)]
+    fn typing_under_a_menu_queries_the_cursor(
+        #[case] terminal_use: TerminalUse,
+        #[case] queries: usize,
+    ) {
+        let prompt = picker_prompt();
+        let mut reedline = engine_with_picker_menu(terminal_use, &prompt);
+        let before = reedline.painter.cursor_queries_for_test();
+
+        for c in ['r', 'a'] {
+            reedline
+                .handle_event(
+                    &prompt,
+                    ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)]),
+                )
+                .unwrap();
+            reedline.repaint(&prompt).unwrap();
+        }
+
+        assert!(menu_is_active(&reedline));
+        assert_eq!(
+            reedline.painter.cursor_queries_for_test() - before,
+            queries,
+            "{terminal_use:?}"
+        );
+    }
+
+    /// The case the signal exists for: a completer running a picker that scrolled the
+    /// screen up and put the cursor back on the prompt, as `fzf --height` does (#1130).
+    /// The completer runs while the menu repaints, after the keystroke was handled, so
+    /// the mark has to reach that same paint.
+    #[test]
+    fn a_picker_marking_the_signal_moves_the_prompt() {
+        let prompt = picker_prompt();
+        let mut reedline = engine_with_picker_menu(TerminalUse::Taken, &prompt);
+
+        // Three rows of room made at the bottom, the cursor back on the prompt.
+        reedline
+            .painter
+            .host_output_for_test(b"\x1b[6;1H\n\n\n\x1b[2;5H");
+        reedline
+            .handle_event(
+                &prompt,
+                ReedlineEvent::Edit(vec![EditCommand::InsertChar('r')]),
+            )
+            .unwrap();
+        reedline.repaint(&prompt).unwrap();
+
+        let rows = reedline.painter.screen_rows_for_test();
+        assert_eq!(rows[1], "p| cr", "{rows:?}");
+        assert_eq!(
+            rows.iter().filter(|row| row.starts_with("p| ")).count(),
+            1,
+            "{rows:?}"
+        );
+    }
+
+    /// A mark left from before a line started costs nothing: measuring the prompt's
+    /// position for the new line already reflects it.
+    #[test]
+    fn a_mark_before_the_line_starts_is_already_measured() {
+        let mut reedline = Reedline::create();
+        reedline.painter = Painter::new(W::screen(30, 6));
+        let signal = reedline.terminal_taken_signal();
+        signal.took_terminal();
+
+        reedline
+            .painter
+            .initialize_prompt_position_with_size((30, 6), None)
+            .unwrap();
+        let measured = reedline.painter.cursor_queries_for_test();
+        reedline.repaint(&DefaultPrompt::default()).unwrap();
+
+        assert_eq!(reedline.painter.cursor_queries_for_test(), measured);
+    }
+
+    /// Settling a request that outlived its menu trusts the anchor once the host
+    /// holds the signal, since a completer that took the terminal would have marked it.
+    #[test]
+    fn settling_without_a_menu_trusts_the_anchor_under_the_signal() {
+        let mut reedline = Reedline::create()
+            .with_completer(Box::new(DeferredCompleter::pending(&["crates"])))
+            .with_menu(ReedlineMenu::EngineCompleter(Box::new(
+                ColumnarMenu::default().with_name("completion_menu"),
+            )));
+        let _unmarked = reedline.terminal_taken_signal();
+        reedline.painter.force_prompt_anchored_for_test(0);
+
+        reedline
+            .settle_completions(&DefaultPrompt::default())
+            .unwrap();
+
+        assert!(reedline.painter.prompt_anchor_is_verified_for_test());
+    }
+
+    /// A menu event that runs the completer leaves the anchor alone once the host
+    /// holds the signal: the painter reads the mark before it draws.
+    #[rstest]
+    #[case::next_queries_the_completer(ReedlineEvent::MenuNext)]
+    #[case::next_page(ReedlineEvent::MenuPageNext)]
+    fn menu_events_leave_the_anchor_to_the_signal(#[case] event: ReedlineEvent) {
+        let mut reedline = engine_with_partial_completion_menu();
+        let _unmarked = reedline.terminal_taken_signal();
+        reedline.painter.force_prompt_anchored_for_test(0);
+
+        reedline
+            .handle_event(&DefaultPrompt::default(), event)
+            .unwrap();
+
+        assert!(reedline.painter.prompt_anchor_is_verified_for_test());
     }
 
     const FOOTER_TEXT: &str = "footer-from-the-prompt";
