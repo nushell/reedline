@@ -24,8 +24,37 @@ use {
     },
     std::io::{Result, Write},
     std::ops::RangeInclusive,
+    std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     unicode_segmentation::UnicodeSegmentation,
 };
+
+/// Tells reedline that a completer took the terminal: it ran a program that wrote to the
+/// screen or moved the cursor, as an interactive picker such as `fzf --height` does.
+///
+/// Get one from [`Reedline::terminal_taken_signal`](crate::Reedline::terminal_taken_signal)
+/// and hand it to every completer the host supplies, the engine's and each menu's. Calling
+/// [`took_terminal`](TerminalTakenSignal::took_terminal) when the completer gives the
+/// terminal away makes the next paint ask the terminal where the prompt is. Otherwise
+/// reedline trusts the row it drew the prompt at.
+#[derive(Clone, Debug, Default)]
+pub struct TerminalTakenSignal {
+    flag: Arc<AtomicBool>,
+}
+
+impl TerminalTakenSignal {
+    /// Record that the terminal was written to, or its cursor moved, behind reedline.
+    pub fn took_terminal(&self) {
+        self.flag.store(true, Ordering::Relaxed);
+    }
+
+    /// Consume a pending mark.
+    fn take(&self) -> bool {
+        self.flag.swap(false, Ordering::Relaxed)
+    }
+}
 
 // Returns a string that skips N number of lines with the next offset of lines
 // An offset of 0 would return only one line after skipping the required lines
@@ -501,6 +530,12 @@ pub struct Painter {
     /// the whole block stays on the screen. Meaningless while neither has
     /// rows.
     menu_room: u16,
+    /// Present once the host asked for one: completers then say when they take the
+    /// terminal, and the anchor is trusted otherwise.
+    terminal_taken: Option<TerminalTakenSignal>,
+    /// How many times the terminal was asked where the cursor is.
+    #[cfg(test)]
+    cursor_queries: usize,
 }
 
 impl Painter {
@@ -525,7 +560,23 @@ impl Painter {
             status_rows: 0,
             footer_rows: 0,
             menu_room: 0,
+            terminal_taken: None,
+            #[cfg(test)]
+            cursor_queries: 0,
         }
+    }
+
+    /// The signal completers mark when they take the terminal, created on the first call.
+    pub(crate) fn terminal_taken_signal(&mut self) -> TerminalTakenSignal {
+        self.terminal_taken
+            .get_or_insert_with(TerminalTakenSignal::default)
+            .clone()
+    }
+
+    /// Whether completers report taking the terminal through a [`TerminalTakenSignal`].
+    /// Without one, any host completer is assumed to take it whenever it runs.
+    pub(crate) fn completers_report_taking_the_terminal(&self) -> bool {
+        self.terminal_taken.is_some()
     }
 
     /// Height of the current terminal window.
@@ -568,6 +619,10 @@ impl Painter {
     /// `Ok(None)` is [`cursor_position_for_term`]'s: no query was made, so
     /// there is no row to grow to.
     fn measure_cursor_position(&mut self) -> Result<Option<(u16, u16)>> {
+        #[cfg(test)]
+        {
+            self.cursor_queries += 1;
+        }
         let position = cursor_position_for_term(&self.stdout, self.term_is_dumb)?;
         if let Some((_, row)) = position {
             self.grow_screen_height_to_fit_row(row);
@@ -581,6 +636,13 @@ impl Painter {
     /// this first, so they agree on where the block starts. It queries the
     /// cursor, so it has to run before a synchronized frame opens.
     fn reconcile_stale_anchor(&mut self) {
+        if self
+            .terminal_taken
+            .as_ref()
+            .is_some_and(TerminalTakenSignal::take)
+        {
+            self.prompt_start_row.invalidate();
+        }
         if let PromptStartRow::Stale(row) = self.prompt_start_row {
             // Cursor above the cached row => content scrolled up while the tty
             // was yielded. Re-anchor to the cursor (ground truth) rather than
@@ -871,6 +933,10 @@ impl Painter {
         reported_size: (u16, u16),
         suspended_state: Option<&PainterSuspendedState>,
     ) -> Result<()> {
+        // The position measured here already reflects any earlier taking of the terminal.
+        if let Some(signal) = &self.terminal_taken {
+            signal.take();
+        }
         // Update the terminal size
         self.terminal_size = {
             // if reported size is 0, 0 -
@@ -2120,6 +2186,12 @@ impl Painter {
     #[cfg(test)]
     pub(crate) fn force_prompt_anchored_for_test(&mut self, row: u16) {
         self.prompt_start_row = PromptStartRow::Verified(row);
+    }
+
+    /// How many times the painter has asked the terminal where the cursor is.
+    #[cfg(test)]
+    pub(crate) fn cursor_queries_for_test(&self) -> usize {
+        self.cursor_queries
     }
 
     /// Whether the cached anchor is still trusted, so a test can pin which events cost
