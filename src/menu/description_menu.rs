@@ -373,24 +373,23 @@ impl DescriptionMenu {
             return "".into();
         }
 
+        // The lines of `example`, each after the first behind `separator`.
+        let joined =
+            |example: &str, separator: &str| example.lines().collect::<Vec<&str>>().join(separator);
+
         let examples: String = self
             .examples
             .iter()
             .enumerate()
             .map(|(index, example)| {
-                if let Some(example_index) = self.example_index {
-                    if index == example_index {
-                        format!(
-                            "  {}{}{}\n",
-                            self.settings.color.selected_text_style.prefix(),
-                            example,
-                            RESET
-                        )
-                    } else {
-                        format!("  {example}\n")
-                    }
+                if self.example_index == Some(index) {
+                    // Styled line by line, so the style neither runs to the
+                    // right margin nor covers a continuation line's indent.
+                    let style = self.settings.color.selected_text_style.prefix();
+                    let example = joined(example, &format!("{RESET}\n  {style}"));
+                    format!("  {style}{example}{RESET}\n")
                 } else {
-                    format!("  {example}\n")
+                    format!("  {}\n", joined(example, "\n  "))
                 }
             })
             .collect();
@@ -1099,6 +1098,30 @@ mod tests {
         assert_eq!(
             menu.menu_string(100, false),
             "ls    >CD   \nChange directory\n\nExamples:\n  cd ~\n"
+        );
+    }
+
+    /// Every line of a multi-line example is indented like its first, and a
+    /// chosen one is styled line by line.
+    #[test]
+    fn multi_line_examples_keep_their_indent() {
+        let mut menu = DescriptionMenu {
+            show_examples: true,
+            examples: vec!["if true {\n  1\r\n}".into(), "ls".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            menu.create_example_string(false),
+            "\n\nExamples:\n  if true {\n    1\n  }\n  ls\n"
+        );
+
+        menu.example_index = Some(0);
+        let selected = menu.settings.color.selected_text_style.prefix();
+        assert_eq!(
+            menu.create_example_string(false),
+            format!(
+                "\n\nExamples:\n  {selected}if true {{{RESET}\n  {selected}  1{RESET}\n  {selected}}}{RESET}\n  ls\n"
+            )
         );
     }
 
