@@ -47,7 +47,7 @@ pub(crate) fn strip_ansi(string: &str) -> String {
 
 /// Shows control characters readline-style (`^[`, `^?`, `M-^[`) instead of
 /// letting the terminal act on them, so untrusted text cannot erase or redraw
-/// the line. `\n` and `\t` pass through.
+/// the line. `\n`, `\t` and a `\r` followed by `\n` pass through.
 pub(crate) fn escape_control(text: &str) -> Cow<'_, str> {
     escape_with(text, Escape::All)
 }
@@ -62,14 +62,14 @@ pub(crate) fn escape_control_keep_sgr(text: &str) -> Cow<'_, str> {
 /// SGR (see `escape_suggestions`), so any `ESC` left is that SGR: whole,
 /// uppercased into another command by a selected row (`ESC[5m` into `ESC[5M`,
 /// delete lines), or cut short by truncation. The first two are dropped, a cut
-/// one is shown. The menu's own `\r\n` passes.
+/// one is shown. The menu's own line breaks pass.
 pub(crate) fn plain_menu_text(text: &str) -> Cow<'_, str> {
     escape_with(text, Escape::DropSgr)
 }
 
 #[derive(Clone, Copy, PartialEq)]
 enum Escape {
-    /// Every control char but `\n` and `\t`.
+    /// Every control char but `\n`, `\t` and a `\r` followed by `\n`.
     All,
     /// As `All`, keeping well-formed SGR.
     KeepSgr,
@@ -91,7 +91,7 @@ fn escape_with(text: &str, mode: Escape) -> Cow<'_, str> {
         let escaped = sgr.is_none()
             && match mode {
                 Escape::DropSgr => c == '\x1b' || ('\u{80}'..='\u{9f}').contains(&c),
-                _ => c.is_control() && c != '\n' && c != '\t',
+                _ => c.is_control() && c != '\n' && c != '\t' && !rest.starts_with("\r\n"),
             };
         let dropped = sgr.is_some() && mode == Escape::DropSgr;
 
@@ -374,6 +374,8 @@ mod test {
     #[case::esc("a\x1b[2Kb", "a^[[2Kb")]
     #[case::bell_and_backspace("\x07\x08", "^G^H")]
     #[case::carriage_return("bar\r", "bar^M")]
+    #[case::crlf_passes("a\r\nb", "a\r\nb")]
+    #[case::only_the_cr_at_the_lf_passes("a\r\r\nb", "a^M\r\nb")]
     #[case::del("x\x7f", "x^?")]
     #[case::c1_csi("\u{9b}2K", "M-^[2K")]
     #[case::sgr_is_not_spared("\x1b[8mhidden", "^[[8mhidden")]
@@ -390,6 +392,8 @@ mod test {
     #[case::osc("\x1b]52;c;aGk=\x07", "^[]52;c;aGk=^G")]
     #[case::unterminated_sgr("\x1b[1", "^[[1")]
     #[case::bare_esc_at_end("a\x1b", "a^[")]
+    #[case::crlf_passes("a\r\nb", "a\r\nb")]
+    #[case::cr_without_lf("a\rb\r", "a^Mb^M")]
     fn escape_control_keep_sgr_spares_only_sgr(#[case] input: &str, #[case] expected: &str) {
         assert_eq!(escape_control_keep_sgr(input), expected);
     }
@@ -407,6 +411,7 @@ mod test {
     #[rstest]
     #[case("plain")]
     #[case("\x1b[1mbold\x1b[0m")]
+    #[case("two\r\nlines")]
     fn nothing_to_escape_borrows(#[case] input: &str) {
         assert!(matches!(escape_control_keep_sgr(input), Cow::Borrowed(_)));
     }
