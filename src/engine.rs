@@ -1199,10 +1199,12 @@ impl Reedline {
         Ok(())
     }
 
-    /// Print the history session id
+    /// Output the history session id to the terminal
     pub fn print_history_session_id(&mut self) -> Result<()> {
-        println!("History Session Id: {:?}", self.get_history_session_id());
-        Ok(())
+        self.print_line(&format!(
+            "History Session Id: {:?}",
+            self.get_history_session_id()
+        ))
     }
 
     /// Toggle between having a history that uses the history session id and one that does not
