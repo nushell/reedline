@@ -5,8 +5,8 @@
 //! process prints while the editor waits for input, such as output from a
 //! background job of the host shell, then starts each line where the last one
 //! ended. readline and zle keep output processing on in raw mode, and so does
-//! this. Reedline's own output already ends its lines with `\r\n`, which looks
-//! the same either way.
+//! this. Reedline's own output gets its `\r\n` from the painter's writer
+//! either way, which looks the same with it on.
 //!
 //! Leaving raw mode needs nothing extra: crossterm writes back the whole
 //! terminal mode it saved on entry.

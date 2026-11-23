@@ -1321,8 +1321,8 @@ impl Reedline {
         self.editor.get_selection()
     }
 
-    /// Writes `msg` to the terminal with a following carriage return and newline,
-    /// its control characters shown rather than sent
+    /// Writes `msg` to the terminal with a following line break, its control
+    /// characters shown rather than sent
     fn print_line(&mut self, msg: &str) -> Result<()> {
         self.painter.paint_line(&escape_control(msg))
     }
@@ -3474,9 +3474,6 @@ impl Reedline {
         } else {
             String::new()
         };
-
-        // Needs to add return carriage to newlines because when not in raw mode
-        // some OS don't fully return the carriage
 
         let lines = if hint_replaces_closers {
             // The exit path reprints what follows the cursor, which is still

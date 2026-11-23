@@ -1,6 +1,6 @@
 use super::utils::{
-    coerce_crlf, escape_control, escape_control_keep_sgr, estimate_required_lines, expand_tabs,
-    line_width, resolve_wrap, wrap_position,
+    escape_control, escape_control_keep_sgr, estimate_required_lines, expand_tabs, line_width,
+    resolve_wrap, wrap_position,
 };
 use crate::{
     menu::{Menu, ReedlineMenu},
@@ -15,15 +15,15 @@ pub(crate) struct PromptLines<'prompt> {
     pub(crate) prompt_str_left: Cow<'prompt, str>,
     pub(crate) prompt_str_right: Cow<'prompt, str>,
     pub(crate) prompt_indicator: Cow<'prompt, str>,
-    pub(crate) before_cursor: Cow<'prompt, str>,
-    pub(crate) after_cursor: Cow<'prompt, str>,
-    pub(crate) hint: Cow<'prompt, str>,
+    pub(crate) before_cursor: &'prompt str,
+    pub(crate) after_cursor: &'prompt str,
+    pub(crate) hint: &'prompt str,
     pub(crate) right_prompt_on_last_line: bool,
     /// What the exit path reprints after the cursor, when that is not
     /// `after_cursor`: a history hint drawn in place of trailing auto-pair
     /// closers leaves `after_cursor` empty, but the closers are still in the
     /// buffer.
-    pub(crate) exit_after_cursor: Option<Cow<'prompt, str>>,
+    pub(crate) exit_after_cursor: Option<&'prompt str>,
     /// The [`StatusLine`](crate::StatusLine) text, drawn on its own rows below
     /// the buffer and above any menu. Empty draws none.
     pub(crate) status: Cow<'prompt, str>,
@@ -53,9 +53,6 @@ impl<'prompt> PromptLines<'prompt> {
             None => prompt.render_prompt_indicator(prompt_mode),
         };
 
-        let before_cursor = coerce_crlf(before_cursor);
-        let after_cursor = coerce_crlf(after_cursor);
-        let hint = coerce_crlf(hint);
         let right_prompt_on_last_line = prompt.right_prompt_on_last_line();
 
         Self {
@@ -120,7 +117,7 @@ impl<'prompt> PromptLines<'prompt> {
     /// Set what the exit path reprints after the cursor in place of
     /// `after_cursor`. See [`Self::exit_after_cursor`].
     pub(crate) fn with_exit_after_cursor(mut self, after_cursor: &'prompt str) -> Self {
-        self.exit_after_cursor = Some(coerce_crlf(after_cursor));
+        self.exit_after_cursor = Some(after_cursor);
         self
     }
 
@@ -138,12 +135,12 @@ impl<'prompt> PromptLines<'prompt> {
         menu: Option<&ReedlineMenu>,
     ) -> u16 {
         let mut input =
-            self.prompt_str_left.to_string() + &self.prompt_indicator + &self.before_cursor;
+            self.prompt_str_left.to_string() + &self.prompt_indicator + self.before_cursor;
 
         if !before_cursor {
-            input += &self.after_cursor;
+            input += self.after_cursor;
             if menu.is_none() {
-                input += &self.hint;
+                input += self.hint;
             }
         }
 
@@ -166,7 +163,7 @@ impl<'prompt> PromptLines<'prompt> {
             [
                 &*self.prompt_str_left,
                 &self.prompt_indicator,
-                &self.before_cursor,
+                self.before_cursor,
             ],
             terminal_columns,
         ) else {
@@ -184,7 +181,7 @@ impl<'prompt> PromptLines<'prompt> {
         // The Cursor position will be relative to this
         let last_prompt_str = prompt_str.lines().last().unwrap_or_default();
 
-        let Some(end) = wrap_position([last_prompt_str, &self.before_cursor], terminal_columns)
+        let Some(end) = wrap_position([last_prompt_str, self.before_cursor], terminal_columns)
         else {
             return (0, 0);
         };
@@ -204,7 +201,7 @@ impl<'prompt> PromptLines<'prompt> {
         let first_line_left_prompt = self.prompt_str_left.lines().next();
         let last_line_left_prompt = self.prompt_str_left.lines().last();
 
-        let prompt_lines_total = self.before_cursor.to_string() + &self.after_cursor + &self.hint;
+        let prompt_lines_total = self.before_cursor.to_string() + self.after_cursor + self.hint;
         let prompt_lines_first = prompt_lines_total.lines().next();
 
         let mut estimate = 0; // space in front of the input
@@ -407,9 +404,9 @@ mod tests {
             prompt_str_left: Cow::Borrowed(prompt_str_left),
             prompt_str_right: Cow::Borrowed(""),
             prompt_indicator: Cow::Borrowed(prompt_indicator),
-            before_cursor: Cow::Borrowed(before_cursor),
-            after_cursor: Cow::Borrowed(""),
-            hint: Cow::Borrowed(""),
+            before_cursor,
+            after_cursor: "",
+            hint: "",
             right_prompt_on_last_line: false,
             exit_after_cursor: None,
             status: Cow::Borrowed(""),
@@ -445,9 +442,9 @@ mod tests {
             prompt_str_left: Cow::Borrowed(""),
             prompt_str_right: Cow::Borrowed(""),
             prompt_indicator: Cow::Borrowed(prompt_indicator),
-            before_cursor: Cow::Borrowed(before_cursor),
-            after_cursor: Cow::Borrowed(after_cursor),
-            hint: Cow::Borrowed(""),
+            before_cursor,
+            after_cursor,
+            hint: "",
             right_prompt_on_last_line: false,
             exit_after_cursor: None,
             status: Cow::Borrowed(""),
@@ -491,9 +488,9 @@ mod tests {
             prompt_str_left: Cow::Borrowed(prompt_str_left),
             prompt_str_right: Cow::Borrowed(""),
             prompt_indicator: Cow::Borrowed(prompt_indicator),
-            before_cursor: Cow::Borrowed(before_cursor),
-            after_cursor: Cow::Borrowed(""),
-            hint: Cow::Borrowed(""),
+            before_cursor,
+            after_cursor: "",
+            hint: "",
             right_prompt_on_last_line: false,
             exit_after_cursor: None,
             status: Cow::Borrowed(""),
@@ -520,9 +517,9 @@ mod tests {
             prompt_str_left: Cow::Borrowed(prompt_str_left),
             prompt_str_right: Cow::Borrowed(""),
             prompt_indicator: Cow::Borrowed(prompt_indicator),
-            before_cursor: Cow::Borrowed(""),
-            after_cursor: Cow::Borrowed(""),
-            hint: Cow::Borrowed(""),
+            before_cursor: "",
+            after_cursor: "",
+            hint: "",
             right_prompt_on_last_line: false,
             exit_after_cursor: None,
             status: Cow::Borrowed(""),
@@ -537,9 +534,9 @@ mod tests {
             prompt_str_left: Cow::Borrowed(""),
             prompt_str_right: Cow::Borrowed(""),
             prompt_indicator: Cow::Borrowed(""),
-            before_cursor: Cow::Borrowed(""),
-            after_cursor: Cow::Borrowed(""),
-            hint: Cow::Borrowed(""),
+            before_cursor: "",
+            after_cursor: "",
+            hint: "",
             right_prompt_on_last_line: false,
             exit_after_cursor: None,
             status: Cow::Borrowed(""),
