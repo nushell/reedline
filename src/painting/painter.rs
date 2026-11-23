@@ -1553,7 +1553,7 @@ impl Painter {
         };
         self.clear_from_anchor(starting_row)?;
         self.stdout
-            .queue(Print(menu_string.trim_end_matches('\n')))?;
+            .queue(Print(&coerce_crlf(menu_string.trim_end_matches('\n'))))?;
 
         Ok(())
     }
@@ -1674,8 +1674,9 @@ impl Painter {
         } else {
             self.stdout.queue(cursor::MoveTo(0, row))?;
         }
-        self.stdout
-            .queue(Print(lines.status_block(layout.status_with_footer)))?;
+        self.stdout.queue(Print(&coerce_crlf(
+            &lines.status_block(layout.status_with_footer),
+        )))?;
         if use_ansi_coloring {
             self.stdout
                 .queue(SetAttribute(Attribute::Reset))?
@@ -1852,8 +1853,8 @@ impl Painter {
         // Invalidate up front: a partial write below can still leave
         // bytes in the kernel/tty buffer and displace the cursor.
         self.invalidate_prompt_start_row();
-        self.stdout.queue(Print(line))?.queue(Print("\r\n"))?;
-        self.stdout.flush()
+        self.stdout.queue(Print(&coerce_crlf(line)))?;
+        self.print_crlf()
     }
 
     /// Queue a hide and remember it, so [`Painter::show_cursor`] can undo it.
@@ -4062,6 +4063,15 @@ mod tests {
             !out.contains("\x1b[1;1H\x1b[J"),
             "None start row falls back to row 0 and must not erase from home cell; emitted: {out:?}"
         );
+    }
+
+    #[test]
+    fn print_menu_sends_every_line_break_as_crlf() {
+        // Menus join their rows with `\n`. A host's own menu may still send
+        // `\r\n`, which must not gain a second `\r`.
+        let menu = TestMenu::new("item1\nitem2\r\nitem3\n");
+        let out = capture_print_menu(&menu, Some(1));
+        assert!(out.ends_with("item1\r\nitem2\r\nitem3"), "emitted: {out:?}");
     }
 
     #[test]

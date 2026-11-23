@@ -269,7 +269,7 @@ impl DescriptionMenu {
     fn end_of_line(&self, column: u16, index: usize) -> &str {
         let is_last = index == self.values.len().saturating_sub(1);
         if column == self.get_cols().saturating_sub(1) || is_last {
-            "\r\n"
+            "\n"
         } else {
             ""
         }
@@ -353,7 +353,7 @@ impl DescriptionMenu {
             .skip(self.skipped_rows)
             .take(self.working_details.description_rows)
             .collect::<Vec<&str>>()
-            .join("\r\n");
+            .join("\n");
 
         if use_ansi_coloring && !description.is_empty() {
             format!(
@@ -381,16 +381,16 @@ impl DescriptionMenu {
                 if let Some(example_index) = self.example_index {
                     if index == example_index {
                         format!(
-                            "  {}{}{}\r\n",
+                            "  {}{}{}\n",
                             self.settings.color.selected_text_style.prefix(),
                             example,
                             RESET
                         )
                     } else {
-                        format!("  {example}\r\n")
+                        format!("  {example}\n")
                     }
                 } else {
-                    format!("  {example}\r\n")
+                    format!("  {example}\n")
                 }
             })
             .collect();
@@ -399,13 +399,13 @@ impl DescriptionMenu {
             "".into()
         } else if use_ansi_coloring {
             format!(
-                "{}\r\n\r\nExamples:\r\n{}{}",
+                "{}\n\nExamples:\n{}{}",
                 self.settings.color.description_style.prefix(),
                 RESET,
                 examples,
             )
         } else {
-            format!("\r\n\r\nExamples:\r\n{examples}",)
+            format!("\n\nExamples:\n{examples}",)
         }
     }
 }
@@ -1069,17 +1069,17 @@ mod tests {
         assert_eq!(
             scroll(&mut menu, &mut editor, || MenuEvent::MoveRight),
             [
-                "in the\r\ncurrent",
-                "current\r\ndirectory",
-                "current\r\ndirectory"
+                "in the\ncurrent",
+                "current\ndirectory",
+                "current\ndirectory"
             ]
         );
         assert_eq!(
             scroll(&mut menu, &mut editor, || MenuEvent::MoveLeft),
             [
-                "in the\r\ncurrent",
-                "List files\r\nin the",
-                "List files\r\nin the"
+                "in the\ncurrent",
+                "List files\nin the",
+                "List files\nin the"
             ]
         );
     }
@@ -1090,15 +1090,15 @@ mod tests {
         let mut menu = help_menu(&mut editor);
         assert_eq!(
             menu.menu_string(100, false),
-            ">LS   cd    \r\n\
-             List files\r\nin the\r\ncurrent\r\ndirectory\
-             \r\n\r\nExamples:\r\n  ls -a\r\n  ls -l\r\n"
+            ">LS   cd    \n\
+             List files\nin the\ncurrent\ndirectory\
+             \n\nExamples:\n  ls -a\n  ls -l\n"
         );
 
         send(&mut menu, &mut editor, MenuEvent::NextElement);
         assert_eq!(
             menu.menu_string(100, false),
-            "ls    >CD   \r\nChange directory\r\n\r\nExamples:\r\n  cd ~\r\n"
+            "ls    >CD   \nChange directory\n\nExamples:\n  cd ~\n"
         );
     }
 
@@ -1117,9 +1117,9 @@ mod tests {
         assert_eq!(
             menu.menu_string(100, true),
             format!(
-                "{selected}ls{RESET}    {text}cd{RESET}    \r\n\
-                 {description}List files\r\nin the\r\ncurrent\r\ndirectory{RESET}\
-                 {description}\r\n\r\nExamples:\r\n{RESET}  {selected}ls -a{RESET}\r\n  ls -l\r\n"
+                "{selected}ls{RESET}    {text}cd{RESET}    \n\
+                 {description}List files\nin the\ncurrent\ndirectory{RESET}\
+                 {description}\n\nExamples:\n{RESET}  {selected}ls -a{RESET}\n  ls -l\n"
             )
         );
     }

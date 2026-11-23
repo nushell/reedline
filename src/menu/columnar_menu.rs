@@ -820,7 +820,7 @@ impl Menu for ColumnarMenu {
                             })
                             .collect();
                         menu_string.push_str(&row_string);
-                        menu_string.push_str("\r\n");
+                        menu_string.push('\n');
                     }
                     menu_string
                 }
@@ -842,7 +842,7 @@ impl Menu for ColumnarMenu {
 
                             let end_of_line =
                                 if column == self.get_cols().saturating_sub(1) as usize {
-                                    "\r\n"
+                                    "\n"
                                 } else {
                                     ""
                                 };

@@ -1180,7 +1180,7 @@ impl Menu for IdeMenu {
                     *sug = format!("{}{sug}", left_of_box(i, self.working_details.space_left));
                 }
             }
-            strings.join("\r\n")
+            strings.join("\n")
         }
     }
 
@@ -1997,7 +1997,7 @@ mod tests {
             (100, 20),
         );
         menu.menu_string(20, use_ansi_coloring)
-            .split("\r\n")
+            .lines()
             .map(String::from)
             .collect()
     }
@@ -2036,7 +2036,7 @@ mod tests {
         );
         let rows = |use_ansi_coloring| {
             menu.menu_string(20, use_ansi_coloring)
-                .split("\r\n")
+                .lines()
                 .map(strip_ansi_escapes::strip_str)
                 .collect::<Vec<_>>()
         };
@@ -2242,9 +2242,9 @@ mod tests {
         );
         assert_eq!(
             menu.menu_string(20, true),
-            "╭───╮\r\n\
-             │\u{1b}[90m\u{1b}[0m\u{1b}[1;7;32mabc\u{1b}[0m│\r\n\
-             │\u{1b}[90m\u{1b}[0m\u{1b}[90mde \u{1b}[0m│\r\n\
+            "╭───╮\n\
+             │\u{1b}[90m\u{1b}[0m\u{1b}[1;7;32mabc\u{1b}[0m│\n\
+             │\u{1b}[90m\u{1b}[0m\u{1b}[90mde \u{1b}[0m│\n\
              ╰───╯"
         );
     }
