@@ -178,8 +178,8 @@ pub trait Menu: Send {
 
     /// Creates the menu representation as a string which will be painted by the painter
     ///
-    /// Rows are separated by `\n`. The painter adds the `\r` that raw mode
-    /// needs, and leaves a `\r\n` as it is.
+    /// Rows are separated by `\n`. The painter's writer adds the `\r` that
+    /// raw mode needs, and leaves a `\r\n` as it is.
     fn menu_string(&self, available_lines: u16, use_ansi_coloring: bool) -> String;
 
     /// Minimum rows that should be displayed by the menu

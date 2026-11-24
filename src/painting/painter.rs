@@ -7,8 +7,8 @@ use crate::painting::test_screen::TestScreen;
 
 use {
     super::utils::{
-        advance_grapheme, certain_line_width, coerce_crlf, deferred_wrap_row, escape_control,
-        line_width, plain_menu_text, resolve_wrap, sgr_len, wrap_position,
+        advance_grapheme, certain_line_width, deferred_wrap_row, escape_control, line_width,
+        plain_menu_text, resolve_wrap, sgr_len, wrap_position,
     },
     crate::{
         menu::{Menu, ReedlineMenu},
@@ -64,6 +64,26 @@ fn skip_buffer_lines(string: &str, skip: usize, offset: Option<usize>) -> &str {
     string[index..limit].trim_end_matches('\n')
 }
 
+// The lines of buffer text `skip_buffer_lines_range` selects, without the
+// line break they stop at, and whether they stop at one: the break the range
+// was cut at, or the one the text ends with.
+//
+// Only that one break is dropped. A blank line before it is still a row,
+// which `skip_buffer_lines` would trim away.
+fn buffer_lines_up_to_break(string: &str, skip: usize, offset: Option<usize>) -> (&str, bool) {
+    let (index, limit) = skip_buffer_lines_range(string, skip, offset);
+    let text = &string[index..limit];
+    let (text, at_break) = if limit < string.len() {
+        (text, true)
+    } else {
+        text.strip_suffix('\n')
+            .map_or((text, false), |text| (text, true))
+    };
+    // The `\r` of a `\r\n` in the buffer goes with its break.
+    let text = text.strip_suffix('\r').filter(|_| at_break).unwrap_or(text);
+    (text, at_break)
+}
+
 // `text` of the buffer as it is drawn: the `\r` of a CRLF is the line break's
 // own and draws nothing, every other control char shows escaped.
 fn escape_as_drawn(text: &str) -> std::borrow::Cow<'_, str> {
@@ -104,13 +124,29 @@ fn skip_buffer_lines_range(string: &str, skip: usize, offset: Option<usize>) -> 
     (index, limit)
 }
 
-/// The writer used by crossterm operations.
+/// The writer used by crossterm operations, and the one place a line break
+/// gets the form a terminal needs.
 ///
-/// In production this is a buffered stderr handle. During tests it can be
-/// backed by a sink, so painting runs normally without spilling escape
+/// Everything the painter prints separates its rows with `\n`. A terminal in
+/// raw mode only moves down a row for that, so each `\n` goes out as `\r\n`
+/// here, and a `\r\n` that arrives as such goes out unchanged. Raw mode keeps
+/// `ONLCR` on where it can (see `terminal_extensions::raw_mode`) and the tty
+/// would then do the same, but that is Unix only and best effort.
+///
+/// In production the bytes go to a buffered stderr handle. During tests they
+/// can go to a sink, so painting runs normally without spilling escape
 /// sequences onto the real terminal: crossterm writes straight to the file
-/// descriptor, which bypasses libtest's output capture.
-pub enum W {
+/// descriptor, which bypasses libtest's output capture. A capturing test
+/// writer records what a terminal would receive, line breaks as `\r\n`.
+pub struct W {
+    output: Output,
+    /// Whether the last byte written was a `\r`, so a `\n` opening the next
+    /// write is known to be the second half of a `\r\n`.
+    after_cr: bool,
+}
+
+/// Where the bytes of a [`W`] end up.
+enum Output {
     /// Buffered stderr — the real terminal.
     // Constructed only in non-test builds; under `cfg(test)` we always use `Sink`.
     #[cfg_attr(test, allow(dead_code))]
@@ -124,28 +160,42 @@ pub enum W {
     /// output-level invariant).
     #[cfg(test)]
     Capture(Vec<u8>),
-    /// Fails once after the given number of bytes, then captures later writes.
+    /// Captures `remaining` more bytes, fails the write after them once, then
+    /// captures again.
     #[cfg(test)]
-    FailOnce(Vec<u8>, usize, bool),
-    /// Captures like [`W::Capture`], and answers a cursor query from a
+    FailOnce {
+        captured: Vec<u8>,
+        remaining: usize,
+        failed: bool,
+    },
+    /// Captures like [`Output::Capture`], and answers a cursor query from a
     /// [`TestScreen`] fed on each flush, so the answer reflects what a
     /// terminal behind a buffered writer has actually received.
     #[cfg(test)]
     Screen(Vec<u8>, Box<TestScreen>),
 }
 
+impl From<Output> for W {
+    fn from(output: Output) -> Self {
+        Self {
+            output,
+            after_cr: false,
+        }
+    }
+}
+
 impl W {
     /// Writer targeting the real terminal (buffered stderr).
     #[cfg_attr(test, allow(dead_code))]
     pub(crate) fn terminal() -> Self {
-        W::Terminal(std::io::BufWriter::new(std::io::stderr()))
+        Output::Terminal(std::io::BufWriter::new(std::io::stderr())).into()
     }
 
     /// Writer that discards everything, for tests that exercise painting
     /// without printing to the terminal.
     #[cfg(test)]
     pub(crate) fn sink() -> Self {
-        W::Sink(std::io::sink(), None)
+        Output::Sink(std::io::sink(), None).into()
     }
 
     /// Like [`W::sink`], but answers a cursor query with `position` rather than
@@ -153,54 +203,114 @@ impl W {
     /// of only their "no answer" branch.
     #[cfg(test)]
     pub(crate) fn sink_with_cursor_at(position: (u16, u16)) -> Self {
-        W::Sink(std::io::sink(), Some(position))
+        Output::Sink(std::io::sink(), Some(position)).into()
     }
 
     /// Writer that buffers everything written to it, so a test can inspect the
     /// emitted bytes after painting.
     #[cfg(test)]
     pub(crate) fn capture() -> Self {
-        W::Capture(Vec::new())
+        Output::Capture(Vec::new()).into()
+    }
+
+    /// Like [`W::capture`], but the write that would pass `bytes` written
+    /// stops there and the next one fails, once. Later writes are captured.
+    #[cfg(test)]
+    pub(crate) fn fail_once_after(bytes: usize) -> Self {
+        Output::FailOnce {
+            captured: Vec::new(),
+            remaining: bytes,
+            failed: false,
+        }
+        .into()
+    }
+
+    /// Whether a [`W::fail_once_after`] writer has failed its write. Panics on
+    /// any other writer.
+    #[cfg(test)]
+    pub(crate) fn has_failed(&self) -> bool {
+        match &self.output {
+            Output::FailOnce { failed, .. } => *failed,
+            _ => panic!("has_failed() called on a writer that does not fail"),
+        }
     }
 
     /// Like [`W::capture`], but answering cursor queries from a
-    /// `width` by `height` screen; see [`W::Screen`].
+    /// `width` by `height` screen; see [`Output::Screen`].
     #[cfg(test)]
     pub(crate) fn screen(width: u16, height: u16) -> Self {
-        W::Screen(Vec::new(), Box::new(TestScreen::new(width, height)))
+        Output::Screen(Vec::new(), Box::new(TestScreen::new(width, height))).into()
     }
 
     /// The screen a [`W::screen`] writer answers from, to feed it output that
     /// did not come from the painter. Panics on any other writer.
     #[cfg(test)]
     pub(crate) fn terminal_screen(&mut self) -> &mut TestScreen {
-        match self {
-            W::Screen(_, screen) => screen,
+        match &mut self.output {
+            Output::Screen(_, screen) => screen,
             _ => panic!("terminal_screen() called on a writer without a screen"),
         }
     }
 
-    /// Bytes captured so far. Panics unless this is a [`W::capture`] or
-    /// [`W::screen`] writer.
+    /// Bytes captured so far. Panics on a writer that keeps none.
     #[cfg(test)]
     pub(crate) fn captured(&self) -> &[u8] {
-        match self {
-            W::Capture(buf) | W::Screen(buf, _) => buf,
+        match &self.output {
+            Output::Capture(buf)
+            | Output::Screen(buf, _)
+            | Output::FailOnce { captured: buf, .. } => buf,
             _ => panic!("captured() called on a non-capturing writer"),
         }
     }
 }
 
 impl Write for W {
+    /// Takes the bytes up to the first `\n`, or that `\n` alone, which goes
+    /// out as `\r\n` unless a `\r` came right before it.
+    ///
+    /// One piece per call, so the count returned is always of bytes of `buf`,
+    /// whatever the output took of them.
+    fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        if buf.first() == Some(&b'\n') {
+            if !self.after_cr {
+                self.output.write_all(b"\r")?;
+                // Should the `\n` fail, a retry does not send a second `\r`.
+                self.after_cr = true;
+            }
+            self.output.write_all(b"\n")?;
+            self.after_cr = false;
+            return Ok(1);
+        }
+        let end = buf
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .unwrap_or(buf.len());
+        let written = self.output.write(&buf[..end])?;
+        if let Some(last) = buf[..written].last() {
+            self.after_cr = *last == b'\r';
+        }
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        self.output.flush()
+    }
+}
+
+impl Write for Output {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
         match self {
-            W::Terminal(w) => w.write(buf),
+            Output::Terminal(w) => w.write(buf),
             #[cfg(test)]
-            W::Sink(w, _) => w.write(buf),
+            Output::Sink(w, _) => w.write(buf),
             #[cfg(test)]
-            W::Capture(w) => w.write(buf),
+            Output::Capture(w) => w.write(buf),
             #[cfg(test)]
-            W::FailOnce(w, remaining, failed) => {
+            Output::FailOnce {
+                captured: w,
+                remaining,
+                failed,
+            } => {
                 if *failed {
                     return w.write(buf);
                 }
@@ -213,21 +323,21 @@ impl Write for W {
                 Ok(written)
             }
             #[cfg(test)]
-            W::Screen(w, _) => w.write(buf),
+            Output::Screen(w, _) => w.write(buf),
         }
     }
 
     fn flush(&mut self) -> Result<()> {
         match self {
-            W::Terminal(w) => w.flush(),
+            Output::Terminal(w) => w.flush(),
             #[cfg(test)]
-            W::Sink(w, _) => w.flush(),
+            Output::Sink(w, _) => w.flush(),
             #[cfg(test)]
-            W::Capture(w) => w.flush(),
+            Output::Capture(w) => w.flush(),
             #[cfg(test)]
-            W::FailOnce(w, ..) => w.flush(),
+            Output::FailOnce { captured, .. } => captured.flush(),
             #[cfg(test)]
-            W::Screen(w, screen) => {
+            Output::Screen(w, screen) => {
                 screen.sync(w);
                 Ok(())
             }
@@ -244,18 +354,18 @@ impl W {
     /// paint paths take their "no answer" branch instead of waiting on a tty
     /// that will never reply.
     pub(crate) fn cursor_position(&self) -> Result<(u16, u16)> {
-        match self {
-            W::Terminal(_) => cursor::position(),
+        match &self.output {
+            Output::Terminal(_) => cursor::position(),
             #[cfg(test)]
-            W::Sink(_, position) => {
+            Output::Sink(_, position) => {
                 position.ok_or_else(|| std::io::Error::other("no terminal attached"))
             }
             #[cfg(test)]
-            W::Capture(_) => Err(std::io::Error::other("no terminal attached")),
+            Output::Capture(_) => Err(std::io::Error::other("no terminal attached")),
             #[cfg(test)]
-            W::FailOnce(..) => Err(std::io::Error::other("no terminal attached")),
+            Output::FailOnce { .. } => Err(std::io::Error::other("no terminal attached")),
             #[cfg(test)]
-            W::Screen(_, screen) => {
+            Output::Screen(_, screen) => {
                 // A real terminal would answer this only at its timeout, a
                 // stall rather than a wrong answer, so fail the test outright.
                 assert!(
@@ -993,7 +1103,7 @@ impl Painter {
             }
             Err(_) => {
                 // Preserve #1202's newline recovery for a real query failure.
-                self.print_crlf()?;
+                self.end_line()?;
                 self.prompt_start_row =
                     PromptStartRow::Stale(self.screen_height().saturating_sub(1));
                 return Ok(());
@@ -1013,7 +1123,7 @@ impl Painter {
                 // skips this guard but is bounded by `select_prompt_row` only
                 // re-using a range that contains that row.
                 if new_row == self.screen_height() {
-                    self.print_crlf()?;
+                    self.end_line()?;
                     new_row.saturating_sub(1)
                 } else {
                     new_row
@@ -1120,7 +1230,7 @@ impl Painter {
             // Moving the start position of the cursor based on the size of the required lines
             if self.large_buffer || anchor_uninitialized {
                 for _ in 0..screen_height.saturating_sub(lines_before_cursor) {
-                    self.stdout.queue(Print(&coerce_crlf("\n")))?;
+                    self.stdout.queue(Print("\n"))?;
                 }
                 // The reset puts the prompt at row 0; cache is back in sync.
                 self.prompt_start_row.mark_verified(0);
@@ -1163,11 +1273,14 @@ impl Painter {
             }
 
             self.exit_right_prompt = layout.right_prompt.map(|rp| {
-                let text = coerce_crlf(&lines.prompt_str_right);
                 let text = if use_ansi_coloring {
-                    format!("{}{}", prompt.get_prompt_right_color().prefix(), text)
+                    format!(
+                        "{}{}",
+                        prompt.get_prompt_right_color().prefix(),
+                        lines.prompt_str_right
+                    )
                 } else {
-                    text.into_owned()
+                    lines.prompt_str_right.to_string()
                 };
                 (text, rp)
             });
@@ -1177,10 +1290,7 @@ impl Painter {
             // The last_required_lines is used to calculate safe range of the current prompt.
             self.last_required_lines = required_lines;
 
-            let after_cursor = lines
-                .exit_after_cursor
-                .as_ref()
-                .unwrap_or(&lines.after_cursor);
+            let after_cursor = lines.exit_after_cursor.unwrap_or(lines.after_cursor);
             self.after_cursor_lines = if !after_cursor.is_empty() {
                 Some(after_cursor.to_string())
             } else {
@@ -1448,8 +1558,7 @@ impl Painter {
                 .queue(Print(markers.prompt_start(PromptKind::Right)))?;
         }
 
-        self.stdout
-            .queue(Print(&coerce_crlf(&lines.prompt_str_right)))?;
+        self.stdout.queue(Print(&lines.prompt_str_right))?;
 
         self.queue_cursor_placement(margin_row)
     }
@@ -1515,9 +1624,9 @@ impl Painter {
         let text = [
             &*lines.prompt_str_left,
             &*lines.prompt_indicator,
-            &*lines.before_cursor,
-            &*lines.after_cursor,
-            &*lines.hint,
+            lines.before_cursor,
+            lines.after_cursor,
+            lines.hint,
         ]
         .concat();
         let screen_width = self.screen_width();
@@ -1621,7 +1730,7 @@ impl Painter {
         };
         self.clear_from_anchor(starting_row)?;
         self.stdout
-            .queue(Print(&coerce_crlf(menu_string.trim_end_matches('\n'))))?;
+            .queue(Print(menu_string.trim_end_matches('\n')))?;
 
         Ok(())
     }
@@ -1664,16 +1773,14 @@ impl Painter {
                 .queue(Print(prompt.get_prompt_color().prefix()))?;
         }
 
-        self.stdout
-            .queue(Print(&coerce_crlf(&lines.prompt_str_left)))?;
+        self.stdout.queue(Print(&lines.prompt_str_left))?;
 
         if use_ansi_coloring {
             self.stdout
                 .queue(Print(prompt.get_indicator_color().prefix()))?;
         }
 
-        self.stdout
-            .queue(Print(&coerce_crlf(&lines.prompt_indicator)))?;
+        self.stdout.queue(Print(&lines.prompt_indicator))?;
 
         if use_ansi_coloring {
             self.stdout
@@ -1697,23 +1804,23 @@ impl Painter {
                 .queue(ResetColor)?;
         }
 
-        self.stdout.queue(Print(&lines.before_cursor))?;
+        self.stdout.queue(Print(lines.before_cursor))?;
         if !self.term_is_dumb {
             self.stdout.queue(SavePosition)?;
         }
-        self.stdout.queue(Print(&lines.after_cursor))?;
+        self.stdout.queue(Print(lines.after_cursor))?;
 
         let cursor_row = self.margin_cursor_row([
             &*lines.prompt_str_left,
             &lines.prompt_indicator,
-            &lines.before_cursor,
+            lines.before_cursor,
         ]);
 
         if let Some(menu) = menu {
             self.print_status(lines, use_ansi_coloring, layout)?;
             self.print_menu(menu, use_ansi_coloring, layout)?;
         } else {
-            self.stdout.queue(Print(&lines.hint))?;
+            self.stdout.queue(Print(lines.hint))?;
             self.print_status(lines, use_ansi_coloring, layout)?;
         }
 
@@ -1742,13 +1849,27 @@ impl Painter {
         } else {
             self.stdout.queue(cursor::MoveTo(0, row))?;
         }
-        self.stdout.queue(Print(&coerce_crlf(
-            &lines.status_block(layout.status_with_footer),
-        )))?;
+        self.stdout
+            .queue(Print(&lines.status_block(layout.status_with_footer)))?;
         if use_ansi_coloring {
             self.stdout
                 .queue(SetAttribute(Attribute::Reset))?
                 .queue(ResetColor)?;
+        }
+        Ok(())
+    }
+
+    /// Prints buffer text that [`buffer_lines_up_to_break`] cut, and returns
+    /// to the start of the row when it was cut at a line break.
+    ///
+    /// The return is what the large buffer has always drawn: the buffer used
+    /// to arrive with every break as `\r\n`, and a cut at the `\n` left the
+    /// `\r` in front of it behind. After a buffer ending in a newline that is
+    /// the right column for the cursor, though still on the row above its own.
+    fn print_up_to_break(&mut self, (text, at_break): (&str, bool)) -> Result<()> {
+        self.stdout.queue(Print(text))?;
+        if at_break {
+            self.stdout.queue(Print('\r'))?;
         }
         Ok(())
     }
@@ -1789,7 +1910,7 @@ impl Painter {
         let (prompt_start, prompt_end) =
             skip_buffer_lines_range(&lines.prompt_str_left, extra_rows, None);
         let prompt_skipped = &lines.prompt_str_left[prompt_start..prompt_end];
-        self.stdout.queue(Print(&coerce_crlf(prompt_skipped)))?;
+        self.stdout.queue(Print(prompt_skipped))?;
 
         if extra_rows == 0 {
             if use_ansi_coloring {
@@ -1807,7 +1928,7 @@ impl Painter {
         }
         let indicator_skipped =
             skip_buffer_lines(&lines.prompt_indicator, extra_rows_after_prompt, None);
-        self.stdout.queue(Print(&coerce_crlf(indicator_skipped)))?;
+        self.stdout.queue(Print(indicator_skipped))?;
 
         // Emit command input start marker (OSC 133;B) after prompt indicator
         if let Some(markers) = &self.semantic_markers {
@@ -1819,12 +1940,13 @@ impl Painter {
         }
 
         // Selecting the lines before the cursor that will be printed
-        let before_cursor_skipped = skip_buffer_lines(
-            &lines.before_cursor,
+        let before_cursor_cut = buffer_lines_up_to_break(
+            lines.before_cursor,
             extra_rows_after_prompt,
             layout.large_buffer_offset,
         );
-        self.stdout.queue(Print(before_cursor_skipped))?;
+        let before_cursor_skipped = before_cursor_cut.0;
+        self.print_up_to_break(before_cursor_cut)?;
         if !self.term_is_dumb {
             self.stdout.queue(SavePosition)?;
         }
@@ -1837,17 +1959,12 @@ impl Painter {
             // TODO: Also solve the difficult problem of displaying (parts of)
             // the content after the cursor with the completion menu
             // This only shows the rest of the line the cursor is on
-            if let Some(newline) = lines.after_cursor.find('\n') {
-                self.stdout.queue(Print(&lines.after_cursor[0..newline]))?;
-            } else {
-                self.stdout.queue(Print(&lines.after_cursor))?;
-            }
+            self.print_up_to_break(buffer_lines_up_to_break(lines.after_cursor, 0, Some(0)))?;
             self.print_menu(menu, use_ansi_coloring, layout)?;
         } else if screen_height == 0 {
             // Until the height is known, keep the first logical line as before.
-            for text in [&*lines.after_cursor, &lines.hint] {
-                self.stdout
-                    .queue(Print(skip_buffer_lines(text, 0, Some(0))))?;
+            for text in [lines.after_cursor, lines.hint] {
+                self.print_up_to_break(buffer_lines_up_to_break(text, 0, Some(0)))?;
             }
         } else {
             let (mut column, mut row) = wrap_position(
@@ -1856,7 +1973,7 @@ impl Painter {
             )
             .unwrap_or_default();
             // The tail shares the remaining screen space, including soft wraps.
-            for text in [&*lines.after_cursor, &lines.hint] {
+            for text in [lines.after_cursor, lines.hint] {
                 let mut end = 0;
                 while end < text.len() {
                     let rest = &text[end..];
@@ -1914,15 +2031,15 @@ impl Painter {
         }
     }
 
-    /// Writes `line` to the terminal followed by `\r\n` and
+    /// Writes `line` to the terminal followed by a line break and
     /// invalidates the cached prompt anchor since the line scrolls the
     /// terminal independently of the painter.
     pub(crate) fn paint_line(&mut self, line: &str) -> Result<()> {
         // Invalidate up front: a partial write below can still leave
         // bytes in the kernel/tty buffer and displace the cursor.
         self.invalidate_prompt_start_row();
-        self.stdout.queue(Print(&coerce_crlf(line)))?;
-        self.print_crlf()
+        self.stdout.queue(Print(line))?;
+        self.end_line()
     }
 
     /// Queue a hide and remember it, so [`Painter::show_cursor`] can undo it.
@@ -1983,11 +2100,9 @@ impl Painter {
         self.stdout.flush()
     }
 
-    /// Goes to the beginning of the next line
-    ///
-    /// Also works in raw mode
-    pub(crate) fn print_crlf(&mut self) -> Result<()> {
-        self.stdout.queue(Print("\r\n"))?;
+    /// Goes to the beginning of the next line, and flushes
+    pub(crate) fn end_line(&mut self) -> Result<()> {
+        self.stdout.queue(Print("\n"))?;
 
         self.stdout.flush()
     }
@@ -2032,7 +2147,7 @@ impl Painter {
                 .queue(ResetColor)?
                 .queue(RestorePosition)?;
         }
-        self.print_crlf()
+        self.end_line()
     }
 
     /// Commits `messages` to the screen above the prompt block, one row per
@@ -2070,7 +2185,7 @@ impl Painter {
     /// and left a copy of the prompt row on screen per batch.
     ///
     /// Each message is split at its newlines here, since every line needs
-    /// its own `\r\n` and row count, whatever the source handed over.
+    /// its own row count, whatever the source handed over.
     pub(crate) fn print_external_message(&mut self, messages: Vec<String>) -> Result<()> {
         // An idle callback leaves the anchor `Stale` on every poll. Check it
         // the way the repaint after this will, so the messages start where
@@ -2093,7 +2208,7 @@ impl Painter {
             self.clear_from_anchor(start)?;
 
             // Count where the cursor lands. A line wider than the screen takes
-            // more than one row; an empty one still takes its `\r\n`. Once the
+            // more than one row; an empty one still takes its line break. Once the
             // cursor is on the last row a newline scrolls instead of moving,
             // hence the cap.
             let height = self.screen_height();
@@ -2107,7 +2222,7 @@ impl Painter {
                 // max(1) on the width: a mid-resize terminal can report 0 (#842).
                 let rows = estimate_required_lines(line, self.screen_width().max(1)).max(1);
                 let rows = u16::try_from(rows).unwrap_or(u16::MAX);
-                self.stdout.queue(Print(line))?.queue(Print("\r\n"))?;
+                self.stdout.queue(Print(line))?.queue(Print("\n"))?;
                 // Saturating: a height grown to fit a measured row can sit near
                 // `u16::MAX` (#1236).
                 let next = row.saturating_add(rows);
@@ -2181,7 +2296,7 @@ impl Painter {
         // Move it to the last line to ensure that every newline results in scroll
         self.stdout.queue(MoveTo(0, self.screen_height() - 1))?;
         for _ in 0..num {
-            self.stdout.queue(Print(&coerce_crlf("\n")))?;
+            self.stdout.queue(Print("\n"))?;
         }
         Ok(())
     }
@@ -2645,7 +2760,7 @@ mod tests {
         painter.term_is_dumb = false;
         // Room for the commit and for the reset and the hide that open the
         // paint, so the write that fails is one of the draw's.
-        painter.stdout = W::FailOnce(Vec::new(), 60, false);
+        painter.stdout = W::fail_once_after(60);
         painter.prompt_start_row.mark_verified(0);
         painter
             .print_external_message(vec!["one".into()])
@@ -2664,10 +2779,8 @@ mod tests {
             )
             .is_err());
 
-        let W::FailOnce(output, _, failed) = &painter.stdout else {
-            panic!("test writer changed");
-        };
-        assert!(*failed);
+        assert!(painter.stdout.has_failed());
+        let output = painter.stdout.captured();
         assert!(output.ends_with(b"\x1b[?2026l"), "{output:?}");
         assert!(!painter.frame_open);
     }
@@ -2973,14 +3086,12 @@ mod tests {
     fn a_failed_external_message_commit_ends_its_frame() {
         let mut p = capturing_painter_anchored_at(5);
         // Room for the cursor hide and the frame's start, not the erase.
-        p.stdout = W::FailOnce(Vec::new(), 16, false);
+        p.stdout = W::fail_once_after(16);
 
         assert!(p.print_external_message(vec!["one".into()]).is_err());
 
-        let W::FailOnce(output, _, failed) = &p.stdout else {
-            panic!("test writer changed");
-        };
-        assert!(*failed);
+        assert!(p.stdout.has_failed());
+        let output = p.stdout.captured();
         assert!(output.windows(8).any(|bytes| bytes == b"\x1b[?2026h"));
         assert!(output.ends_with(b"\x1b[?2026l"), "{output:?}");
     }
@@ -3323,9 +3434,9 @@ mod tests {
             prompt_str_left: Cow::Borrowed(left),
             prompt_str_right: Cow::Borrowed(right),
             prompt_indicator: Cow::Borrowed(indicator),
-            before_cursor: Cow::Borrowed(before),
-            after_cursor: Cow::Borrowed(after),
-            hint: Cow::Borrowed(""),
+            before_cursor: before,
+            after_cursor: after,
+            hint: "",
             right_prompt_on_last_line: false,
             exit_after_cursor: None,
             status: Cow::Borrowed(""),
@@ -3762,8 +3873,9 @@ mod tests {
 
     #[test]
     fn a_wrapped_hint_keeps_the_prompt_visible() {
+        let hint = "long ".repeat(80);
         let mut lines = make_lines("prompt", "> ", "", "{", "");
-        lines.hint = Cow::Owned("long ".repeat(80));
+        lines.hint = &hint;
         let (out, _, large) = capture_repaint(&lines, 0);
         assert!(large);
 
@@ -4097,7 +4209,7 @@ mod tests {
         let menu =
             menu_rows.map(|rows| ReedlineMenu::EngineCompleter(Box::new(TestMenu::new(rows))));
         let mut lines = make_lines(TEST_PROMPT, "", "", before, after);
-        lines.hint = Cow::Borrowed(hint);
+        lines.hint = hint;
 
         let replayed = capture_repaint_then_exit(&lines, menu.as_ref());
 
@@ -4146,6 +4258,48 @@ mod tests {
         let menu = TestMenu::new("item1\nitem2\r\nitem3\n");
         let out = capture_print_menu(&menu, Some(1));
         assert!(out.ends_with("item1\r\nitem2\r\nitem3"), "emitted: {out:?}");
+    }
+
+    /// What reaches the output when `writes` go through a [`W`] one by one.
+    fn written_through(writes: &[&str]) -> String {
+        let mut writer = W::capture();
+        for write in writes {
+            writer.write_all(write.as_bytes()).unwrap();
+        }
+        String::from_utf8(writer.captured().to_vec()).unwrap()
+    }
+
+    #[rstest]
+    #[case::nothing(&[""], "")]
+    #[case::no_line_break(&["abc"], "abc")]
+    #[case::line_feed(&["a\nb"], "a\r\nb")]
+    #[case::only_a_line_feed(&["\n"], "\r\n")]
+    #[case::leading_and_trailing(&["\na\n"], "\r\na\r\n")]
+    #[case::blank_line(&["a\n\nb"], "a\r\n\r\nb")]
+    #[case::crlf_stays(&["a\r\nb"], "a\r\nb")]
+    #[case::mixed(&["a\nb\r\nc\n"], "a\r\nb\r\nc\r\n")]
+    #[case::lone_cr_stays(&["a\rb\n"], "a\rb\r\n")]
+    #[case::only_the_cr_at_the_lf_counts(&["a\r\r\nb"], "a\r\r\nb")]
+    #[case::multibyte_neighbours(&["😇\n日本"], "😇\r\n日本")]
+    #[case::line_feed_in_its_own_write(&["a", "\n", "b"], "a\r\nb")]
+    #[case::crlf_split_across_writes(&["a\r", "\nb"], "a\r\nb")]
+    #[case::cr_then_text_then_lf(&["a\r", "b", "\n"], "a\rb\r\n")]
+    #[case::escape_sequence_between(&["a\r", "\x1b[0m", "\n"], "a\r\x1b[0m\r\n")]
+    fn writer_sends_every_line_break_as_crlf(#[case] writes: &[&str], #[case] expected: &str) {
+        assert_eq!(written_through(writes), expected);
+    }
+
+    /// A failure between the `\r` and its `\n` must not leave a second `\r`
+    /// behind when the caller tries the `\n` again.
+    #[test]
+    fn writer_retries_a_line_feed_without_a_second_cr() {
+        // Room for the `a` and the `\r`.
+        let mut writer = W::fail_once_after(2);
+        assert_eq!(writer.write(b"a\nb").unwrap(), 1);
+        assert!(writer.write(b"\nb").is_err());
+        assert!(writer.has_failed());
+        assert_eq!(writer.write(b"\nb").unwrap(), 1);
+        assert_eq!(writer.captured(), b"a\r\n");
     }
 
     #[test]

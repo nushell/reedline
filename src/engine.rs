@@ -1221,10 +1221,12 @@ impl Reedline {
         Ok(())
     }
 
-    /// Print the history session id
+    /// Output the history session id to the terminal
     pub fn print_history_session_id(&mut self) -> Result<()> {
-        println!("History Session Id: {:?}", self.get_history_session_id());
-        Ok(())
+        self.print_line(&format!(
+            "History Session Id: {:?}",
+            self.get_history_session_id()
+        ))
     }
 
     /// Toggle between having a history that uses the history session id and one that does not
@@ -1343,8 +1345,8 @@ impl Reedline {
         self.editor.get_selection()
     }
 
-    /// Writes `msg` to the terminal with a following carriage return and newline,
-    /// its control characters shown rather than sent
+    /// Writes `msg` to the terminal with a following line break, its control
+    /// characters shown rather than sent
     fn print_line(&mut self, msg: &str) -> Result<()> {
         self.painter.paint_line(&escape_control(msg))
     }
@@ -3498,9 +3500,6 @@ impl Reedline {
         } else {
             String::new()
         };
-
-        // Needs to add return carriage to newlines because when not in raw mode
-        // some OS don't fully return the carriage
 
         let lines = if hint_replaces_closers {
             // The exit path reprints what follows the cursor, which is still
