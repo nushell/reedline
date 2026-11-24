@@ -438,13 +438,7 @@ impl ColumnarMenu {
             let padding_width = left_text_size.saturating_sub(marker.len());
             let mut base_line = format!("{marker}{display_value:padding_width$}");
 
-            base_line.extend(description.chars().take(description_size).map(|character| {
-                if character == '\n' {
-                    ' '
-                } else {
-                    character
-                }
-            }));
+            base_line.extend(on_one_row(description, " ").chars().take(description_size));
             base_line
         };
 
@@ -512,13 +506,10 @@ impl ColumnarMenu {
             return format!("{styled_value}{RESET}{:padding_width$}", "");
         }
 
-        // Prepare the description by filtering out newlines
+        // Prepare the description by filtering out line breaks
         // and applying truncation and paint.
         let padding_size = left_text_size.saturating_sub(display_width);
-        let cleaned_description: String = description
-            .chars()
-            .filter(|&character| character != '\n')
-            .collect();
+        let cleaned_description = on_one_row(description, "");
         let painted_description = color_settings
             .description_style
             .paint(truncate_with_ansi(&cleaned_description, description_size));
@@ -614,6 +605,19 @@ impl ColumnarMenu {
         self.working_details.visible_rows = available;
         self.skip_rows = scroll_offset_usize(self.row_pos, self.skip_rows, usize::from(available));
     }
+}
+
+/// `description` as it fits on a suggestion's row: its lines joined by
+/// `separator`.
+///
+/// A `\r\n` is a line break like a `\n`. Its `\r` goes with it, or it would
+/// return to column 0 and the rest would be drawn over the suggestion.
+fn on_one_row(description: &str, separator: &str) -> String {
+    description
+        .split('\n')
+        .map(|line| line.strip_suffix('\r').unwrap_or(line))
+        .collect::<Vec<&str>>()
+        .join(separator)
 }
 
 impl Menu for ColumnarMenu {
@@ -820,7 +824,7 @@ impl Menu for ColumnarMenu {
                             })
                             .collect();
                         menu_string.push_str(&row_string);
-                        menu_string.push_str("\r\n");
+                        menu_string.push('\n');
                     }
                     menu_string
                 }
@@ -842,7 +846,7 @@ impl Menu for ColumnarMenu {
 
                             let end_of_line =
                                 if column == self.get_cols().saturating_sub(1) as usize {
-                                    "\r\n"
+                                    "\n"
                                 } else {
                                     ""
                                 };
@@ -1097,6 +1101,37 @@ mod tests {
         setup_menu(&mut menu, &mut editor, &mut completer, (10, 10));
 
         assert!(menu.menu_string(10, true).contains("验"));
+    }
+
+    /// A description is drawn on its suggestion's row, so a line break in it
+    /// must not reach the terminal. The escape lets a `\r\n` through as one,
+    /// and a `\r` left without its `\n` would return to column 0 and draw the
+    /// rest of the description over the suggestion.
+    #[rstest::rstest]
+    #[case::plain(false, ">CMD FIRST SECOND\n")]
+    #[case::colored(true, "cmd  firstsecond\n")]
+    fn a_line_break_in_a_description_leaves_no_carriage_return(
+        #[case] use_ansi_coloring: bool,
+        #[case] expected: &str,
+    ) {
+        struct CrlfDescription;
+
+        impl Completer for CrlfDescription {
+            fn complete(&mut self, _line: &str, pos: usize) -> crate::CompletionResult {
+                let mut suggestion = fake_suggestion("cmd", pos);
+                suggestion.description = Some("first\r\nsecond".into());
+                crate::CompletionResult::fresh(vec![suggestion])
+            }
+        }
+
+        let mut menu = ColumnarMenu::default().with_name("testmenu");
+        let mut editor = Editor::default();
+        setup_menu(&mut menu, &mut editor, &mut CrlfDescription, (60, 10));
+
+        let shown = menu.menu_string(10, use_ansi_coloring);
+        // Checked on its own: stripping the styling would drop a `\r` too.
+        assert!(!shown.contains('\r'), "shown: {shown:?}");
+        assert_eq!(strip_ansi_escapes::strip_str(&shown), expected);
     }
 
     /// A completer whose result is always `Pending` (a background compute that

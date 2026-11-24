@@ -265,7 +265,7 @@ impl ListMenu {
 
     /// End of line for menu
     fn end_of_line() -> &'static str {
-        "\r\n"
+        "\n"
     }
 
     /// Text style for menu
@@ -646,18 +646,15 @@ impl Menu for ListMenu {
                             let lines = line.lines().take(self.max_lines as usize).fold(
                                 String::new(),
                                 |mut out_string, string| {
-                                    let _ = write!(
-                                        out_string,
-                                        "{}\r\n{}",
-                                        string, self.multiline_marker
-                                    );
+                                    let _ =
+                                        write!(out_string, "{}\n{}", string, self.multiline_marker);
                                     out_string
                                 },
                             );
 
                             lines + "..."
                         } else {
-                            line.replace('\n', &format!("\r\n{}", self.multiline_marker))
+                            line.replace('\n', &format!("\n{}", self.multiline_marker))
                         };
 
                         let row_number = format!("{}: ", index + values_before_page);
@@ -796,7 +793,7 @@ mod tests {
         assert_eq!(
             menu.create_string("value", Some("desc"), 1, "", true),
             format!(
-                "{}(desc){} {}value{}\r\n",
+                "{}(desc){} {}value{}\n",
                 menu.settings.color.description_style.prefix(),
                 RESET,
                 menu.text_style(1),
@@ -812,7 +809,7 @@ mod tests {
         assert_eq!(
             menu.create_string("value", Some("desc"), 1, "", true),
             format!(
-                "{}value{} {}desc{}\r\n",
+                "{}value{} {}desc{}\n",
                 menu.text_style(1),
                 RESET,
                 menu.settings.color.description_style.prefix(),
@@ -827,7 +824,7 @@ mod tests {
 
         assert_eq!(
             menu.create_string("value", Some("desc"), 0, "", false),
-            "(desc) >VALUE\r\n"
+            "(desc) >VALUE\n"
         );
     }
 
@@ -837,7 +834,7 @@ mod tests {
 
         assert_eq!(
             menu.create_string("value", Some("desc"), 0, "", false),
-            ">VALUE desc\r\n"
+            ">VALUE desc\n"
         );
     }
 
@@ -1025,7 +1022,7 @@ mod tests {
         );
         assert!(menu
             .menu_string(5, false)
-            .starts_with("4: >E\r\nPage 3: records 4 - 4  total: 5"));
+            .starts_with("4: >E\nPage 3: records 4 - 4  total: 5"));
     }
 
     #[test]
@@ -1038,13 +1035,13 @@ mod tests {
         );
         assert_eq!(
             menu.menu_string(5, false),
-            "2: c\r\n3: >D\r\nPage 2: records 2 - 3  total: 5  [FULL]"
+            "2: c\n3: >D\nPage 2: records 2 - 3  total: 5  [FULL]"
         );
     }
 
     #[rstest]
-    #[case::continued("x\ny", 5, "0: >X\r\n:::Y\r\n")]
-    #[case::cut_at_max_lines("x\ny\nz", 2, "0: >X\r\n:::Y\r\n:::...\r\n")]
+    #[case::continued("x\ny", 5, "0: >X\n:::Y\n")]
+    #[case::cut_at_max_lines("x\ny\nz", 2, "0: >X\n:::Y\n:::...\n")]
     fn multiline_entries_continue_behind_the_marker(
         #[case] value: &str,
         #[case] max_lines: u16,

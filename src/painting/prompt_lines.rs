@@ -113,7 +113,7 @@ impl<'prompt> PromptLines<'prompt> {
         ) {
             (_, false) => Cow::Borrowed(&self.status),
             (true, true) => Cow::Borrowed(&self.footer),
-            (false, true) => Cow::Owned(format!("{}\r\n{}", self.status, self.footer)),
+            (false, true) => Cow::Owned(format!("{}\n{}", self.status, self.footer)),
         }
     }
 
@@ -253,7 +253,7 @@ fn rows_of(text: &str, terminal_columns: u16) -> u16 {
         .unwrap_or(u16::MAX)
 }
 
-/// `text` as the status line draws it, lines joined by `\r\n`. See
+/// `text` as the status line draws it, lines joined by `\n`. See
 /// [`PromptLines::with_status`].
 fn drawn_rows(text: &str, use_ansi_coloring: bool) -> String {
     let mut drawn = String::with_capacity(text.len());
@@ -261,7 +261,7 @@ fn drawn_rows(text: &str, use_ansi_coloring: bool) -> String {
     // break never reaches the escape.
     for (index, line) in text.trim_end_matches(['\r', '\n']).lines().enumerate() {
         if index > 0 {
-            drawn.push_str("\r\n");
+            drawn.push('\n');
         }
         let line = if use_ansi_coloring {
             escape_control_keep_sgr(line)
@@ -551,8 +551,8 @@ mod tests {
     /// The footer goes on the rows after the status line, drawn like it, and
     /// neither side adds a blank row when the other is empty.
     #[rstest]
-    #[case::below_status("status", "footer", "status\r\nfooter")]
-    #[case::status_trailing_newline("status\n", "footer", "status\r\nfooter")]
+    #[case::below_status("status", "footer", "status\nfooter")]
+    #[case::status_trailing_newline("status\n", "footer", "status\nfooter")]
     #[case::no_status("", "footer", "footer")]
     #[case::no_footer("status", "", "status")]
     #[case::footer_only_newlines("status", "\n\n", "status")]
@@ -593,9 +593,9 @@ mod tests {
 
     #[rstest]
     #[case::trailing_line_breaks("a\n\r\n", "a", true)]
-    #[case::inner_newline("a\nb", "a\r\nb", true)]
-    #[case::inner_crlf("a\r\nb", "a\r\nb", true)]
-    #[case::inner_blank_line("a\n\nb", "a\r\n\r\nb", true)]
+    #[case::inner_newline("a\nb", "a\nb", true)]
+    #[case::inner_crlf("a\r\nb", "a\nb", true)]
+    #[case::inner_blank_line("a\n\nb", "a\n\nb", true)]
     #[case::inner_carriage_return("a\rb", "a^Mb", true)]
     #[case::control_sequence("\x1b[2Kls", "^[[2Kls", true)]
     #[case::sgr_kept("\x1b[31mred\x1b[0m", "\x1b[31mred\x1b[0m", true)]
