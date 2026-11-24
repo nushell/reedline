@@ -24,8 +24,37 @@ use {
     },
     std::io::{Result, Write},
     std::ops::RangeInclusive,
+    std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     unicode_segmentation::UnicodeSegmentation,
 };
+
+/// Tells reedline that a completer took the terminal: it ran a program that wrote to the
+/// screen or moved the cursor, as an interactive picker such as `fzf --height` does.
+///
+/// Get one from [`Reedline::terminal_taken_signal`](crate::Reedline::terminal_taken_signal)
+/// and hand it to every completer the host supplies, the engine's and each menu's. Calling
+/// [`took_terminal`](TerminalTakenSignal::took_terminal) when the completer gives the
+/// terminal away makes the next paint ask the terminal where the prompt is. Otherwise
+/// reedline trusts the row it drew the prompt at.
+#[derive(Clone, Debug, Default)]
+pub struct TerminalTakenSignal {
+    flag: Arc<AtomicBool>,
+}
+
+impl TerminalTakenSignal {
+    /// Record that the terminal was written to, or its cursor moved, behind reedline.
+    pub fn took_terminal(&self) {
+        self.flag.store(true, Ordering::Relaxed);
+    }
+
+    /// Consume a pending mark.
+    fn take(&self) -> bool {
+        self.flag.swap(false, Ordering::Relaxed)
+    }
+}
 
 // Returns a string that skips N number of lines with the next offset of lines
 // An offset of 0 would return only one line after skipping the required lines
@@ -611,6 +640,12 @@ pub struct Painter {
     /// the whole block stays on the screen. Meaningless while neither has
     /// rows.
     menu_room: u16,
+    /// Present once the host asked for one: completers then say when they take the
+    /// terminal, and the anchor is trusted otherwise.
+    terminal_taken: Option<TerminalTakenSignal>,
+    /// How many times the terminal was asked where the cursor is.
+    #[cfg(test)]
+    cursor_queries: usize,
 }
 
 impl Painter {
@@ -635,7 +670,23 @@ impl Painter {
             status_rows: 0,
             footer_rows: 0,
             menu_room: 0,
+            terminal_taken: None,
+            #[cfg(test)]
+            cursor_queries: 0,
         }
+    }
+
+    /// The signal completers mark when they take the terminal, created on the first call.
+    pub(crate) fn terminal_taken_signal(&mut self) -> TerminalTakenSignal {
+        self.terminal_taken
+            .get_or_insert_with(TerminalTakenSignal::default)
+            .clone()
+    }
+
+    /// Whether completers report taking the terminal through a [`TerminalTakenSignal`].
+    /// Without one, any host completer is assumed to take it whenever it runs.
+    pub(crate) fn completers_report_taking_the_terminal(&self) -> bool {
+        self.terminal_taken.is_some()
     }
 
     /// Height of the current terminal window.
@@ -678,6 +729,10 @@ impl Painter {
     /// `Ok(None)` is [`cursor_position_for_term`]'s: no query was made, so
     /// there is no row to grow to.
     fn measure_cursor_position(&mut self) -> Result<Option<(u16, u16)>> {
+        #[cfg(test)]
+        {
+            self.cursor_queries += 1;
+        }
         let position = cursor_position_for_term(&self.stdout, self.term_is_dumb)?;
         if let Some((_, row)) = position {
             self.grow_screen_height_to_fit_row(row);
@@ -691,6 +746,13 @@ impl Painter {
     /// this first, so they agree on where the block starts. It queries the
     /// cursor, so it has to run before a synchronized frame opens.
     fn reconcile_stale_anchor(&mut self) {
+        if self
+            .terminal_taken
+            .as_ref()
+            .is_some_and(TerminalTakenSignal::take)
+        {
+            self.prompt_start_row.invalidate();
+        }
         if let PromptStartRow::Stale(row) = self.prompt_start_row {
             // Cursor above the cached row => content scrolled up while the tty
             // was yielded. Re-anchor to the cursor (ground truth) rather than
@@ -821,7 +883,9 @@ impl Painter {
         // Large buffer extra rows computation
         let (extra_rows, extra_rows_after_prompt) = if self.large_buffer {
             let prompt_rows_after_first = lines.prompt_height(screen_width) as usize - 1;
-            let prompt_indicator_lines = lines.prompt_indicator.lines().count();
+            // An empty indicator has no line of its own, but the row it shares
+            // with the prompt's last line and the buffer's first is still there.
+            let prompt_indicator_lines = lines.prompt_indicator.lines().count().max(1);
             let before_cursor_lines = lines.before_cursor.lines().count();
             let total_lines_before =
                 (prompt_rows_after_first + prompt_indicator_lines + before_cursor_lines)
@@ -981,6 +1045,10 @@ impl Painter {
         reported_size: (u16, u16),
         suspended_state: Option<&PainterSuspendedState>,
     ) -> Result<()> {
+        // The position measured here already reflects any earlier taking of the terminal.
+        if let Some(signal) = &self.terminal_taken {
+            signal.take();
+        }
         // Update the terminal size
         self.terminal_size = {
             // if reported size is 0, 0 -
@@ -2236,6 +2304,12 @@ impl Painter {
     #[cfg(test)]
     pub(crate) fn force_prompt_anchored_for_test(&mut self, row: u16) {
         self.prompt_start_row = PromptStartRow::Verified(row);
+    }
+
+    /// How many times the painter has asked the terminal where the cursor is.
+    #[cfg(test)]
+    pub(crate) fn cursor_queries_for_test(&self) -> usize {
+        self.cursor_queries
     }
 
     /// Whether the cached anchor is still trusted, so a test can pin which events cost
@@ -4280,26 +4354,26 @@ mod tests {
     fn test_layout_large_buffer_extra_rows() {
         // Screen is 5 lines tall, buffer content exceeds it.
         // prompt_height(TEST_PROMPT) - 1 = 0
-        // prompt_indicator_lines("") = 0
+        // prompt_indicator_lines("") = 1, the row it shares with the prompt
         // before_cursor has 7 lines
-        // total_lines_before = 0 + 0 + 7 - 1 = 6
-        // extra_rows = 6 - 5 = 1
-        // extra_rows_after_prompt = 1 - 0 = 1
+        // total_lines_before = 0 + 1 + 7 - 1 = 7
+        // extra_rows = 7 - 5 = 2
+        // extra_rows_after_prompt = 2 - 0 = 2
         let painter = make_painter(20, 5, true);
         let lines = make_lines(TEST_PROMPT, "", "", "l1\nl2\nl3\nl4\nl5\nl6\nl7", "");
         let layout = painter.compute_layout(&lines, None, 0, 0);
 
-        assert_eq!(layout.extra_rows, 1);
-        assert_eq!(layout.extra_rows_after_prompt, 1);
+        assert_eq!(layout.extra_rows, 2);
+        assert_eq!(layout.extra_rows_after_prompt, 2);
         assert_eq!(layout.first_buffer_col, 0); // scrolled, so col 0
     }
 
     #[test]
     fn test_layout_large_buffer_empty_buffer_does_not_underflow() {
-        // A one-line prompt with an empty indicator and an empty buffer makes
-        // every line count in the large-buffer math zero:
+        // A one-line prompt with an empty indicator and an empty buffer once
+        // made every line count in the large-buffer math zero:
         // prompt_height(TEST_PROMPT) - 1 = 0
-        // prompt_indicator_lines("") = 0
+        // prompt_indicator_lines("") = 0, before the indicator's row counted
         // before_cursor_lines("") = 0
         // total_lines_before = 0 + 0 + 0 - 1 used to underflow, independent of
         // screen height. `make_painter(.., true)` forces the large-buffer path.

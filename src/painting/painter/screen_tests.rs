@@ -459,6 +459,28 @@ fn large_buffer_of_one_wrapped_line_stays_on_screen() {
     assert_eq!(session.screen.cursor(), (2, 4));
 }
 
+// An empty indicator still shares the prompt's last row with the buffer's
+// first line. Counted as no row at all, the viewport started one row early:
+// the paint emitted a row too many and the terminal scrolled, on every paint.
+#[rstest::rstest]
+#[case::no_indicator("> ", "")]
+#[case::an_indicator("", "> ")]
+fn large_buffer_stays_on_screen_whatever_the_indicator(
+    #[case] left: &'static str,
+    #[case] indicator: &'static str,
+) {
+    let mut session = Session::new(10, 3, 0);
+    let prompt = FixedPrompt::new(left, indicator);
+
+    session.paint(&prompt, "1\n2\n3\n4\n5", "");
+    let scrolled_by_first_paint = session.screen.scrolled();
+    session.paint(&prompt, "1\n2\n3\n4\n5", "");
+
+    assert_eq!(session.screen.scrolled(), scrolled_by_first_paint);
+    assert_eq!(session.screen.rows(), ["3", "4", "5"]);
+    assert_eq!(session.screen.cursor(), (1, 2));
+}
+
 #[test]
 fn status_line_draws_below_the_buffer() {
     let mut session = Session::new(20, 6, 1);
