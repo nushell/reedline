@@ -773,7 +773,9 @@ impl Painter {
         // Large buffer extra rows computation
         let (extra_rows, extra_rows_after_prompt) = if self.large_buffer {
             let prompt_rows_after_first = lines.prompt_height(screen_width) as usize - 1;
-            let prompt_indicator_lines = lines.prompt_indicator.lines().count();
+            // An empty indicator has no line of its own, but the row it shares
+            // with the prompt's last line and the buffer's first is still there.
+            let prompt_indicator_lines = lines.prompt_indicator.lines().count().max(1);
             let before_cursor_lines = lines.before_cursor.lines().count();
             let total_lines_before =
                 (prompt_rows_after_first + prompt_indicator_lines + before_cursor_lines)
@@ -4188,26 +4190,26 @@ mod tests {
     fn test_layout_large_buffer_extra_rows() {
         // Screen is 5 lines tall, buffer content exceeds it.
         // prompt_height(TEST_PROMPT) - 1 = 0
-        // prompt_indicator_lines("") = 0
+        // prompt_indicator_lines("") = 1, the row it shares with the prompt
         // before_cursor has 7 lines
-        // total_lines_before = 0 + 0 + 7 - 1 = 6
-        // extra_rows = 6 - 5 = 1
-        // extra_rows_after_prompt = 1 - 0 = 1
+        // total_lines_before = 0 + 1 + 7 - 1 = 7
+        // extra_rows = 7 - 5 = 2
+        // extra_rows_after_prompt = 2 - 0 = 2
         let painter = make_painter(20, 5, true);
         let lines = make_lines(TEST_PROMPT, "", "", "l1\nl2\nl3\nl4\nl5\nl6\nl7", "");
         let layout = painter.compute_layout(&lines, None, 0, 0);
 
-        assert_eq!(layout.extra_rows, 1);
-        assert_eq!(layout.extra_rows_after_prompt, 1);
+        assert_eq!(layout.extra_rows, 2);
+        assert_eq!(layout.extra_rows_after_prompt, 2);
         assert_eq!(layout.first_buffer_col, 0); // scrolled, so col 0
     }
 
     #[test]
     fn test_layout_large_buffer_empty_buffer_does_not_underflow() {
-        // A one-line prompt with an empty indicator and an empty buffer makes
-        // every line count in the large-buffer math zero:
+        // A one-line prompt with an empty indicator and an empty buffer once
+        // made every line count in the large-buffer math zero:
         // prompt_height(TEST_PROMPT) - 1 = 0
-        // prompt_indicator_lines("") = 0
+        // prompt_indicator_lines("") = 0, before the indicator's row counted
         // before_cursor_lines("") = 0
         // total_lines_before = 0 + 0 + 0 - 1 used to underflow, independent of
         // screen height. `make_painter(.., true)` forces the large-buffer path.
