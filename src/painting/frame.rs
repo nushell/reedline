@@ -23,7 +23,7 @@
 //! sequence the layout does not recognize stays where it was, as a zero-width
 //! cell whose text is the sequence.
 
-use super::utils::advance_grapheme;
+use super::utils::{advance_grapheme, TAB_STOP};
 use std::sync::Arc;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
@@ -504,6 +504,7 @@ impl Builder {
                         "\n" | "\r\n" => self.newline(),
                         // Lone carriage returns do not occur in coerced text.
                         "\r" => {}
+                        "\t" => self.tab(at),
                         _ => self.glyph(grapheme, at),
                     }
                 }
@@ -573,6 +574,23 @@ impl Builder {
         });
         self.row = row;
         self.col = col.saturating_add(width);
+    }
+
+    /// A tab, as the blanks that reach the next tab stop from the column it
+    /// starts on.
+    ///
+    /// Never as a cell of its own: a terminal only moves its cursor for a
+    /// tab, so a row redrawn from one keeps what the last frame had under it,
+    /// and the columns it takes are for the terminal's stops to decide.
+    /// Blanks draw over every column they are counted for and wrap like any
+    /// other text. Each carries the tab's buffer index, so a click anywhere
+    /// on the tab finds it.
+    fn tab(&mut self, index: Option<usize>) {
+        let (col, _) = self.position();
+        let blanks = TAB_STOP - usize::from(col) % TAB_STOP;
+        for _ in 0..blanks {
+            self.glyph(" ", index);
+        }
     }
 
     fn frame(mut self, cursor: (u16, u16), prompt_rows: u16) -> Frame {
@@ -785,6 +803,44 @@ mod tests {
         assert_eq!(frame.cursor, (1, 1));
         assert_eq!(frame.index_at(2, 0), Some(0));
         assert_eq!(frame.index_at(0, 1), Some(2));
+    }
+
+    /// A tab is the blanks up to the next stop, counted on the row it is
+    /// drawn on, and every one of them is the tab for a click.
+    #[rstest]
+    #[case::after_the_prompt("> ", "\ta", ">       a", 9)]
+    #[case::mid_row("> ", "abc\td", "> abc   d", 9)]
+    #[case::on_a_stop("", "abcdefgh\ti", "abcdefgh        i", 17)]
+    fn a_tab_is_laid_out_as_blanks_to_the_next_stop(
+        #[case] prompt: &str,
+        #[case] before: &str,
+        #[case] expected: &str,
+        #[case] cursor_column: u16,
+    ) {
+        let frame = layout(&input(prompt, before, "", 30));
+        assert_eq!(texts(&frame), vec![expected]);
+        assert_eq!(frame.cursor, (cursor_column, 0));
+        assert!(frame.rows[0].cells.iter().all(|cell| cell.grapheme != "\t"));
+    }
+
+    #[test]
+    fn every_blank_of_a_tab_maps_back_to_the_tab() {
+        let frame = layout(&input("> ", "a\tb", "", 30));
+        assert_eq!(frame.index_at(2, 0), Some(0));
+        for column in 3..8 {
+            assert_eq!(frame.index_at(column, 0), Some(1), "column {column}");
+        }
+        assert_eq!(frame.index_at(8, 0), Some(2));
+    }
+
+    #[test]
+    fn a_tab_that_does_not_fit_the_row_wraps_like_text() {
+        // Six columns left of ten, and the stop is at eight: four blanks fit.
+        let frame = layout(&input("", "abcd\tefgh", "", 10));
+        assert_eq!(texts(&frame), vec!["abcd    ef", "gh"]);
+        // From column nine the stop at sixteen is past the margin.
+        let frame = layout(&input("", "abcdefghi\tj", "", 10));
+        assert_eq!(texts(&frame), vec!["abcdefghi ", "      j"]);
     }
 
     #[test]

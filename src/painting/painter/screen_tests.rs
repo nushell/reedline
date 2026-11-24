@@ -279,6 +279,42 @@ fn repaint_draws_over_the_previous_frame(
     assert_eq!(session.screen.scrolled(), 0);
 }
 
+// A tab sent to the terminal only moves the cursor, it draws nothing over the
+// cells it passes. A row that now starts with one must still lose what the
+// previous paint had there: the multiline indicators of a pasted block, once
+// the transient prompt repaints it without them.
+#[rstest]
+fn a_tab_leaves_nothing_of_the_previous_frame_under_it(
+    #[values(Engine::Streaming, Engine::Frame)] engine: Engine,
+) {
+    let mut session = Session::new(engine, 30, 6, 0);
+    let prompt = FixedPrompt::new("> ", "");
+
+    session.paint(&prompt, "def a [] {\n. \techo\n. }", "");
+    session.paint(&prompt, "def a [] {\n\techo\n}", "");
+
+    assert_eq!(
+        session.screen.rows()[..3],
+        ["> def a [] {", "        echo", "}"]
+    );
+    assert_eq!(session.screen.cursor(), (1, 2));
+}
+
+// The cursor is placed from the same columns the text was laid out on, so
+// text after a tab has to be counted from the tab stop it starts at.
+#[rstest]
+fn the_cursor_follows_a_tab_to_its_stop(
+    #[values(Engine::Streaming, Engine::Frame)] engine: Engine,
+) {
+    let mut session = Session::new(engine, 30, 6, 0);
+    let prompt = FixedPrompt::new("> ", "");
+
+    session.paint(&prompt, "a\tb", "c");
+
+    assert_eq!(session.screen.row(0), "> a     bc");
+    assert_eq!(session.screen.cursor(), (9, 0));
+}
+
 // #1141: text ending exactly on the margin leaves the terminal's wrap pending,
 // and terminals disagree about restoring that state. The cursor belongs on the
 // next row's home column, placed there absolutely.

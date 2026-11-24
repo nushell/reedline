@@ -187,7 +187,7 @@ pub(crate) fn line_width(line: &str) -> usize {
 }
 
 /// Columns from one tab stop to the next, the terminal default.
-const TAB_STOP: usize = 8;
+pub(crate) const TAB_STOP: usize = 8;
 
 /// `line` with each tab expanded to the spaces that reach the next tab stop,
 /// counted from the start of the line. SGR takes no columns.
