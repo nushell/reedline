@@ -643,10 +643,21 @@ pub struct Painter {
     /// Present once the host asked for one: completers then say when they take the
     /// terminal, and the anchor is trusted otherwise.
     terminal_taken: Option<TerminalTakenSignal>,
+    /// Cursor-position queries in a row that got no answer. At
+    /// [`UNANSWERED_QUERY_LIMIT`] the painter stops asking, since each one
+    /// blocks for crossterm's 2s timeout and a terminal that does not answer
+    /// would pay that on every prompt (#1010). An answer resets it, a resize
+    /// allows one more try.
+    unanswered_queries: u8,
     /// How many times the terminal was asked where the cursor is.
     #[cfg(test)]
     cursor_queries: usize,
 }
+
+/// How many cursor-position queries in a row may go unanswered before the
+/// painter stops asking. More than one, so that a single late reply (a busy
+/// terminal, a slow link) does not cost the anchor for the rest of the session.
+const UNANSWERED_QUERY_LIMIT: u8 = 2;
 
 impl Painter {
     pub(crate) fn new(stdout: W) -> Self {
@@ -671,9 +682,16 @@ impl Painter {
             footer_rows: 0,
             menu_room: 0,
             terminal_taken: None,
+            unanswered_queries: 0,
             #[cfg(test)]
             cursor_queries: 0,
         }
+    }
+
+    /// Whether the terminal left enough cursor-position queries unanswered
+    /// that asking again is not worth the wait.
+    fn terminal_is_silent(&self) -> bool {
+        self.unanswered_queries >= UNANSWERED_QUERY_LIMIT
     }
 
     /// The signal completers mark when they take the terminal, created on the first call.
@@ -728,13 +746,29 @@ impl Painter {
     ///
     /// `Ok(None)` is [`cursor_position_for_term`]'s: no query was made, so
     /// there is no row to grow to.
+    ///
+    /// A terminal that has gone silent (see `unanswered_queries`) is not
+    /// asked. That is an `Err`, the same as a query that timed out, so every
+    /// caller falls back exactly as it would after the wait.
     fn measure_cursor_position(&mut self) -> Result<Option<(u16, u16)>> {
+        if self.terminal_is_silent() {
+            return Err(std::io::Error::other(
+                "the terminal does not answer cursor position queries",
+            ));
+        }
         #[cfg(test)]
         {
             self.cursor_queries += 1;
         }
-        let position = cursor_position_for_term(&self.stdout, self.term_is_dumb)?;
+        let position = match cursor_position_for_term(&self.stdout, self.term_is_dumb) {
+            Ok(position) => position,
+            Err(err) => {
+                self.unanswered_queries = self.unanswered_queries.saturating_add(1);
+                return Err(err);
+            }
+        };
         if let Some((_, row)) = position {
+            self.unanswered_queries = 0;
             self.grow_screen_height_to_fit_row(row);
         }
         Ok(position)
@@ -1020,9 +1054,13 @@ impl Painter {
             was_flush_at_bottom: final_row >= self.screen_height().saturating_sub(1),
             // One DSR round-trip per suspension is cheap next to whatever the host
             // is about to run, and it turns "might have scrolled" into a fact.
-            cursor: cursor_position_for_term(&self.stdout, self.term_is_dumb)
-                .ok()
-                .flatten(),
+            cursor: if self.terminal_is_silent() {
+                None
+            } else {
+                cursor_position_for_term(&self.stdout, self.term_is_dumb)
+                    .ok()
+                    .flatten()
+            },
         }
     }
 
@@ -2026,6 +2064,13 @@ impl Painter {
         // paint takes this row as verified and never asks again, which leaves
         // this read as the only proof of the height until the next reported
         // size.
+        //
+        // A terminal that had gone silent gets one more try here. A resize is
+        // rare enough to afford the wait, and it is the way back for one that
+        // was only slow.
+        self.unanswered_queries = self
+            .unanswered_queries
+            .min(UNANSWERED_QUERY_LIMIT.saturating_sub(1));
         if let Ok(Some((_, cursor_row))) = self.measure_cursor_position() {
             self.prompt_start_row = PromptStartRow::Resized { cursor_row };
         }
@@ -2690,6 +2735,76 @@ mod tests {
 
         assert_eq!(painter.prompt_start_row, PromptStartRow::Stale(9));
         assert_eq!(painter.stdout.captured(), b"\x1b[?25l\r\n");
+    }
+
+    /// Regression test for nushell/reedline#1010: a terminal that never
+    /// answers cost crossterm's 2s timeout on every prompt.
+    #[test]
+    fn a_silent_terminal_is_not_asked_for_every_prompt() {
+        let mut painter = Painter::new(W::sink());
+        painter.term_is_dumb = false;
+        painter.terminal_size = (20, 10);
+
+        for _ in 0..5 {
+            painter.anchor_prompt(None).unwrap();
+        }
+
+        assert_eq!(
+            painter.cursor_queries_for_test(),
+            usize::from(UNANSWERED_QUERY_LIMIT)
+        );
+    }
+
+    /// Going silent only drops the wait: the prompt falls back the same way
+    /// as after a query that timed out.
+    #[test]
+    fn a_silent_terminal_anchors_like_a_timed_out_query() {
+        let mut painter = Painter::new(W::capture());
+        painter.term_is_dumb = false;
+        painter.terminal_size = (20, 10);
+        painter.unanswered_queries = UNANSWERED_QUERY_LIMIT;
+
+        painter.anchor_prompt(None).unwrap();
+
+        assert_eq!(painter.cursor_queries_for_test(), 0);
+        assert_eq!(painter.prompt_start_row, PromptStartRow::Stale(9));
+        assert_eq!(painter.stdout.captured(), b"\x1b[?25l\r\n");
+    }
+
+    #[test]
+    fn one_late_answer_does_not_silence_the_terminal() {
+        let mut painter = Painter::new(W::sink());
+        painter.term_is_dumb = false;
+        painter.terminal_size = (20, 10);
+
+        painter.anchor_prompt(None).unwrap();
+        painter.stdout = W::sink_with_cursor_at((0, 4));
+        painter.anchor_prompt(None).unwrap();
+        painter.stdout = W::sink();
+        painter.anchor_prompt(None).unwrap();
+
+        assert_eq!(painter.unanswered_queries, 1);
+        assert_eq!(painter.cursor_queries_for_test(), 3);
+    }
+
+    #[test]
+    fn a_resize_asks_a_silent_terminal_once_more() {
+        let mut painter = Painter::new(W::sink());
+        painter.term_is_dumb = false;
+        painter.terminal_size = (20, 10);
+        painter.unanswered_queries = UNANSWERED_QUERY_LIMIT;
+
+        painter.handle_resize(20, 12);
+        assert_eq!(painter.cursor_queries_for_test(), 1);
+        assert!(painter.terminal_is_silent(), "still no answer");
+
+        painter.stdout = W::sink_with_cursor_at((0, 4));
+        painter.handle_resize(20, 10);
+        assert_eq!(painter.unanswered_queries, 0);
+        assert_eq!(
+            painter.prompt_start_row,
+            PromptStartRow::Resized { cursor_row: 4 }
+        );
     }
 
     #[test]
