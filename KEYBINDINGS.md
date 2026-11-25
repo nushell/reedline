@@ -126,7 +126,7 @@ Reedline's default when no edit mode is configured. All four
 | Key | Action |
 | --- | --- |
 | `Enter` | Submit the input, or insert a newline if it is incomplete |
-| `Alt-Backspace`, `Alt-m` | Delete the word to the left |
+| `Alt-Backspace`, `Alt-m`, `Ctrl-Alt-h` | Delete the word to the left |
 | `Alt-Delete` | Delete the word to the right |
 | `Ctrl-w` | Cut the word to the left, overriding the common binding |
 | `Alt-d` | Cut the word to the right |

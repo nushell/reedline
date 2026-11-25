@@ -89,6 +89,14 @@ pub fn default_emacs_keybindings() -> Keybindings {
     // Edits
     kb.add_binding(KM::ALT, KC::Delete, edit_bind(EC::DeleteWord));
     kb.add_binding(KM::ALT, KC::Backspace, edit_bind(EC::BackspaceWord));
+    // A terminal whose Backspace sends BS (0x08) sends `ESC BS` for
+    // Alt+Backspace, which decodes as Ctrl+Alt+h. Unbound it would be
+    // inserted as an AltGr `h`.
+    kb.add_binding(
+        KM::CONTROL | KM::ALT,
+        KC::Char('h'),
+        edit_bind(EC::BackspaceWord),
+    );
     kb.add_binding(
         KM::ALT,
         KC::Char('m'),
@@ -234,6 +242,24 @@ mod test {
         assert_eq!(
             result,
             ReedlineEvent::Edit(vec![EditCommand::CapitalizeWord])
+        );
+    }
+
+    /// `ESC BS`, what cool-retro-term sends for Alt+Backspace, arrives as
+    /// Ctrl+Alt+h.
+    #[test]
+    fn alt_backspace_sent_as_esc_bs_deletes_the_word() {
+        let mut emacs = Emacs::default();
+        let esc_bs = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
+            KeyCode::Char('h'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        )))
+        .unwrap();
+        let result = emacs.parse_event(esc_bs);
+
+        assert_eq!(
+            result,
+            ReedlineEvent::Edit(vec![EditCommand::BackspaceWord])
         );
     }
 
