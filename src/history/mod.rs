@@ -50,6 +50,20 @@ impl TestBackend {
         }
     }
 
+    /// Opens the same files as [`Self::in_dir`], through the read-only constructors.
+    pub(crate) fn read_only_in_dir(self, dir: &std::path::Path) -> Box<dyn History> {
+        match self {
+            Self::File => Box::new(
+                FileBackedHistory::with_file_read_only(100, dir.join("history.txt")).unwrap(),
+            ),
+            #[cfg(feature = "_sqlite")]
+            Self::Sqlite => Box::new(
+                SqliteBackedHistory::with_file_read_only(dir.join("history.db"), None, None)
+                    .unwrap(),
+            ),
+        }
+    }
+
     pub(crate) fn in_dir(self, dir: &std::path::Path) -> Box<dyn History> {
         match self {
             Self::File => {

@@ -1,70 +1,73 @@
 # Contributing
 
-reedline's development is primarily driven by the [nushell project](https://github.com/nushell) at the moment to provide its interactive REPL.
-Our goal is to explore options for a pleasant interaction with a shell and programming language.
-While the maintainers might currently prioritize working on features for nushell, we are open to ideas and contributions by people and projects interested in using reedline for other projects.
-Feel free to open an [issue](https://github.com/nushell/reedline/issues/new/choose) or chat with us on the [nushell discord](https://discordapp.com/invite/NtAbbGn) in the dedicated `#reedline` channel
+Feel free to contribute, whether you use reedline through Nushell or build your own shell or REPL on it.
 
-## Good starting points
+## Before you start
 
-If you want to get started, check out the list of [issues](https://github.com/nushell/reedline/issues) with the ["good first issue" label](https://github.com/nushell/reedline/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
+- **A small fix or a documentation change:** open a pull request directly.
+- **Anything larger**, such as a new feature, a change to the public API or a change in default behaviour: talk to us first. Use the `#reedline` channel of the [Nushell Discord](https://discord.gg/NtAbbGn), or comment on the roadmap issue your idea belongs to:
+  - [Prompt, history, hints and the API](https://github.com/nushell/reedline/issues/1284)
+  - [Edit modes: emacs, vi and helix](https://github.com/nushell/reedline/issues/1221)
+  - [Completion menu: actions, insertion and display](https://github.com/nushell/reedline/issues/1283)
+- **A bug or a missing feature you don't plan to work on:** open an [issue](https://github.com/nushell/reedline/issues/new/choose).
 
-If you want to follow along with the history of how reedline got started, you can watch the [recordings](https://youtube.com/playlist?list=PLP2yfE2-FXdQw0I6O4YdIX_mzBeF5TDdv) of [JT](https://github.com/jntrnr)`s [live-coding streams](https://www.twitch.tv/jntrnr).
+## Set up
 
-[Playlist: Creating a line editor in Rust](https://youtube.com/playlist?list=PLP2yfE2-FXdQw0I6O4YdIX_mzBeF5TDdv)
+Reedline builds with stable Rust and has no setup beyond cloning.
 
-## Developing
-
-### Set up
-
-This is no different than other Rust projects.
-
-```bash
+```sh
 git clone https://github.com/nushell/reedline
 cd reedline
-# To try our example program
-cargo run --example basic
+cargo run --example demo
 ```
 
-### Code style
+The tests run with [cargo-nextest](https://nexte.st/docs/installation/pre-built-binaries/).
 
-We follow the standard rust formatting style and conventions suggested by [clippy](https://github.com/rust-lang/rust-clippy).
+## Checks
 
-### To make the CI gods happy
+CI runs the following on every pull request and treats warnings as errors.
+Run them locally before you push:
 
-> The commands below reflect what CI runs. Not all flags are always necessary for local development (e.g. feel free to omit `--all-features` or `--all-targets` during iteration), but running these exact commands before opening a PR ensures you match CI behavior.
+```sh
+cargo fmt --all -- --check
+cargo clippy --all-targets --all -- -D warnings
+cargo nextest run --all
+cargo test --doc
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
+```
 
-Before opening a PR, run these locally:
+Things that are easy to miss:
 
-- Format:
+- **Feature sets.** CI repeats these commands for the default features and for `bashisms`, `sqlite`, `bashisms,sqlite`, `system_clipboard` and the no-op `external_printer`. If your change touches code behind a feature, run them again with `--features <name>`.
+- **Doctests.** nextest does not run them, which is why `cargo test --doc` is a separate step.
+- **Doc comments.** Every public item needs one, and a missing one fails the clippy step.
+- **Lockfile.** `Cargo.lock` has to match `Cargo.toml`; `cargo check --locked` tells you.
+- **Minimum Rust version.** The library has to build on the `rust-version` in `Cargo.toml`, so avoid newer language and standard library features.
+- **Spelling.** A [typos](https://github.com/crate-ci/typos) check runs on the whole repository.
 
-  ```shell
-  cargo fmt --all
-  ```
+## Testing by hand
 
-  > `--all` formats all packages in the workspace.
+Automated tests do not cover everything a terminal does.
+Go through the checklist in [UX_TESTING.md](./UX_TESTING.md) and paste it into your pull request when your change:
 
-- Lint (Clippy):
+- touches how the prompt and buffer are painted,
+- changes how key presses are dispatched,
+- adds a new component, or
+- refactors several components at once.
 
-  ```shell
-  cargo clippy --locked --all-targets --all-features
-  ```
+## Pull requests
 
-  > `--all-targets` checks lib, bins, tests, examples, and benches. 
-  > 
-  > `--all-features` enables all optional features. 
-  >
-  > `--locked` ensures `Cargo.lock` is in sync with `Cargo.toml`.
-  
-  > Note: CI treats Clippy warnings as errors.
+- **Fill in the template.** The summary should say why the change is needed and whether it changes the public API or observable behaviour. Before and after descriptions help a lot.
+- **One change per pull request.** Unrelated fixes are easier to review and to revert when they are separate.
+- **Title.** Pull requests are squash-merged, so the title becomes the commit subject. We write it as `type(scope): summary`, for example `fix(menu): let a later menu replace one of the same name`, with a `!` after the scope for a breaking change.
+- **Keybindings.** If you change a default binding, update [KEYBINDINGS.md](./KEYBINDINGS.md) to match.
 
+## Finding your way around
 
+- [`src/README.md`](./src/README.md) holds the internal design notes: requirements, goals and non-goals, technical background and the current design decisions.
+- [`examples/`](./examples) has a small runnable program for each feature. They are the quickest way to exercise your change.
+- [docs.rs/reedline](https://docs.rs/reedline) is the public API documentation, built from the doc comments.
 
-- Tests:
+## How it started
 
-> CI uses [cargo-nextest](https://nexte.st/) for its test runner. See the [installation instructions](https://nexte.st/docs/installation/pre-built-binaries/).
-
-  ```shell
-  cargo nextest run --all --all-features
-  ```
-
+Reedline began as a series of [live-coding streams](https://www.twitch.tv/jntrnr) by JT.

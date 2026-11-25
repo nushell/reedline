@@ -28,13 +28,14 @@ use {
         },
         painting::{
             continue_hint_lines, escape_control, escape_control_keep_sgr, Painter,
-            PainterSuspendedState, PromptLines, RenderSnapshot, W,
+            PainterSuspendedState, PromptLines, RenderSnapshot, TerminalTakenSignal, W,
         },
         prompt::{PromptEditMode, PromptHistorySearchStatus},
         result::{ReedlineError, ReedlineErrorVariants},
         terminal_extensions::{
             bracketed_paste::BracketedPasteGuard,
             kitty::KittyProtocolGuard,
+            raw_mode,
             semantic_prompt::{Osc133ClickEventsMarkers, SemanticPromptMarkers},
             tty_mode::TtyModeGuard,
         },
@@ -57,7 +58,7 @@ use {
         io::Write,
         process::Command,
         sync::{
-            atomic::{AtomicBool, Ordering},
+            atomic::{fence, AtomicBool, Ordering},
             Arc,
         },
         time::Duration,
@@ -468,7 +469,7 @@ impl RepaintSignal {
 impl Drop for Reedline {
     fn drop(&mut self) {
         if self.cursor_shapes.is_some() {
-            let _ignore = terminal::enable_raw_mode();
+            let _ignore = raw_mode::enable();
             let mut stdout = std::io::stdout();
             let _ignore = stdout.queue(SetCursorStyle::DefaultUserShape);
             let _ignore = stdout.flush();
@@ -486,14 +487,19 @@ impl Drop for Reedline {
 /// [`ReedlineMenu::queries_host_completer`] for why only some completers count, and
 /// #1130 for the bug.
 ///
-/// Also skipped for a menu the same keystroke deactivated, whose queued event nothing
-/// goes on to consume.
+/// Skipped once the host holds a [`TerminalTakenSignal`]: its completers mark that
+/// when they take the terminal, and the painter reads the mark before it draws. Also
+/// skipped for a menu the same keystroke deactivated, whose queued event nothing goes
+/// on to consume.
 ///
 /// Call this from every event that reaches the completer, which is not the same set as
 /// the events that change the menu's selection: `MenuNext` splices a partial completion
 /// and queries, while `MenuPrevious` only moves and does not.
 fn invalidate_anchor_if_host_completer_runs(menu: &ReedlineMenu, painter: &mut Painter) {
-    if menu.is_active() && menu.queries_host_completer() {
+    if menu.is_active()
+        && menu.queries_host_completer()
+        && !painter.completers_report_taking_the_terminal()
+    {
         painter.invalidate_prompt_start_row();
     }
 }
@@ -1168,6 +1174,23 @@ impl Reedline {
             .clone()
     }
 
+    /// Get a [`TerminalTakenSignal`] for the host's completers to mark when they take the
+    /// terminal, as running an interactive picker does.
+    ///
+    /// Without one, reedline cannot tell which completer calls write to the terminal,
+    /// so it asks the terminal where the prompt is after every keystroke that runs a
+    /// host completer under an open menu, a cursor-position round trip each time. Once
+    /// a host has asked for the signal, reedline makes that query only after a
+    /// completer marked it. That holds for every host completer: the engine's, and the
+    /// one each [`ReedlineMenu::WithCompleter`] menu runs, so each that can take the
+    /// terminal needs the signal. A host whose completers never touch the terminal asks
+    /// for the signal and never marks it.
+    ///
+    /// The handle is created on the first call; later calls return clones.
+    pub fn terminal_taken_signal(&mut self) -> TerminalTakenSignal {
+        self.painter.terminal_taken_signal()
+    }
+
     /// Returns the corresponding expected prompt style for the given edit mode
     pub fn prompt_edit_mode(&self) -> PromptEditMode {
         self.edit_mode.edit_mode()
@@ -1198,10 +1221,12 @@ impl Reedline {
         Ok(())
     }
 
-    /// Print the history session id
+    /// Output the history session id to the terminal
     pub fn print_history_session_id(&mut self) -> Result<()> {
-        println!("History Session Id: {:?}", self.get_history_session_id());
-        Ok(())
+        self.print_line(&format!(
+            "History Session Id: {:?}",
+            self.get_history_session_id()
+        ))
     }
 
     /// Toggle between having a history that uses the history session id and one that does not
@@ -1289,7 +1314,7 @@ impl Reedline {
     /// Returns a [`std::io::Result`] in which the `Err` type is [`std::io::Result`]
     /// and the `Ok` variant wraps a [`Signal`] which handles user inputs.
     pub fn read_line(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
-        terminal::enable_raw_mode()?;
+        raw_mode::enable()?;
         self.bracketed_paste.enter();
         self.kitty_protocol.enter();
 
@@ -1320,8 +1345,8 @@ impl Reedline {
         self.editor.get_selection()
     }
 
-    /// Writes `msg` to the terminal with a following carriage return and newline,
-    /// its control characters shown rather than sent
+    /// Writes `msg` to the terminal with a following line break, its control
+    /// characters shown rather than sent
     fn print_line(&mut self, msg: &str) -> Result<()> {
         self.painter.paint_line(&escape_control(msg))
     }
@@ -1351,20 +1376,16 @@ impl Reedline {
     /// indefinitely, so external triggers (break signal, repaint signal,
     /// external printer, idle callback) are noticed while waiting for input.
     fn input_needs_polling(&self) -> bool {
-        #[allow(unused_mut)] // Dependent on feature flags
-        let mut poll = self.break_signal.is_some()
+        self.break_signal.is_some()
             || self
                 .repaint_signal
                 .as_ref()
-                .is_some_and(|sig| Arc::strong_count(&sig.flag) > 1);
-
-        {
-            poll |= self.external_printer.is_some();
-        }
-
-        poll |= self.idle_callback.is_some();
-
-        poll
+                .is_some_and(|sig| Arc::strong_count(&sig.flag) > 1)
+            || self
+                .external_printer
+                .as_ref()
+                .is_some_and(|printer| printer.needs_polling())
+            || self.idle_callback.is_some()
     }
 
     /// Reset the per-call state at the start of a `read_line`, before anything
@@ -1421,6 +1442,18 @@ impl Reedline {
                 }
             }
 
+            // Decide whether to poll before taking the repaint request. Nothing
+            // wakes a blocked read, so a request must not land between the take
+            // and the block. A handle count of 1 means every outside handle was
+            // dropped before this read, so none can request after the take. A
+            // higher count makes the loop poll and catch a later request on the
+            // next pass.
+            let needs_polling = self.input_needs_polling();
+            // `Arc::strong_count` is a relaxed load and dropping an `Arc` is a
+            // release decrement, so this fence makes a dropped handle's
+            // `request_repaint` visible to the take below.
+            fence(Ordering::Acquire);
+
             if self.take_repaint_request() {
                 self.repaint(prompt)?;
             }
@@ -1433,9 +1466,8 @@ impl Reedline {
                 }
             }
 
-            // Determine if we need to poll (non-blocking) or can block on input.
-            // We need polling if external_printer or idle_callback is configured,
-            // using the shared poll_interval for the timeout.
+            // A completion still in flight also forces polling, on top of
+            // `needs_polling`, so its result is picked up without a key press.
             let status = self.completer.poll_completion();
             // Anything BUT idle means work is in flight. We need to keep polling.
             let completer_pending = status != CompletionStatus::Idle;
@@ -1447,7 +1479,7 @@ impl Reedline {
             let mut events: Vec<Event> = vec![];
 
             if !self.immediately_accept {
-                if self.input_needs_polling() || completer_pending {
+                if needs_polling || completer_pending {
                     if event::poll(self.poll_interval)? {
                         events.push(crossterm::event::read()?);
                     }
@@ -1574,7 +1606,13 @@ impl Reedline {
     /// input loop so it is reachable from tests, which cannot drive the loop itself.
     fn settle_completions(&mut self, prompt: &dyn Prompt) -> Result<()> {
         let Some(menu_index) = self.menus.iter().position(|menu| menu.is_active()) else {
-            // No menu to answer to, so nothing can still be owed.
+            // No menu to answer to, so nothing can still be owed. The request still ran,
+            // though: its menu closed while it did, and as host code it may have scrolled
+            // the terminal just as it may under an open menu (below), so the next paint
+            // must not trust the cached row either, unless completers report that.
+            if !self.painter.completers_report_taking_the_terminal() {
+                self.painter.invalidate_prompt_start_row();
+            }
             self.deferred_menu_completion = None;
             return Ok(());
         };
@@ -3479,9 +3517,6 @@ impl Reedline {
             String::new()
         };
 
-        // Needs to add return carriage to newlines because when not in raw mode
-        // some OS don't fully return the carriage
-
         let lines = if hint_replaces_closers {
             // The exit path reprints what follows the cursor, which is still
             // the closers, not the hint drawn over them.
@@ -3505,10 +3540,12 @@ impl Reedline {
             )
         };
         // History search paints elsewhere, so only submit hides the status
-        // line here. Measured only with one to show, since the measure walks
-        // the whole buffer.
+        // line and the prompt footer here. Measured only with one to show,
+        // since the measure walks the whole buffer.
         let screen_width = self.painter.screen_width();
-        let status_room = if self.status_line.is_some() && !self.hide_hints {
+        let footer = prompt.render_prompt_footer(screen_width);
+        let status_room = if (self.status_line.is_some() || !footer.is_empty()) && !self.hide_hints
+        {
             // An open menu hides the hint, so measure the block the painter
             // draws above it. Active, not visible: a menu opening on this
             // paint turns visible only in its update below. One that stays
@@ -3534,10 +3571,19 @@ impl Reedline {
             ),
             _ => String::new(),
         };
-        let mut lines = lines.with_status(&status, use_ansi_coloring);
+        let footer = if status_room > 0 { footer } else { "".into() };
+        // The footer goes on the rows after the status line. The two stay
+        // apart up to the painter, so the footer gives way first, to the
+        // buffer here and to a menu there.
+        let mut lines = lines
+            .with_status(&status, use_ansi_coloring)
+            .with_footer(&footer, use_ansi_coloring);
         // Before the menus size themselves below the status line.
-        self.painter
-            .reserve_status_rows(lines.status_rows(screen_width), status_room);
+        self.painter.reserve_status_and_footer_rows(
+            lines.status_rows(screen_width),
+            lines.footer_rows(screen_width),
+            status_room,
+        );
 
         // Updating the working details of the active menu
         for menu in self.menus.iter_mut() {
@@ -3598,6 +3644,10 @@ impl Reedline {
     }
 
     /// Adds an external printer
+    ///
+    /// While [`read_line`](Self::read_line) waits for input it checks the
+    /// printer for text every [poll interval](Self::with_poll_interval), for as
+    /// long as [`ExternalOutput::needs_polling`] returns `true`.
     pub fn with_external_printer(mut self, printer: impl ExternalOutput + 'static) -> Self {
         self.external_printer = Some(Box::new(printer));
         self
@@ -3611,8 +3661,10 @@ impl Reedline {
     ///
     /// Common values are 33ms (~30fps) for UI updates or 100ms for less frequent tasks.
     ///
-    /// Note: This setting only takes effect when an external printer or idle callback
-    /// is configured. Without these features, Reedline blocks until input is received.
+    /// Note: This setting only takes effect while something needs polling: an
+    /// idle callback, a break signal, a live repaint handle, or an external
+    /// printer whose [`ExternalOutput::needs_polling`] returns `true`. Otherwise
+    /// Reedline blocks until input is received.
     ///
     /// # Example
     /// ```no_run
@@ -3803,6 +3855,7 @@ mod tests {
         ListMenu, MenuBuilder, MotionTarget, PromptHelixMode, PromptViMode, Span, Suggestion,
     };
     use rstest::rstest;
+    use std::borrow::Cow;
     use std::path::Path;
 
     fn seam_engine(edit_mode: Box<dyn EditMode>) -> Reedline {
@@ -4340,11 +4393,7 @@ mod tests {
             let buffer = context.buffer();
             let point = context.insertion_point();
 
-            if open == close && Self::inside_unclosed_quote(buffer, point, open) {
-                return false;
-            }
-
-            true
+            !(open == close && Self::inside_unclosed_quote(buffer, point, open))
         }
     }
 
@@ -7018,6 +7067,65 @@ mod tests {
             reedline.input_needs_polling(),
             "a repaint handle must switch the loop to polling so requests are noticed"
         );
+    }
+
+    /// An external printer whose `needs_polling` answer the test sets.
+    struct SwitchablePrinter(Arc<AtomicBool>);
+
+    impl ExternalOutput for SwitchablePrinter {
+        fn drain(&mut self) -> io::Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+
+        fn needs_polling(&self) -> bool {
+            self.0.load(Ordering::Relaxed)
+        }
+    }
+
+    #[test]
+    fn external_printer_polls_only_while_it_expects_text() {
+        let expects_text = Arc::new(AtomicBool::new(false));
+        let reedline =
+            Reedline::create().with_external_printer(SwitchablePrinter(Arc::clone(&expects_text)));
+        assert!(
+            !reedline.input_needs_polling(),
+            "a printer that expects no text must let the loop block on input"
+        );
+
+        expects_text.store(true, Ordering::Relaxed);
+        assert!(
+            reedline.input_needs_polling(),
+            "a printer that expects text must switch the loop to polling"
+        );
+    }
+
+    #[test]
+    fn channel_printer_keeps_polling() {
+        let reedline =
+            Reedline::create().with_external_printer(crate::ExternalPrinter::<String>::default());
+        assert!(
+            reedline.input_needs_polling(),
+            "a printer without its own answer must keep the loop polling"
+        );
+    }
+
+    #[test]
+    fn request_survives_the_last_handle_being_dropped() {
+        // The input loop reads the handle count, then takes the request, then
+        // blocks if the count was 1. This checks the state that order relies
+        // on: once the last handle has requested a repaint and dropped, the
+        // loop chooses to block and the request is still there to take. It
+        // does not drive the loop or exercise the race itself.
+        let mut reedline = Reedline::create();
+        let signal = reedline.repaint_signal();
+
+        std::thread::spawn(move || signal.request_repaint())
+            .join()
+            .expect("worker thread panicked");
+
+        assert!(!reedline.input_needs_polling());
+        assert!(reedline.take_repaint_request());
+        assert!(!reedline.take_repaint_request());
     }
 
     #[test]
@@ -9953,11 +10061,16 @@ mod tests {
 
     /// What one repaint writes to an 80-column terminal `height` rows tall.
     fn repaint_output_on(rl: &mut Reedline, height: u16) -> String {
+        repaint_output_with(rl, &DefaultPrompt::default(), height)
+    }
+
+    /// [`repaint_output_on`] with `prompt` in place of the default one.
+    fn repaint_output_with(rl: &mut Reedline, prompt: &dyn Prompt, height: u16) -> String {
         rl.painter = Painter::new(W::capture());
         // Size first: `handle_resize` invalidates the anchor the next line pins.
         rl.painter.handle_resize(80, height);
         rl.painter.force_prompt_anchored_for_test(0);
-        rl.repaint(&DefaultPrompt::default()).unwrap();
+        rl.repaint(prompt).unwrap();
         String::from_utf8_lossy(rl.painter.captured_for_test()).into_owned()
     }
 
@@ -10058,5 +10171,454 @@ mod tests {
         assert!(!output.contains(hint));
         assert!(output.contains("ls27"));
         assert!(!output.contains("ls28"));
+    }
+
+    /// The case settling has to cover with no menu open: the menu that asked for
+    /// completions closed while the request ran, and the background work ran a
+    /// picker that scrolled the screen up to make room below the prompt, as
+    /// `fzf --height` does, and put the cursor back on the prompt (#1130). The
+    /// next keystroke has to find the prompt where it moved to, not draw a second
+    /// one at the row it left.
+    #[test]
+    fn a_picker_scrolling_after_the_menu_closed_moves_the_prompt() {
+        let mut reedline = Reedline::create()
+            .with_ansi_colors(false)
+            .with_completer(Box::new(DeferredCompleter::pending(&["crates"])))
+            .with_menu(ReedlineMenu::EngineCompleter(Box::new(
+                ColumnarMenu::default().with_name("completion_menu"),
+            )));
+        reedline.painter = Painter::new(W::screen(30, 6));
+        reedline.painter.handle_resize(30, 6);
+        let prompt = DefaultPrompt::new(
+            crate::DefaultPromptSegment::Basic(String::from("p")),
+            crate::DefaultPromptSegment::Empty,
+        );
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("c"))]);
+        reedline.painter.force_prompt_anchored_for_test(4);
+        reedline
+            .handle_event(
+                &prompt,
+                ReedlineEvent::Menu(String::from("completion_menu")),
+            )
+            .unwrap();
+        reedline.repaint(&prompt).unwrap();
+        reedline.handle_event(&prompt, ReedlineEvent::Esc).unwrap();
+        reedline.painter.force_prompt_anchored_for_test(4);
+        reedline.repaint(&prompt).unwrap();
+        assert!(!menu_is_active(&reedline));
+
+        // Three rows of room made at the bottom, the cursor back on the prompt.
+        reedline
+            .painter
+            .host_output_for_test(b"\x1b[6;1H\n\n\n\x1b[2;5H");
+        reedline.settle_completions(&prompt).unwrap();
+        reedline
+            .handle_event(
+                &prompt,
+                ReedlineEvent::Edit(vec![EditCommand::InsertChar('r')]),
+            )
+            .unwrap();
+        reedline.repaint(&prompt).unwrap();
+
+        let rows = reedline.painter.screen_rows_for_test();
+        assert_eq!(rows[1], "p> cr", "{rows:?}");
+        assert_eq!(
+            rows.iter().filter(|row| row.starts_with("p> ")).count(),
+            1,
+            "{rows:?}"
+        );
+    }
+
+    /// A completer over fixed words that, given a signal, marks it on every call, as a
+    /// completer running an interactive picker on each call would.
+    struct PickerCompleter {
+        words: DefaultCompleter,
+        signal: Option<TerminalTakenSignal>,
+    }
+
+    impl Completer for PickerCompleter {
+        fn complete(&mut self, line: &str, pos: usize) -> CompletionResult {
+            if let Some(signal) = &self.signal {
+                signal.took_terminal();
+            }
+            self.words.complete(line, pos)
+        }
+    }
+
+    /// How a host's completers tell reedline about the terminal in
+    /// [`typing_under_a_menu_queries_the_cursor`].
+    #[derive(Clone, Copy, Debug)]
+    enum TerminalUse {
+        /// The host never asked for a [`TerminalTakenSignal`].
+        Unreported,
+        /// The host holds a signal and its completer never marks it.
+        Untouched,
+        /// The host holds a signal and its completer marks it on every call.
+        Taken,
+    }
+
+    /// An engine on a 30x6 screen with a completion menu open over "c", its prompt
+    /// anchored at row 4, and a [`PickerCompleter`] set up for `terminal_use`.
+    fn engine_with_picker_menu(terminal_use: TerminalUse, prompt: &dyn Prompt) -> Reedline {
+        let mut reedline =
+            Reedline::create()
+                .with_ansi_colors(false)
+                .with_menu(ReedlineMenu::EngineCompleter(Box::new(
+                    ColumnarMenu::default().with_name("completion_menu"),
+                )));
+        reedline.painter = Painter::new(W::screen(30, 6));
+        reedline.painter.handle_resize(30, 6);
+        let signal = match terminal_use {
+            TerminalUse::Unreported => None,
+            TerminalUse::Untouched => {
+                let _unmarked = reedline.terminal_taken_signal();
+                None
+            }
+            TerminalUse::Taken => Some(reedline.terminal_taken_signal()),
+        };
+        let mut reedline = reedline.with_completer(Box::new(PickerCompleter {
+            words: DefaultCompleter::new_with_wordlen(
+                vec![String::from("crates"), String::from("crash")],
+                1,
+            ),
+            signal,
+        }));
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("c"))]);
+        reedline.painter.force_prompt_anchored_for_test(4);
+        // The cursor where the prompt is, for the paint that measures it.
+        reedline.painter.host_output_for_test(b"\x1b[5;1H");
+        reedline
+            .handle_event(prompt, ReedlineEvent::Menu(String::from("completion_menu")))
+            .unwrap();
+        reedline.repaint(prompt).unwrap();
+        assert!(menu_is_active(&reedline));
+        assert_eq!(reedline.painter.screen_rows_for_test()[4], "p| c");
+        reedline
+    }
+
+    fn picker_prompt() -> DefaultPrompt {
+        DefaultPrompt::new(
+            crate::DefaultPromptSegment::Basic(String::from("p")),
+            crate::DefaultPromptSegment::Empty,
+        )
+    }
+
+    /// Each keystroke under an open menu runs the completer as the menu repaints. A
+    /// host that never asked for the signal pays a cursor query for each, as reedline
+    /// cannot tell which calls wrote. A host holding the signal pays one only for a
+    /// call that marked it.
+    #[rstest]
+    #[case::unreported(TerminalUse::Unreported, 2)]
+    #[case::untouched(TerminalUse::Untouched, 0)]
+    #[case::taken(TerminalUse::Taken, 2)]
+    fn typing_under_a_menu_queries_the_cursor(
+        #[case] terminal_use: TerminalUse,
+        #[case] queries: usize,
+    ) {
+        let prompt = picker_prompt();
+        let mut reedline = engine_with_picker_menu(terminal_use, &prompt);
+        let before = reedline.painter.cursor_queries_for_test();
+
+        for c in ['r', 'a'] {
+            reedline
+                .handle_event(
+                    &prompt,
+                    ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)]),
+                )
+                .unwrap();
+            reedline.repaint(&prompt).unwrap();
+        }
+
+        assert!(menu_is_active(&reedline));
+        assert_eq!(
+            reedline.painter.cursor_queries_for_test() - before,
+            queries,
+            "{terminal_use:?}"
+        );
+    }
+
+    /// The case the signal exists for: a completer running a picker that scrolled the
+    /// screen up and put the cursor back on the prompt, as `fzf --height` does (#1130).
+    /// The completer runs while the menu repaints, after the keystroke was handled, so
+    /// the mark has to reach that same paint.
+    #[test]
+    fn a_picker_marking_the_signal_moves_the_prompt() {
+        let prompt = picker_prompt();
+        let mut reedline = engine_with_picker_menu(TerminalUse::Taken, &prompt);
+
+        // Three rows of room made at the bottom, the cursor back on the prompt.
+        reedline
+            .painter
+            .host_output_for_test(b"\x1b[6;1H\n\n\n\x1b[2;5H");
+        reedline
+            .handle_event(
+                &prompt,
+                ReedlineEvent::Edit(vec![EditCommand::InsertChar('r')]),
+            )
+            .unwrap();
+        reedline.repaint(&prompt).unwrap();
+
+        let rows = reedline.painter.screen_rows_for_test();
+        assert_eq!(rows[1], "p| cr", "{rows:?}");
+        assert_eq!(
+            rows.iter().filter(|row| row.starts_with("p| ")).count(),
+            1,
+            "{rows:?}"
+        );
+    }
+
+    /// A mark left from before a line started costs nothing: measuring the prompt's
+    /// position for the new line already reflects it.
+    #[test]
+    fn a_mark_before_the_line_starts_is_already_measured() {
+        let mut reedline = Reedline::create();
+        reedline.painter = Painter::new(W::screen(30, 6));
+        let signal = reedline.terminal_taken_signal();
+        signal.took_terminal();
+
+        reedline
+            .painter
+            .initialize_prompt_position_with_size((30, 6), None)
+            .unwrap();
+        let measured = reedline.painter.cursor_queries_for_test();
+        reedline.repaint(&DefaultPrompt::default()).unwrap();
+
+        assert_eq!(reedline.painter.cursor_queries_for_test(), measured);
+    }
+
+    /// Settling a request that outlived its menu trusts the anchor once the host
+    /// holds the signal, since a completer that took the terminal would have marked it.
+    #[test]
+    fn settling_without_a_menu_trusts_the_anchor_under_the_signal() {
+        let mut reedline = Reedline::create()
+            .with_completer(Box::new(DeferredCompleter::pending(&["crates"])))
+            .with_menu(ReedlineMenu::EngineCompleter(Box::new(
+                ColumnarMenu::default().with_name("completion_menu"),
+            )));
+        let _unmarked = reedline.terminal_taken_signal();
+        reedline.painter.force_prompt_anchored_for_test(0);
+
+        reedline
+            .settle_completions(&DefaultPrompt::default())
+            .unwrap();
+
+        assert!(reedline.painter.prompt_anchor_is_verified_for_test());
+    }
+
+    /// A menu event that runs the completer leaves the anchor alone once the host
+    /// holds the signal: the painter reads the mark before it draws.
+    #[rstest]
+    #[case::next_queries_the_completer(ReedlineEvent::MenuNext)]
+    #[case::next_page(ReedlineEvent::MenuPageNext)]
+    fn menu_events_leave_the_anchor_to_the_signal(#[case] event: ReedlineEvent) {
+        let mut reedline = engine_with_partial_completion_menu();
+        let _unmarked = reedline.terminal_taken_signal();
+        reedline.painter.force_prompt_anchored_for_test(0);
+
+        reedline
+            .handle_event(&DefaultPrompt::default(), event)
+            .unwrap();
+
+        assert!(reedline.painter.prompt_anchor_is_verified_for_test());
+    }
+
+    const FOOTER_TEXT: &str = "footer-from-the-prompt";
+
+    /// [`DefaultPrompt`] with the second field as its footer.
+    struct FooterPrompt(DefaultPrompt, &'static str);
+
+    impl Prompt for FooterPrompt {
+        fn render_prompt_left(&self) -> Cow<'_, str> {
+            self.0.render_prompt_left()
+        }
+        fn render_prompt_right(&self) -> Cow<'_, str> {
+            self.0.render_prompt_right()
+        }
+        fn render_prompt_indicator(&self, mode: PromptEditMode) -> Cow<'_, str> {
+            self.0.render_prompt_indicator(mode)
+        }
+        fn render_prompt_multiline_indicator(&self) -> Cow<'_, str> {
+            self.0.render_prompt_multiline_indicator()
+        }
+        fn render_prompt_history_search_indicator(
+            &self,
+            search: PromptHistorySearch,
+        ) -> Cow<'_, str> {
+            self.0.render_prompt_history_search_indicator(search)
+        }
+        fn render_prompt_footer(&self, screen_width: u16) -> Cow<'_, str> {
+            // `{width}` stands in for the width the footer is asked with.
+            self.1.replace("{width}", &screen_width.to_string()).into()
+        }
+    }
+
+    /// A [`FooterPrompt`] with [`FOOTER_TEXT`] as its footer.
+    fn footer_prompt() -> FooterPrompt {
+        FooterPrompt(DefaultPrompt::default(), FOOTER_TEXT)
+    }
+
+    /// Whether the status line, the last menu entry and the footer's last
+    /// line are drawn, with `menu` open below a status line, on a screen
+    /// `height` rows tall.
+    fn status_menu_footer_drawn(
+        menu: ReedlineMenu,
+        footer: &'static str,
+        height: u16,
+    ) -> (bool, bool, bool) {
+        let words = ["ls01", "ls02", "ls03"].map(String::from).to_vec();
+        let (rl, _) = engine_with_status_line();
+        let mut rl = rl
+            .with_ansi_colors(false)
+            .with_completer(Box::new(DefaultCompleter::new(words)))
+            .with_menu(menu);
+        let prompt = FooterPrompt(DefaultPrompt::default(), footer);
+        rl.handle_event(&prompt, ReedlineEvent::Menu("completion_menu".to_string()))
+            .expect("menu opens");
+
+        let output = repaint_output_with(&mut rl, &prompt, height);
+
+        (
+            output.contains(STATUS_TEXT),
+            output.contains("ls03"),
+            output.contains("foot2"),
+        )
+    }
+
+    /// A footer never costs the status line or a menu their rows: when a menu
+    /// needs them back, the footer gives way first, at every height. It shows
+    /// once the screen has its own rows to spare above what the status line
+    /// needs, however tall the menu.
+    #[rstest]
+    #[case::ide(|| ReedlineMenu::EngineCompleter(Box::new(
+        crate::IdeMenu::default().with_name("completion_menu"),
+    )))]
+    #[case::columnar(|| ReedlineMenu::EngineCompleter(Box::new(
+        ColumnarMenu::default().with_name("completion_menu"),
+    )))]
+    #[case::list(|| ReedlineMenu::EngineCompleter(Box::new(
+        ListMenu::default().with_name("completion_menu"),
+    )))]
+    #[case::description(|| ReedlineMenu::EngineCompleter(Box::new(
+        crate::DescriptionMenu::default().with_name("completion_menu"),
+    )))]
+    fn footer_gives_way_to_the_status_line_and_a_menu(#[case] menu: fn() -> ReedlineMenu) {
+        for height in 3..=30 {
+            let (status, entry, _) = status_menu_footer_drawn(menu(), "", height);
+            let (status_with_footer, entry_with_footer, _) =
+                status_menu_footer_drawn(menu(), "foot1\nfoot2", height);
+            assert_eq!(
+                (status_with_footer, entry_with_footer),
+                (status, entry),
+                "status line and menu at height {height}"
+            );
+        }
+        let status_from = (3..=30).find(|&height| status_menu_footer_drawn(menu(), "", height).0);
+        let footer_from =
+            (3..=30).find(|&height| status_menu_footer_drawn(menu(), "foot1\nfoot2", height).2);
+        assert!(
+            status_from.is_some(),
+            "status line drawn once there is room"
+        );
+        assert_eq!(footer_from, status_from.map(|height| height + 2));
+    }
+
+    /// The footer takes the row after the status line.
+    #[test]
+    fn footer_is_drawn_below_the_status_line() {
+        let (mut rl, _) = engine_with_status_line();
+        let rl = &mut rl;
+        let output = repaint_output_with(rl, &footer_prompt(), 10);
+
+        let status_at = output.find(STATUS_TEXT).expect("status drawn");
+        let footer_at = output.find(FOOTER_TEXT).expect("footer drawn");
+        assert_eq!(&output[status_at + STATUS_TEXT.len()..footer_at], "\r\n");
+    }
+
+    #[test]
+    fn footer_is_asked_with_the_screen_width() {
+        let (mut rl, _) = engine_with_status_line();
+        let prompt = FooterPrompt(DefaultPrompt::default(), "width={width}");
+
+        let output = repaint_output_with(&mut rl, &prompt, 10);
+
+        assert!(output.contains("width=80"), "{output:?}");
+    }
+
+    #[test]
+    fn footer_is_drawn_without_a_status_line() {
+        let mut rl = seam_engine(Box::<crate::Emacs>::default());
+        drive(&mut rl, &[ch('l'), ch('s')]);
+
+        let output = repaint_output_with(&mut rl, &footer_prompt(), 10);
+
+        assert!(output.contains(FOOTER_TEXT));
+    }
+
+    /// One row free below the buffer: the status line keeps it.
+    #[test]
+    fn footer_gives_way_to_the_status_line_first() {
+        let (mut rl, _) = engine_with_status_line();
+
+        let output = repaint_output_with(&mut rl, &footer_prompt(), 3);
+
+        assert!(output.contains(STATUS_TEXT));
+        assert!(!output.contains(FOOTER_TEXT));
+    }
+
+    /// A menu taller than the screen is cut below both, as it is below the
+    /// status line alone, a row shorter.
+    #[test]
+    fn columnar_menu_is_cut_below_status_line_and_footer() {
+        let words = (0..60).map(|index| format!("ls{index:02}")).collect();
+        let (rl, _) = engine_with_status_line();
+        let mut rl = rl
+            .with_ansi_colors(false)
+            .with_completer(Box::new(DefaultCompleter::new(words)))
+            .with_menu(ReedlineMenu::EngineCompleter(Box::new(
+                ColumnarMenu::default().with_name("completion_menu"),
+            )));
+        rl.handle_event(
+            &footer_prompt(),
+            ReedlineEvent::Menu("completion_menu".to_string()),
+        )
+        .expect("menu opens");
+
+        let output = repaint_output_with(&mut rl, &footer_prompt(), 10);
+
+        assert!(output.contains(STATUS_TEXT));
+        assert!(output.contains(FOOTER_TEXT));
+        assert!(output.contains("ls23"));
+        assert!(!output.contains("ls24"));
+    }
+
+    #[test]
+    fn footer_is_hidden_once_the_line_is_submitted() {
+        let (mut rl, _) = engine_with_status_line();
+        rl.hide_hints = true;
+
+        let output = repaint_output_with(&mut rl, &footer_prompt(), 10);
+
+        assert!(!output.contains(FOOTER_TEXT));
+    }
+
+    /// Typing below a status line, with and without a footer, draws over the
+    /// previous paint: nothing is erased before the prompt is printed again.
+    #[rstest]
+    #[case::status_line_only("")]
+    #[case::with_a_footer("foot1\nfoot2")]
+    fn typing_under_a_status_line_draws_in_place(#[case] footer: &'static str) {
+        let (mut rl, _) = engine_with_status_line();
+        let prompt = FooterPrompt(DefaultPrompt::default(), footer);
+        repaint_output_with(&mut rl, &prompt, 10);
+        let start = rl.painter.captured_for_test().len();
+
+        drive(&mut rl, &[ch('x')]);
+        rl.repaint(&prompt).unwrap();
+
+        let paint = String::from_utf8_lossy(&rl.painter.captured_for_test()[start..]).into_owned();
+        let prompt_at = paint.find("lsx").expect("buffer drawn");
+        assert!(!paint[..prompt_at].contains("\x1b[J"), "{paint:?}");
+        assert!(paint.contains(STATUS_TEXT), "{paint:?}");
+        assert_eq!(paint.contains("foot2"), !footer.is_empty(), "{paint:?}");
     }
 }

@@ -269,7 +269,7 @@ impl DescriptionMenu {
     fn end_of_line(&self, column: u16, index: usize) -> &str {
         let is_last = index == self.values.len().saturating_sub(1);
         if column == self.get_cols().saturating_sub(1) || is_last {
-            "\r\n"
+            "\n"
         } else {
             ""
         }
@@ -353,7 +353,7 @@ impl DescriptionMenu {
             .skip(self.skipped_rows)
             .take(self.working_details.description_rows)
             .collect::<Vec<&str>>()
-            .join("\r\n");
+            .join("\n");
 
         if use_ansi_coloring && !description.is_empty() {
             format!(
@@ -373,24 +373,23 @@ impl DescriptionMenu {
             return "".into();
         }
 
+        // The lines of `example`, each after the first behind `separator`.
+        let joined =
+            |example: &str, separator: &str| example.lines().collect::<Vec<&str>>().join(separator);
+
         let examples: String = self
             .examples
             .iter()
             .enumerate()
             .map(|(index, example)| {
-                if let Some(example_index) = self.example_index {
-                    if index == example_index {
-                        format!(
-                            "  {}{}{}\r\n",
-                            self.settings.color.selected_text_style.prefix(),
-                            example,
-                            RESET
-                        )
-                    } else {
-                        format!("  {example}\r\n")
-                    }
+                if self.example_index == Some(index) {
+                    // Styled line by line, so the style neither runs to the
+                    // right margin nor covers a continuation line's indent.
+                    let style = self.settings.color.selected_text_style.prefix();
+                    let example = joined(example, &format!("{RESET}\n  {style}"));
+                    format!("  {style}{example}{RESET}\n")
                 } else {
-                    format!("  {example}\r\n")
+                    format!("  {}\n", joined(example, "\n  "))
                 }
             })
             .collect();
@@ -399,13 +398,13 @@ impl DescriptionMenu {
             "".into()
         } else if use_ansi_coloring {
             format!(
-                "{}\r\n\r\nExamples:\r\n{}{}",
+                "{}\n\nExamples:\n{}{}",
                 self.settings.color.description_style.prefix(),
                 RESET,
                 examples,
             )
         } else {
-            format!("\r\n\r\nExamples:\r\n{examples}",)
+            format!("\n\nExamples:\n{examples}",)
         }
     }
 }
@@ -471,6 +470,9 @@ impl Menu for DescriptionMenu {
         if let Some(values) = completer.complete(&input, pos).into_shared() {
             self.values = escape_suggestions(values);
             self.reset_position();
+            // Not every answer comes with an event to refresh them on: the
+            // engine hands over a finished background completion directly.
+            self.update_examples();
         }
     }
 
@@ -487,6 +489,7 @@ impl Menu for DescriptionMenu {
                 MenuEvent::Activate(_) => {
                     self.reset_position();
                     self.update_values(editor, completer);
+                    self.update_examples();
                 }
                 MenuEvent::Deactivate => self.active = false,
                 MenuEvent::Edit(_) => {
@@ -947,5 +950,300 @@ mod tests {
         assert_eq!(menu.examples, ["beta example"]);
         assert_eq!(menu.example_index, None);
         assert_eq!(menu.skipped_rows, 0);
+    }
+
+    /// Two entries with a description and examples, like nushell's help menu.
+    struct HelpCompleter;
+
+    impl Completer for HelpCompleter {
+        fn complete(&mut self, _line: &str, pos: usize) -> crate::CompletionResult {
+            let entry = |value: &str, description: &str, examples: &[&str]| Suggestion {
+                value: value.to_string(),
+                description: Some(description.to_string()),
+                extra: Some(examples.iter().map(|e| e.to_string()).collect()),
+                span: Span { start: 0, end: pos },
+                ..Default::default()
+            };
+            crate::CompletionResult::fresh(vec![
+                entry(
+                    "ls",
+                    "List files\nin the\ncurrent\ndirectory",
+                    &["ls -a", "ls -l"],
+                ),
+                entry("cd", "Change directory", &["cd ~"]),
+            ])
+        }
+    }
+
+    /// Delivers `event` the way the engine does: stored by `menu_event`,
+    /// applied by the next `update_working_details`.
+    fn send(menu: &mut DescriptionMenu, editor: &mut Editor, event: MenuEvent) {
+        let mut painter = Painter::new(W::sink());
+        painter.handle_resize(100, 100);
+        menu.menu_event(event);
+        menu.update_working_details(editor, &mut HelpCompleter, &painter);
+    }
+
+    fn help_menu(editor: &mut Editor) -> DescriptionMenu {
+        let mut menu = DescriptionMenu::default()
+            .with_columns(2)
+            .with_column_width(Some(6));
+        send(&mut menu, editor, MenuEvent::Activate(false));
+        send(&mut menu, editor, MenuEvent::Edit(false));
+        menu
+    }
+
+    #[test]
+    fn down_and_up_walk_the_examples_and_wrap() {
+        let mut editor = Editor::default();
+        let mut menu = help_menu(&mut editor);
+
+        let walk = |menu: &mut DescriptionMenu, editor: &mut Editor, event: fn() -> MenuEvent| {
+            [(); 3].map(|_| {
+                send(menu, editor, event());
+                menu.example_index
+            })
+        };
+        assert_eq!(
+            walk(&mut menu, &mut editor, || MenuEvent::MoveDown),
+            [Some(0), Some(1), Some(0)]
+        );
+        assert_eq!(
+            walk(&mut menu, &mut editor, || MenuEvent::MoveUp),
+            [Some(1), Some(0), Some(1)]
+        );
+    }
+
+    #[test]
+    fn up_and_down_select_nothing_without_examples() {
+        let mut editor = Editor::default();
+        let mut menu = DescriptionMenu::default();
+        send(&mut menu, &mut editor, MenuEvent::MoveDown);
+        send(&mut menu, &mut editor, MenuEvent::MoveUp);
+        assert_eq!(menu.example_index, None);
+    }
+
+    #[test]
+    fn moving_to_another_entry_drops_the_chosen_example() {
+        let mut editor = Editor::default();
+        let mut menu = help_menu(&mut editor);
+        send(&mut menu, &mut editor, MenuEvent::MoveDown);
+
+        send(&mut menu, &mut editor, MenuEvent::NextElement);
+        assert_eq!(menu.examples, ["cd ~"]);
+        assert_eq!(menu.example_index, None);
+
+        send(&mut menu, &mut editor, MenuEvent::PreviousElement);
+        assert_eq!(menu.examples, ["ls -a", "ls -l"]);
+    }
+
+    #[rstest]
+    #[case::entry(None, "ls")]
+    #[case::example(Some(1), "ls -l")]
+    fn accepting_inserts_the_entry_or_its_chosen_example(
+        #[case] example: Option<usize>,
+        #[case] buffer: &str,
+    ) {
+        let mut editor = Editor::default();
+        let mut menu = help_menu(&mut editor);
+        menu.example_index = example;
+        menu.replace_in_buffer(&mut editor);
+        assert_eq!(editor.get_buffer(), buffer);
+    }
+
+    /// Right scrolls the description until its last line is the last shown
+    /// row, Left scrolls back and stops at the top.
+    #[test]
+    fn left_and_right_scroll_the_description_within_its_lines() {
+        let mut editor = Editor::default();
+        let mut menu = DescriptionMenu::default().with_description_rows(2);
+        send(&mut menu, &mut editor, MenuEvent::Activate(false));
+
+        let scroll = |menu: &mut DescriptionMenu, editor: &mut Editor, event: fn() -> MenuEvent| {
+            [(); 3].map(|_| {
+                send(menu, editor, event());
+                menu.create_description_string(false)
+            })
+        };
+        assert_eq!(
+            scroll(&mut menu, &mut editor, || MenuEvent::MoveRight),
+            [
+                "in the\ncurrent",
+                "current\ndirectory",
+                "current\ndirectory"
+            ]
+        );
+        assert_eq!(
+            scroll(&mut menu, &mut editor, || MenuEvent::MoveLeft),
+            [
+                "in the\ncurrent",
+                "List files\nin the",
+                "List files\nin the"
+            ]
+        );
+    }
+
+    #[test]
+    fn renders_entries_description_and_examples_without_color() {
+        let mut editor = Editor::default();
+        let mut menu = help_menu(&mut editor);
+        assert_eq!(
+            menu.menu_string(100, false),
+            ">LS   cd    \n\
+             List files\nin the\ncurrent\ndirectory\
+             \n\nExamples:\n  ls -a\n  ls -l\n"
+        );
+
+        send(&mut menu, &mut editor, MenuEvent::NextElement);
+        assert_eq!(
+            menu.menu_string(100, false),
+            "ls    >CD   \nChange directory\n\nExamples:\n  cd ~\n"
+        );
+    }
+
+    /// Every line of a multi-line example is indented like its first, and a
+    /// chosen one is styled line by line.
+    #[test]
+    fn multi_line_examples_keep_their_indent() {
+        let mut menu = DescriptionMenu {
+            show_examples: true,
+            examples: vec!["if true {\n  1\r\n}".into(), "ls".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            menu.create_example_string(false),
+            "\n\nExamples:\n  if true {\n    1\n  }\n  ls\n"
+        );
+
+        menu.example_index = Some(0);
+        let selected = menu.settings.color.selected_text_style.prefix();
+        assert_eq!(
+            menu.create_example_string(false),
+            format!(
+                "\n\nExamples:\n  {selected}if true {{{RESET}\n  {selected}  1{RESET}\n  {selected}}}{RESET}\n  ls\n"
+            )
+        );
+    }
+
+    #[test]
+    fn renders_the_chosen_example_and_entries_in_their_styles() {
+        let mut editor = Editor::default();
+        let mut menu = help_menu(&mut editor);
+        send(&mut menu, &mut editor, MenuEvent::MoveDown);
+
+        let color = &menu.settings.color;
+        let (selected, text, description) = (
+            color.selected_text_style.prefix(),
+            color.text_style.prefix(),
+            color.description_style.prefix(),
+        );
+        assert_eq!(
+            menu.menu_string(100, true),
+            format!(
+                "{selected}ls{RESET}    {text}cd{RESET}    \n\
+                 {description}List files\nin the\ncurrent\ndirectory{RESET}\
+                 {description}\n\nExamples:\n{RESET}  {selected}ls -a{RESET}\n  ls -l\n"
+            )
+        );
+    }
+
+    #[rstest]
+    #[case::plain(false, "TYPE TO START SEARCH".to_string())]
+    #[case::colored(true, format!(
+        "{}TYPE TO START SEARCH{RESET}",
+        MenuSettings::default().color.selected_text_style.prefix()
+    ))]
+    fn empty_menu_asks_for_input(#[case] use_ansi_coloring: bool, #[case] msg: String) {
+        let menu = DescriptionMenu::default();
+        assert_eq!(menu.menu_string(10, use_ansi_coloring), msg);
+    }
+
+    /// The first entry is selected on activation, so its examples show
+    /// right away, and none chosen in an earlier session stays chosen.
+    #[test]
+    fn activation_loads_the_first_entry_examples() {
+        let mut menu = DescriptionMenu {
+            examples: vec!["stale".to_string()],
+            example_index: Some(0),
+            ..Default::default()
+        };
+
+        setup_menu(
+            &mut menu,
+            &mut Editor::default(),
+            &mut ExampleCompleter,
+            (100, 100),
+        );
+
+        assert_eq!(menu.examples, ["alpha example"]);
+        assert_eq!(menu.example_index, None);
+    }
+
+    /// Hands out its answers in order, like a completer working in the
+    /// background does over several requests.
+    struct Answers(std::collections::VecDeque<crate::CompletionResult>);
+
+    impl Completer for Answers {
+        fn complete(&mut self, _line: &str, _pos: usize) -> crate::CompletionResult {
+            self.0.pop_front().expect("an answer per request")
+        }
+    }
+
+    fn with_examples(values: &[&str]) -> Vec<Suggestion> {
+        values
+            .iter()
+            .map(|value| Suggestion {
+                value: value.to_string(),
+                extra: Some(vec![format!("{value} example")]),
+                ..Default::default()
+            })
+            .collect()
+    }
+
+    /// The engine hands a finished background completion to `update_values`
+    /// without an event, so the examples have to follow the values there.
+    #[test]
+    fn values_arriving_after_activation_bring_their_examples() {
+        let mut menu = DescriptionMenu::default();
+        let mut editor = Editor::default();
+        let mut completer = Answers(
+            [
+                crate::CompletionResult::Pending,
+                crate::CompletionResult::fresh(with_examples(&["alpha", "beta"])),
+            ]
+            .into(),
+        );
+        setup_menu(&mut menu, &mut editor, &mut completer, (100, 100));
+        assert!(menu.examples.is_empty());
+
+        menu.update_values(&mut editor, &mut completer);
+
+        assert_eq!(menu.examples, ["alpha example"]);
+    }
+
+    /// An example chosen among stale values belongs to an entry the fresh
+    /// values may not have, so Enter must not insert it.
+    #[test]
+    fn fresh_values_drop_the_example_chosen_among_stale_ones() {
+        let mut menu = DescriptionMenu::default();
+        let mut editor = Editor::default();
+        let mut completer = Answers(
+            [
+                crate::CompletionResult::stale_or_pending(
+                    with_examples(&["old"]).into(),
+                    crate::CompletionOrigin::default(),
+                ),
+                crate::CompletionResult::fresh(with_examples(&["alpha", "beta"])),
+            ]
+            .into(),
+        );
+        setup_menu(&mut menu, &mut editor, &mut completer, (100, 100));
+        assert_eq!(menu.examples, ["old example"]);
+        menu.example_index = Some(0);
+
+        menu.update_values(&mut editor, &mut completer);
+
+        assert_eq!(menu.examples, ["alpha example"]);
+        assert_eq!(menu.example_index, None);
     }
 }

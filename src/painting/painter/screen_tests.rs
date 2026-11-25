@@ -158,11 +158,35 @@ impl Session {
         status: &str,
         menu: Option<&ReedlineMenu>,
     ) {
+        self.paint_with_footer(prompt, before, hint, status, "", menu, false);
+    }
+
+    /// As [`Session::paint_with`], with a prompt footer below the status line,
+    /// and SGR kept and emitted while `use_ansi_coloring`.
+    #[allow(clippy::too_many_arguments)]
+    fn paint_with_footer(
+        &mut self,
+        prompt: &FixedPrompt,
+        before: &str,
+        hint: &str,
+        status: &str,
+        footer: &str,
+        menu: Option<&ReedlineMenu>,
+        use_ansi_coloring: bool,
+    ) {
         let lines = PromptLines::new(prompt, PromptEditMode::Default, None, before, "", hint)
-            .with_status(status, false);
+            .with_status(status, use_ansi_coloring)
+            .with_footer(footer, use_ansi_coloring);
         super::tests::reserve_status(&mut self.painter, &lines);
         self.painter
-            .repaint_buffer(prompt, &lines, PromptEditMode::Default, menu, false, &None)
+            .repaint_buffer(
+                prompt,
+                &lines,
+                PromptEditMode::Default,
+                menu,
+                use_ansi_coloring,
+                &None,
+            )
             .expect("repaint_buffer failed");
         self.screen.sync(self.painter.stdout.captured());
     }
@@ -521,6 +545,25 @@ fn frame_right_prompt_on_last_line_after_a_prompt_ending_in_newline() {
     assert_eq!(session.click(&prompt, "hi", "", 10, 2), None);
 }
 
+// A large buffer is cut at the newline it ends with, and the cursor goes to
+// the start of the row the cut is on. That is the column of the empty line
+// the cursor is really on, a row further down, and it is what was drawn while
+// the buffer still came with a `\r` before each of its newlines.
+//
+// The streaming painter's large-buffer path only: the frame has no such path.
+#[rstest]
+#[case::ends_in_a_newline("l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\n")]
+#[case::ends_in_a_crlf("l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\r\n")]
+fn large_buffer_ending_in_a_line_break_leaves_the_cursor_at_column_zero(#[case] buffer: &str) {
+    let mut session = Session::new(Engine::Streaming, 20, 5, 0);
+    let prompt = FixedPrompt::new("> ", "");
+
+    session.paint(&prompt, buffer, "");
+
+    assert!(session.painter.large_buffer);
+    assert_eq!(session.screen.cursor().0, 0);
+}
+
 // A buffer taller than the screen is drawn as a viewport onto its tail. Which
 // rows scroll off is decided by `compute_layout` counting `str::lines()`, so a
 // single line wrapping past the bottom reads as fitting: the paint emits one
@@ -553,6 +596,29 @@ fn large_buffer_of_one_wrapped_line_stays_on_screen_with(engine: Engine) {
     }
     assert_eq!(session.screen.row(4), "xx");
     assert_eq!(session.screen.cursor(), (2, 4));
+}
+
+// An empty indicator still shares the prompt's last row with the buffer's
+// first line. Counted as no row at all, the viewport started one row early:
+// the paint emitted a row too many and the terminal scrolled, on every paint.
+#[rstest]
+#[case::no_indicator("> ", "")]
+#[case::an_indicator("", "> ")]
+fn large_buffer_stays_on_screen_whatever_the_indicator(
+    #[case] left: &'static str,
+    #[case] indicator: &'static str,
+    #[values(Engine::Streaming, Engine::Frame)] engine: Engine,
+) {
+    let mut session = Session::new(engine, 10, 3, 0);
+    let prompt = FixedPrompt::new(left, indicator);
+
+    session.paint(&prompt, "1\n2\n3\n4\n5", "");
+    let scrolled_by_first_paint = session.screen.scrolled();
+    session.paint(&prompt, "1\n2\n3\n4\n5", "");
+
+    assert_eq!(session.screen.scrolled(), scrolled_by_first_paint);
+    assert_eq!(session.screen.rows(), ["3", "4", "5"]);
+    assert_eq!(session.screen.cursor(), (1, 2));
 }
 
 #[rstest]
@@ -1195,4 +1261,219 @@ fn right_prompt_follows_the_edge_after_a_horizontal_resize(
     assert_eq!(session.screen.row(1), format!("abc{}R", " ".repeat(26)));
     assert_eq!(session.screen.row(2), "> hi");
     assert_eq!(session.screen.cursor(), (4, 2));
+}
+
+/// One paint, for the tests that draw one over another.
+type Paint<'a> = &'a dyn Fn(&mut Session);
+
+/// Drawing `second` over `first` must leave what `second` leaves on a blank
+/// screen: a paint that no longer erases first has to remove whatever of the
+/// old one it does not cover, or it stays for good.
+fn assert_nothing_left_over(size: (u16, u16), first: Paint, second: Paint) {
+    let mut over = Session::new(Engine::Streaming, size.0, size.1, 1);
+    first(&mut over);
+    second(&mut over);
+    let mut blank = Session::new(Engine::Streaming, size.0, size.1, 1);
+    second(&mut blank);
+
+    assert_eq!(over.screen.rows(), blank.screen.rows());
+    assert_eq!(over.screen.cursor(), blank.screen.cursor());
+    assert!(over.screen.cursor_visible());
+}
+
+/// A terminal may draw after any byte of a paint (#1302). Whenever it does,
+/// every cell must hold what it held before `second` or what it holds after:
+/// cut anywhere, the screen shows text that was there or is about to be,
+/// never a blank where both had some.
+///
+/// The cursor is not part of this. It is hidden for the length of a paint, so
+/// a screen drawn halfway still lacks it.
+fn assert_no_tear(size: (u16, u16), first: Paint, second: Paint) {
+    let mut session = Session::new(Engine::Streaming, size.0, size.1, 1);
+    first(&mut session);
+    let old = session.screen.cells();
+    let start = session.painter.stdout.captured().len();
+    second(&mut session);
+    let new = session.screen.cells();
+    let captured = session.painter.stdout.captured().to_vec();
+
+    let mut replay = TestScreen::new(size.0, size.1);
+    replay.feed(&captured[..start]);
+    for end in start..captured.len() {
+        replay.feed(&captured[end..=end]);
+        for (row, cells) in replay.cells().iter().enumerate() {
+            for (col, cell) in cells.iter().enumerate() {
+                assert!(
+                    *cell == old[row][col] || *cell == new[row][col],
+                    "after {:?} cell ({col}, {row}) holds {cell:?}, was {:?}, becomes {:?}",
+                    String::from_utf8_lossy(&captured[start..=end]),
+                    old[row][col],
+                    new[row][col],
+                );
+            }
+        }
+    }
+}
+
+/// Both of the above, for a pair of paints the painter draws in place.
+fn assert_drawn_in_place(size: (u16, u16), first: Paint, second: Paint) {
+    assert_nothing_left_over(size, first, second);
+    assert_no_tear(size, first, second);
+}
+
+#[test]
+fn typing_draws_in_place() {
+    let prompt = FixedPrompt::new("> ", "");
+    assert_drawn_in_place((20, 6), &|s| s.paint(&prompt, "ab", ""), &|s| {
+        s.paint(&prompt, "abc", "")
+    });
+}
+
+// The prompt of the recording in #1302: two rows, the buffer on the second.
+#[test]
+fn typing_under_a_two_row_prompt_draws_in_place() {
+    let prompt = FixedPrompt::new("⬢ ~\n", "$ ");
+    assert_drawn_in_place((20, 6), &|s| s.paint(&prompt, "jfa", ""), &|s| {
+        s.paint(&prompt, "jfav", "")
+    });
+}
+
+#[test]
+fn a_shorter_line_draws_in_place() {
+    let prompt = FixedPrompt::new("> ", "");
+    assert_drawn_in_place((20, 6), &|s| s.paint(&prompt, "a longer line", ""), &|s| {
+        s.paint(&prompt, "short", "")
+    });
+}
+
+#[test]
+fn fewer_lines_draw_in_place() {
+    let prompt = FixedPrompt::new("> ", "").with_multiline("::: ");
+    assert_drawn_in_place(
+        (20, 8),
+        &|s| s.paint(&prompt, "first\nsecond line\nthird", ""),
+        &|s| s.paint(&prompt, "one", "\ntwo"),
+    );
+}
+
+#[test]
+fn a_hint_going_away_draws_in_place() {
+    let prompt = FixedPrompt::new("> ", "");
+    assert_drawn_in_place(
+        (20, 6),
+        &|s| s.paint_with(&prompt, "gi", "t status\n--short", "", None),
+        &|s| s.paint_with(&prompt, "gix", "", "", None),
+    );
+}
+
+#[test]
+fn a_closed_menu_draws_in_place() {
+    let prompt = FixedPrompt::new("> ", "");
+    let menu = ReedlineMenu::EngineCompleter(Box::new(super::tests::TestMenu::new("m1\r\nm2")));
+    assert_drawn_in_place(
+        (20, 8),
+        &|s| s.paint_with(&prompt, "pw", "", "", Some(&menu)),
+        &|s| s.paint_with(&prompt, "pwd", "", "", None),
+    );
+}
+
+#[rstest::rstest]
+#[case::on_the_first_row(false)]
+#[case::on_the_last_row(true)]
+fn a_right_prompt_draws_in_place(#[case] on_last_line: bool) {
+    let prompt = FixedPrompt::new("abc\n", "> ").with_right("RIGHT", on_last_line);
+    assert_drawn_in_place((20, 6), &|s| s.paint(&prompt, "longer", ""), &|s| {
+        s.paint(&prompt, "hi", "")
+    });
+}
+
+// The buffer reaching the right prompt hides it, and a shorter one brings it
+// back: its cells change hands between the two.
+#[rstest::rstest]
+#[case::hidden("hi", "0123456789abcd")]
+#[case::shown_again("0123456789abcd", "hi")]
+fn a_right_prompt_hidden_and_shown_draws_in_place(#[case] first: &str, #[case] second: &str) {
+    let prompt = FixedPrompt::new("> ", "").with_right("RIGHT", false);
+    assert_drawn_in_place((20, 6), &|s| s.paint(&prompt, first, ""), &|s| {
+        s.paint(&prompt, second, "")
+    });
+}
+
+// The status line and the footer follow the buffer directly without a menu,
+// so they are drawn over in place with it, the footer on its own too, and
+// rows they no longer take are erased.
+#[rstest::rstest]
+#[case::typing_under_a_status_line(("ab", "status", ""), ("abc", "status", ""))]
+#[case::a_status_line_changing(("ls", "error: a longer one", ""), ("ls", "ok", ""))]
+#[case::a_status_line_appearing(("ls", "", ""), ("ls", "status", ""))]
+#[case::a_status_line_going_away(("ls", "status", ""), ("ls", "", ""))]
+#[case::typing_above_a_footer(("ab", "status", "f1\nf2"), ("abc", "status", "f1\nf2"))]
+#[case::a_footer_without_a_status_line(("ab", "", "f1"), ("abc", "", "f1"))]
+#[case::a_footer_going_away(("ls", "status", "f1\nf2"), ("ls", "status", ""))]
+#[case::a_footer_line_less(("ls", "status", "f1\nf2"), ("ls", "status", "f1"))]
+#[case::a_status_line_appearing_above_a_footer(("ls", "", "f1\nf2"), ("ls", "status", "f1\nf2"))]
+#[case::a_status_line_going_away_above_a_footer(("ls", "status", "f1\nf2"), ("ls", "", "f1\nf2"))]
+#[case::a_styled_status_line(
+    ("ls", "\x1b[31merror\x1b[0m: x\nhelp: y", "f1"),
+    ("lsx", "\x1b[32mok\x1b[0m", "f1")
+)]
+fn status_line_and_footer_draw_in_place(
+    #[case] first: (&str, &str, &str),
+    #[case] second: (&str, &str, &str),
+    #[values(false, true)] use_ansi_coloring: bool,
+) {
+    let prompt = FixedPrompt::new("> ", "");
+    let (buffer, status, footer) = first;
+    let first: Paint =
+        &|s| s.paint_with_footer(&prompt, buffer, "", status, footer, None, use_ansi_coloring);
+    let (buffer, status, footer) = second;
+    let second: Paint =
+        &|s| s.paint_with_footer(&prompt, buffer, "", status, footer, None, use_ansi_coloring);
+    assert_drawn_in_place((20, 8), first, second);
+}
+
+// A wrapping status line or footer has no certain width, so the paint erases
+// first, and still leaves nothing behind.
+#[rstest::rstest]
+#[case::a_wrapping_status_line("0123456789abcdefghijklmn", "")]
+#[case::a_wrapping_footer("status", "0123456789abcdefghijklmn")]
+fn a_wrapping_status_line_or_footer_erases_first(#[case] status: &str, #[case] footer: &str) {
+    let prompt = FixedPrompt::new("> ", "");
+    let first: Paint = &|s| s.paint_with_footer(&prompt, "ls", "", "status", "", None, false);
+    let second: Paint = &|s| s.paint_with_footer(&prompt, "lsx", "", status, footer, None, false);
+    assert_nothing_left_over((20, 8), first, second);
+
+    let mut session = Session::new(Engine::Streaming, 20, 8, 1);
+    first(&mut session);
+    let start = session.painter.stdout.captured().len();
+    second(&mut session);
+    let paint = String::from_utf8_lossy(&session.painter.stdout.captured()[start..]).into_owned();
+    assert!(paint.contains("\x1b[2;1H\x1b[J"), "{paint:?}");
+}
+
+// Not drawn in place, since the painter cannot be sure where the text ends:
+// a line reaching the right margin leaves the wrap pending, where an erase
+// takes the last cell on some terminals, and terminals disagree on how wide
+// an ambiguous-width character is. The right prompt counts too: it is placed
+// by its width and nothing is erased behind it. Such a paint erases first as
+// before, and still has to leave nothing behind.
+#[rstest::rstest]
+#[case::a_line_reaching_the_margin("", "abcdefgh")]
+#[case::an_ambiguous_width("", "\u{a7} 1")]
+#[case::an_uncertain_right_prompt("\u{e0a0}", "hi")]
+fn a_paint_that_erases_first_leaves_nothing_behind(
+    #[case] right: &'static str,
+    #[case] second: &str,
+) {
+    let prompt = FixedPrompt::new("> ", "").with_right(right, false);
+    let first: Paint = &|s| s.paint(&prompt, "one\ntwo\nthree", "");
+    let second: Paint = &|s| s.paint(&prompt, second, "");
+    assert_nothing_left_over((10, 6), first, second);
+
+    let mut session = Session::new(Engine::Streaming, 10, 6, 1);
+    first(&mut session);
+    let start = session.painter.stdout.captured().len();
+    second(&mut session);
+    let paint = String::from_utf8_lossy(&session.painter.stdout.captured()[start..]).into_owned();
+    assert!(paint.contains("\x1b[2;1H\x1b[J"), "{paint:?}");
 }

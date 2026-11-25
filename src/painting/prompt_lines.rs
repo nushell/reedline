@@ -1,6 +1,6 @@
 use super::utils::{
-    coerce_crlf, escape_control, escape_control_keep_sgr, estimate_required_lines, expand_tabs,
-    line_width, resolve_wrap, wrap_position,
+    escape_control, escape_control_keep_sgr, estimate_required_lines, expand_tabs, line_width,
+    resolve_wrap, wrap_position,
 };
 use crate::{
     menu::{Menu, ReedlineMenu},
@@ -15,18 +15,22 @@ pub(crate) struct PromptLines<'prompt> {
     pub(crate) prompt_str_left: Cow<'prompt, str>,
     pub(crate) prompt_str_right: Cow<'prompt, str>,
     pub(crate) prompt_indicator: Cow<'prompt, str>,
-    pub(crate) before_cursor: Cow<'prompt, str>,
-    pub(crate) after_cursor: Cow<'prompt, str>,
-    pub(crate) hint: Cow<'prompt, str>,
+    pub(crate) before_cursor: &'prompt str,
+    pub(crate) after_cursor: &'prompt str,
+    pub(crate) hint: &'prompt str,
     pub(crate) right_prompt_on_last_line: bool,
     /// What the exit path reprints after the cursor, when that is not
     /// `after_cursor`: a history hint drawn in place of trailing auto-pair
     /// closers leaves `after_cursor` empty, but the closers are still in the
     /// buffer.
-    pub(crate) exit_after_cursor: Option<Cow<'prompt, str>>,
+    pub(crate) exit_after_cursor: Option<&'prompt str>,
     /// The [`StatusLine`](crate::StatusLine) text, drawn on its own rows below
     /// the buffer and above any menu. Empty draws none.
     pub(crate) status: Cow<'prompt, str>,
+    /// The prompt footer, drawn on the rows after the status line. Kept apart
+    /// from it so the painter can drop the footer alone when a menu needs
+    /// its rows. Empty draws none.
+    pub(crate) footer: Cow<'prompt, str>,
 }
 
 impl<'prompt> PromptLines<'prompt> {
@@ -49,9 +53,6 @@ impl<'prompt> PromptLines<'prompt> {
             None => prompt.render_prompt_indicator(prompt_mode),
         };
 
-        let before_cursor = coerce_crlf(before_cursor);
-        let after_cursor = coerce_crlf(after_cursor);
-        let hint = coerce_crlf(hint);
         let right_prompt_on_last_line = prompt.right_prompt_on_last_line();
 
         Self {
@@ -64,6 +65,7 @@ impl<'prompt> PromptLines<'prompt> {
             right_prompt_on_last_line,
             exit_after_cursor: None,
             status: Cow::Borrowed(""),
+            footer: Cow::Borrowed(""),
         }
     }
 
@@ -78,38 +80,44 @@ impl<'prompt> PromptLines<'prompt> {
     /// and draw over it. SGR is kept while `use_ansi_coloring` is on, as in a
     /// hint. Tabs become the spaces to the next stop (see [`expand_tabs`]).
     pub(crate) fn with_status(mut self, status: &str, use_ansi_coloring: bool) -> Self {
-        let mut drawn = String::with_capacity(status.len());
-        // `lines` splits at `\r\n` as well as `\n`, so the `\r` of a line
-        // break never reaches the escape.
-        for (index, line) in status.trim_end_matches(['\r', '\n']).lines().enumerate() {
-            if index > 0 {
-                drawn.push_str("\r\n");
-            }
-            let line = if use_ansi_coloring {
-                escape_control_keep_sgr(line)
-            } else {
-                escape_control(line)
-            };
-            drawn.push_str(&expand_tabs(&line));
-        }
-        self.status = Cow::Owned(drawn);
+        self.status = Cow::Owned(drawn_rows(status, use_ansi_coloring));
+        self
+    }
+
+    /// Set the prompt footer drawn below the status line, the same way as
+    /// [`Self::with_status`]. See [`Self::footer`].
+    pub(crate) fn with_footer(mut self, footer: &str, use_ansi_coloring: bool) -> Self {
+        self.footer = Cow::Owned(drawn_rows(footer, use_ansi_coloring));
         self
     }
 
     /// Rows the status line takes, wrapping included. 0 without one.
     pub(crate) fn status_rows(&self, terminal_columns: u16) -> u16 {
-        if self.status.is_empty() {
-            return 0;
+        rows_of(&self.status, terminal_columns)
+    }
+
+    /// Rows the footer takes, wrapping included. 0 without one.
+    pub(crate) fn footer_rows(&self, terminal_columns: u16) -> u16 {
+        rows_of(&self.footer, terminal_columns)
+    }
+
+    /// The status line, then the footer when `with_footer`, as one block of
+    /// rows. Neither side adds a blank row when the other is empty.
+    pub(crate) fn status_block(&self, with_footer: bool) -> Cow<'_, str> {
+        match (
+            self.status.is_empty(),
+            with_footer && !self.footer.is_empty(),
+        ) {
+            (_, false) => Cow::Borrowed(&self.status),
+            (true, true) => Cow::Borrowed(&self.footer),
+            (false, true) => Cow::Owned(format!("{}\n{}", self.status, self.footer)),
         }
-        estimate_required_lines(&self.status, terminal_columns)
-            .try_into()
-            .unwrap_or(u16::MAX)
     }
 
     /// Set what the exit path reprints after the cursor in place of
     /// `after_cursor`. See [`Self::exit_after_cursor`].
     pub(crate) fn with_exit_after_cursor(mut self, after_cursor: &'prompt str) -> Self {
-        self.exit_after_cursor = Some(coerce_crlf(after_cursor));
+        self.exit_after_cursor = Some(after_cursor);
         self
     }
 
@@ -127,12 +135,12 @@ impl<'prompt> PromptLines<'prompt> {
         menu: Option<&ReedlineMenu>,
     ) -> u16 {
         let mut input =
-            self.prompt_str_left.to_string() + &self.prompt_indicator + &self.before_cursor;
+            self.prompt_str_left.to_string() + &self.prompt_indicator + self.before_cursor;
 
         if !before_cursor {
-            input += &self.after_cursor;
+            input += self.after_cursor;
             if menu.is_none() {
-                input += &self.hint;
+                input += self.hint;
             }
         }
 
@@ -155,7 +163,7 @@ impl<'prompt> PromptLines<'prompt> {
             [
                 &*self.prompt_str_left,
                 &self.prompt_indicator,
-                &self.before_cursor,
+                self.before_cursor,
             ],
             terminal_columns,
         ) else {
@@ -173,7 +181,7 @@ impl<'prompt> PromptLines<'prompt> {
         // The Cursor position will be relative to this
         let last_prompt_str = prompt_str.lines().last().unwrap_or_default();
 
-        let Some(end) = wrap_position([last_prompt_str, &self.before_cursor], terminal_columns)
+        let Some(end) = wrap_position([last_prompt_str, self.before_cursor], terminal_columns)
         else {
             return (0, 0);
         };
@@ -193,7 +201,7 @@ impl<'prompt> PromptLines<'prompt> {
         let first_line_left_prompt = self.prompt_str_left.lines().next();
         let last_line_left_prompt = self.prompt_str_left.lines().last();
 
-        let prompt_lines_total = self.before_cursor.to_string() + &self.after_cursor + &self.hint;
+        let prompt_lines_total = self.before_cursor.to_string() + self.after_cursor + self.hint;
         let prompt_lines_first = prompt_lines_total.lines().next();
 
         let mut estimate = 0; // space in front of the input
@@ -230,6 +238,36 @@ impl<'prompt> PromptLines<'prompt> {
             estimate as u16
         }
     }
+}
+
+/// Rows `text` takes at `terminal_columns`, wrapping included. 0 when empty.
+fn rows_of(text: &str, terminal_columns: u16) -> u16 {
+    if text.is_empty() {
+        return 0;
+    }
+    estimate_required_lines(text, terminal_columns)
+        .try_into()
+        .unwrap_or(u16::MAX)
+}
+
+/// `text` as the status line draws it, lines joined by `\n`. See
+/// [`PromptLines::with_status`].
+fn drawn_rows(text: &str, use_ansi_coloring: bool) -> String {
+    let mut drawn = String::with_capacity(text.len());
+    // `lines` splits at `\r\n` as well as `\n`, so the `\r` of a line
+    // break never reaches the escape.
+    for (index, line) in text.trim_end_matches(['\r', '\n']).lines().enumerate() {
+        if index > 0 {
+            drawn.push('\n');
+        }
+        let line = if use_ansi_coloring {
+            escape_control_keep_sgr(line)
+        } else {
+            escape_control(line)
+        };
+        drawn.push_str(&expand_tabs(&line));
+    }
+    drawn
 }
 
 #[cfg(test)]
@@ -366,12 +404,13 @@ mod tests {
             prompt_str_left: Cow::Borrowed(prompt_str_left),
             prompt_str_right: Cow::Borrowed(""),
             prompt_indicator: Cow::Borrowed(prompt_indicator),
-            before_cursor: Cow::Borrowed(before_cursor),
-            after_cursor: Cow::Borrowed(""),
-            hint: Cow::Borrowed(""),
+            before_cursor,
+            after_cursor: "",
+            hint: "",
             right_prompt_on_last_line: false,
             exit_after_cursor: None,
             status: Cow::Borrowed(""),
+            footer: Cow::Borrowed(""),
         };
 
         let pos = prompt_lines.cursor_pos(terminal_columns);
@@ -403,12 +442,13 @@ mod tests {
             prompt_str_left: Cow::Borrowed(""),
             prompt_str_right: Cow::Borrowed(""),
             prompt_indicator: Cow::Borrowed(prompt_indicator),
-            before_cursor: Cow::Borrowed(before_cursor),
-            after_cursor: Cow::Borrowed(after_cursor),
-            hint: Cow::Borrowed(""),
+            before_cursor,
+            after_cursor,
+            hint: "",
             right_prompt_on_last_line: false,
             exit_after_cursor: None,
             status: Cow::Borrowed(""),
+            footer: Cow::Borrowed(""),
         };
 
         assert_eq!(
@@ -448,12 +488,13 @@ mod tests {
             prompt_str_left: Cow::Borrowed(prompt_str_left),
             prompt_str_right: Cow::Borrowed(""),
             prompt_indicator: Cow::Borrowed(prompt_indicator),
-            before_cursor: Cow::Borrowed(before_cursor),
-            after_cursor: Cow::Borrowed(""),
-            hint: Cow::Borrowed(""),
+            before_cursor,
+            after_cursor: "",
+            hint: "",
             right_prompt_on_last_line: false,
             exit_after_cursor: None,
             status: Cow::Borrowed(""),
+            footer: Cow::Borrowed(""),
         };
 
         assert_eq!(
@@ -476,12 +517,13 @@ mod tests {
             prompt_str_left: Cow::Borrowed(prompt_str_left),
             prompt_str_right: Cow::Borrowed(""),
             prompt_indicator: Cow::Borrowed(prompt_indicator),
-            before_cursor: Cow::Borrowed(""),
-            after_cursor: Cow::Borrowed(""),
-            hint: Cow::Borrowed(""),
+            before_cursor: "",
+            after_cursor: "",
+            hint: "",
             right_prompt_on_last_line: false,
             exit_after_cursor: None,
             status: Cow::Borrowed(""),
+            footer: Cow::Borrowed(""),
         };
 
         assert_eq!(prompt_lines.prompt_height(20), expected);
@@ -492,14 +534,38 @@ mod tests {
             prompt_str_left: Cow::Borrowed(""),
             prompt_str_right: Cow::Borrowed(""),
             prompt_indicator: Cow::Borrowed(""),
-            before_cursor: Cow::Borrowed(""),
-            after_cursor: Cow::Borrowed(""),
-            hint: Cow::Borrowed(""),
+            before_cursor: "",
+            after_cursor: "",
+            hint: "",
             right_prompt_on_last_line: false,
             exit_after_cursor: None,
             status: Cow::Borrowed(""),
+            footer: Cow::Borrowed(""),
         }
         .with_status(status, use_ansi_coloring)
+    }
+
+    /// The footer goes on the rows after the status line, drawn like it, and
+    /// neither side adds a blank row when the other is empty.
+    #[rstest]
+    #[case::below_status("status", "footer", "status\nfooter")]
+    #[case::status_trailing_newline("status\n", "footer", "status\nfooter")]
+    #[case::no_status("", "footer", "footer")]
+    #[case::no_footer("status", "", "status")]
+    #[case::footer_only_newlines("status", "\n\n", "status")]
+    #[case::tab_and_carriage_return("", "a\tb\rc", "a       b^Mc")]
+    fn test_with_footer(#[case] status: &str, #[case] footer: &str, #[case] expected: &str) {
+        let lines = lines_with_status(status, false).with_footer(footer, false);
+        assert_eq!(lines.status_block(true), expected);
+    }
+
+    /// Without the footer the block is the status line alone.
+    #[test]
+    fn status_block_without_footer_is_the_status_line() {
+        let lines = lines_with_status("status", false).with_footer("footer", false);
+        assert_eq!(lines.status_block(false), "status");
+        assert_eq!(lines.status_rows(80), 1);
+        assert_eq!(lines.footer_rows(80), 1);
     }
 
     #[rstest]
@@ -524,9 +590,9 @@ mod tests {
 
     #[rstest]
     #[case::trailing_line_breaks("a\n\r\n", "a", true)]
-    #[case::inner_newline("a\nb", "a\r\nb", true)]
-    #[case::inner_crlf("a\r\nb", "a\r\nb", true)]
-    #[case::inner_blank_line("a\n\nb", "a\r\n\r\nb", true)]
+    #[case::inner_newline("a\nb", "a\nb", true)]
+    #[case::inner_crlf("a\r\nb", "a\nb", true)]
+    #[case::inner_blank_line("a\n\nb", "a\n\nb", true)]
     #[case::inner_carriage_return("a\rb", "a^Mb", true)]
     #[case::control_sequence("\x1b[2Kls", "^[[2Kls", true)]
     #[case::sgr_kept("\x1b[31mred\x1b[0m", "\x1b[31mred\x1b[0m", true)]

@@ -399,9 +399,8 @@ impl LineBuffer {
     /// Inserts a newline character (`'\n'`) into the buffer at the current
     /// insertion point.
     ///
-    /// Only LF is inserted regardless of platform. The painting layer
-    /// (`coerce_crlf`) is responsible for converting LF to CRLF when
-    /// writing to the terminal in raw mode.
+    /// Only LF is inserted regardless of platform. The painter's writer
+    /// turns LF into CRLF as it writes to the terminal in raw mode.
     pub fn insert_newline(&mut self) {
         self.insert_char('\n');
     }
