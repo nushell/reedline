@@ -43,12 +43,64 @@ impl Default for FileBackedHistory {
     }
 }
 
-fn encode_entry(s: &str) -> String {
-    s.replace('\n', NEWLINE_ESCAPE)
+/// The length of the backslash run when `s` starts with `<`, one or more
+/// backslashes and `n>`, which is the shape of [`NEWLINE_ESCAPE`] and of its
+/// escaped forms.
+fn marker_backslashes(s: &str) -> Option<usize> {
+    let rest = s.strip_prefix('<')?;
+    let backslashes = rest.bytes().take_while(|b| *b == b'\\').count();
+    (backslashes > 0 && rest[backslashes..].starts_with("n>")).then_some(backslashes)
 }
 
+/// Appends `<`, `backslashes` backslashes and `n>`.
+fn push_marker(out: &mut String, backslashes: usize) {
+    out.push('<');
+    out.extend(std::iter::repeat_n('\\', backslashes));
+    out.push_str("n>");
+}
+
+/// Puts an entry on one line: a newline becomes [`NEWLINE_ESCAPE`], and text
+/// that already has that shape gains a backslash, so that a `<\n>` the user
+/// typed is not read back as a line break.
+fn encode_entry(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(c) = rest.chars().next() {
+        if c == '\n' {
+            out.push_str(NEWLINE_ESCAPE);
+            rest = &rest[1..];
+        } else if let Some(backslashes) = marker_backslashes(rest) {
+            push_marker(&mut out, backslashes + 1);
+            rest = &rest[backslashes + 3..];
+        } else {
+            out.push(c);
+            rest = &rest[c.len_utf8()..];
+        }
+    }
+    out
+}
+
+/// Reverses [`encode_entry`]. A marker with one backslash is a newline, one
+/// with more loses a backslash. Files written before the escaping existed
+/// read the same, except for a literal `<\\n>`, which they could store and
+/// which now reads as `<\n>`.
 fn decode_entry(s: &str) -> String {
-    s.replace(NEWLINE_ESCAPE, "\n")
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(c) = rest.chars().next() {
+        if let Some(backslashes) = marker_backslashes(rest) {
+            if backslashes == 1 {
+                out.push('\n');
+            } else {
+                push_marker(&mut out, backslashes - 1);
+            }
+            rest = &rest[backslashes + 3..];
+        } else {
+            out.push(c);
+            rest = &rest[c.len_utf8()..];
+        }
+    }
+    out
 }
 
 impl History for FileBackedHistory {
@@ -379,5 +431,61 @@ impl Drop for FileBackedHistory {
     /// On drop the content of the [`History`] will be written to the file if specified via [`FileBackedHistory::with_file()`].
     fn drop(&mut self) {
         let _res = self.sync();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case::plain("ls -la", "ls -la")]
+    #[case::newline("ls\n| length", r"ls<\n>| length")]
+    #[case::literal_marker(r"print 'lit<\n>eral'", r"print 'lit<\\n>eral'")]
+    #[case::escaped_marker(r"a<\\n>b", r"a<\\\n>b")]
+    #[case::marker_next_to_a_newline("<\\n>\n<\\n>", r"<\\n><\n><\\n>")]
+    #[case::backslash_before_a_newline("a<\\\nn>b", r"a<\<\n>n>b")]
+    #[case::unfinished_marker(r"a<\n b<\ c<n>", r"a<\n b<\ c<n>")]
+    #[case::non_ascii("é<\\n>ü\n", r"é<\\n>ü<\n>")]
+    fn entries_survive_the_file_encoding(#[case] entry: &str, #[case] on_disk: &str) {
+        assert_eq!(encode_entry(entry), on_disk);
+        assert_eq!(decode_entry(on_disk), entry);
+    }
+
+    /// Lines from before literal markers were escaped decode as they did.
+    #[rstest]
+    #[case(r"ls<\n>| length", "ls\n| length")]
+    #[case(r"<\n><\n>", "\n\n")]
+    #[case("echo <n> \\n <tag>", "echo <n> \\n <tag>")]
+    fn files_written_without_escaping_read_the_same(#[case] on_disk: &str, #[case] entry: &str) {
+        assert_eq!(decode_entry(on_disk), entry);
+    }
+
+    /// The report in #1314: the next session read the typed `<\n>` back as a
+    /// line break.
+    #[test]
+    fn a_typed_newline_marker_comes_back_from_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.txt");
+        let typed = r"print 'lit<\n>eral'";
+        let multiline = "print 'two\nlines'";
+
+        {
+            let mut history = FileBackedHistory::with_file(10, path.clone()).unwrap();
+            history
+                .save(FileBackedHistory::construct_entry(None, typed.into()))
+                .unwrap();
+            history
+                .save(FileBackedHistory::construct_entry(None, multiline.into()))
+                .unwrap();
+        }
+
+        let on_disk = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(on_disk.lines().count(), 2, "one line per entry");
+
+        let history = FileBackedHistory::with_file(10, path).unwrap();
+        assert_eq!(history.entries, [typed, multiline]);
     }
 }
