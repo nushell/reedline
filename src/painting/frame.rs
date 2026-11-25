@@ -70,8 +70,8 @@ pub(crate) struct Cell {
     /// Index of the grapheme in the editing buffer, counting from the start
     /// of the buffer, when the grapheme came from it. Prompt, hint and menu
     /// cells have none. An index rather than a byte offset: the buffer text
-    /// arrives highlighted and CRLF-coerced, so its bytes are not the buffer's,
-    /// but its graphemes are.
+    /// arrives highlighted, so its bytes are not the buffer's, but its
+    /// graphemes are.
     pub(crate) index: Option<usize>,
 }
 
@@ -502,7 +502,8 @@ impl Builder {
                     });
                     match grapheme {
                         "\n" | "\r\n" => self.newline(),
-                        // Lone carriage returns do not occur in coerced text.
+                        // Buffer, hint and menu text arrive with a lone
+                        // carriage return already shown as `^M`.
                         "\r" => {}
                         "\t" => self.tab(at),
                         _ => self.glyph(grapheme, at),
