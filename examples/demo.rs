@@ -1,4 +1,5 @@
 use std::env::temp_dir;
+use std::hash::{BuildHasher, RandomState};
 use std::process::Command;
 use {
     crossterm::{
@@ -143,7 +144,8 @@ fn main() -> reedline::Result<()> {
     );
 
     // Adding vi as text editor
-    let temp_file = temp_dir().join("temp_file.nu");
+    let unique = RandomState::new().hash_one(std::process::id());
+    let temp_file = temp_dir().join(format!("reedline-demo-{unique:x}.nu"));
     let mut command = Command::new("vi");
     command.arg(&temp_file);
     line_editor = line_editor.with_buffer_editor(command, temp_file);
